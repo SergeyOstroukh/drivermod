@@ -1,0 +1,162 @@
+:root {
+	--bg: #0b1220;
+	--fg: #e5e7eb;
+	--muted: #9ca3af;
+	--card: #111827;
+	--accent: #10b981;
+	--accent-contrast: #062e25;
+	--danger: #ef4444;
+	--border: #1f2937;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+	margin: 0;
+	font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+	background: var(--bg);
+	color: var(--fg);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+.header {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--border);
+	background: linear-gradient(180deg, #0b1220 0%, rgba(11,18,32,0.85) 100%);
+	backdrop-filter: blur(8px);
+}
+.header h1 {
+	margin: 0;
+	font-size: 18px;
+	font-weight: 600;
+}
+
+.search {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 0 8px;
+	flex: 1 1 auto;
+	max-width: 420px;
+}
+.search-input {
+	width: 100%;
+	background: #0e1729;
+	color: var(--fg);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	padding: 10px 12px;
+	font-size: 14px;
+}
+.search-input::placeholder { color: #6b7280; }
+
+.container {
+	padding: 16px;
+	padding-bottom: 80px;
+	max-width: 800px;
+	margin: 0 auto;
+}
+
+.status {
+	margin-bottom: 12px;
+	color: var(--muted);
+	font-size: 14px;
+}
+
+.cards {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	display: grid;
+	grid-template-columns: 1fr;
+	gap: 12px;
+}
+
+.card {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 14px;
+	display: grid;
+	gap: 10px;
+}
+.card-header {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	align-items: start;
+}
+.card-title {
+	font-weight: 600;
+	font-size: 16px;
+	margin: 0;
+}
+.card-subtitle {
+	margin: 0;
+	font-size: 13px;
+	color: var(--muted);
+}
+.coords {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.btn {
+	border: 1px solid var(--border);
+	background: #0e1729;
+	color: var(--fg);
+	padding: 10px 12px;
+	border-radius: 10px;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+.btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-primary {
+	background: var(--accent);
+	color: #04211b;
+	border-color: #0a3d31;
+}
+.btn-secondary {
+	background: #0f172a;
+}
+.btn-outline {
+	background: transparent;
+}
+.btn-danger {
+	background: var(--danger);
+	border-color: #7f1d1d;
+	color: #fee2e2;
+}
+
+.footer {
+	position: sticky;
+	bottom: 0;
+	border-top: 1px solid var(--border);
+	background: #0b1220;
+	padding: 10px 16px;
+	text-align: center;
+	color: var(--muted);
+	font-size: 13px;
+}
+
+@media (min-width: 560px) {
+	.cards { grid-template-columns: 1fr 1fr; }
+}
+
+
