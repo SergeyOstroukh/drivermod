@@ -60,9 +60,40 @@
 		return `https://yandex.ru/maps/?${params.toString()}`;
 	}
 
+	function buildYandexNavigatorRouteUrl(fromLat, fromLon, toLat, toLon) {
+		// Официальная схема deeplink Яндекс.Навигатора
+		// Если не указать from, маршрут строится от текущей позиции, но мы передаём явные координаты
+		const params = new URLSearchParams({
+			lat_to: String(toLat),
+			lon_to: String(toLon),
+			lat_from: String(fromLat),
+			lon_from: String(fromLon)
+		});
+		return `yandexnavi://build_route_on_map?${params.toString()}`;
+	}
+
 	function buildYandexPlaceUrl(lat, lon) {
 		// Fallback: просто открыть точку
 		return `https://yandex.ru/maps/?pt=${lon},${lat}&z=16&l=map`;
+	}
+
+	function buildYandexNavigatorPlaceUrl(lat, lon, name = "") {
+		const params = new URLSearchParams({
+			lat: String(lat),
+			lon: String(lon),
+			desc: name
+		});
+		return `yandexnavi://show_point_on_map?${params.toString()}`;
+	}
+
+	function openWithFallback(primaryUrl, fallbackUrl) {
+		// Пытаемся открыть приложение по кастомной схеме, иначе — веб-ссылка
+		const timeout = setTimeout(() => {
+			window.location.href = fallbackUrl;
+		}, 800);
+		window.location.href = primaryUrl;
+		// На некоторых устройствах будет переход сразу — очистим таймер немного позже
+		setTimeout(() => clearTimeout(timeout), 1500);
 	}
 
 	function renderSuppliers(list = filteredSuppliers) {
@@ -103,17 +134,24 @@
 			goBtn.setAttribute("data-role", "go");
 			goBtn.addEventListener("click", () => {
 				if (currentPosition) {
-					const url = buildYandexRouteUrl(
+					const naviUrl = buildYandexNavigatorRouteUrl(
 						currentPosition.lat,
 						currentPosition.lon,
 						supplier.lat,
 						supplier.lon
 					);
-					window.location.href = url; // открывает Я.Карты (в браузере/приложении)
+					const mapsUrl = buildYandexRouteUrl(
+						currentPosition.lat,
+						currentPosition.lon,
+						supplier.lat,
+						supplier.lon
+					);
+					openWithFallback(naviUrl, mapsUrl);
 				} else {
-					// Если нет геолокации — откроем просто точку
-					const url = buildYandexPlaceUrl(supplier.lat, supplier.lon);
-					window.location.href = url;
+					// Если нет геолокации — попробуем точку в Навигаторе, затем fallback в Карты
+					const naviPlace = buildYandexNavigatorPlaceUrl(supplier.lat, supplier.lon, supplier.name || "");
+					const mapsPlace = buildYandexPlaceUrl(supplier.lat, supplier.lon);
+					openWithFallback(naviPlace, mapsPlace);
 				}
 			});
 
@@ -122,8 +160,9 @@
 			openBtn.type = "button";
 			openBtn.textContent = "Открыть точку";
 			openBtn.addEventListener("click", () => {
-				const url = buildYandexPlaceUrl(supplier.lat, supplier.lon);
-				window.open(url, "_blank");
+				const naviPlace = buildYandexNavigatorPlaceUrl(supplier.lat, supplier.lon, supplier.name || "");
+				const mapsPlace = buildYandexPlaceUrl(supplier.lat, supplier.lon);
+				openWithFallback(naviPlace, mapsPlace);
 			});
 
 			actions.appendChild(goBtn);
