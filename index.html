@@ -14,12 +14,34 @@
 		<label class="search">
 			<input id="searchInput" class="search-input" type="search" placeholder="Поиск по названию" autocomplete="off" />
 		</label>
-		<button id="detectLocationBtn" class="btn btn-secondary" type="button">Обновить геопозицию</button>
+		<div class="header-actions">
+			<button id="officeBtn" class="btn btn-secondary" type="button">
+				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+					<circle cx="12" cy="10" r="3"></circle>
+				</svg>
+				Офис
+			</button>
+			<button id="warehouseBtn" class="btn btn-secondary" type="button">
+				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+					<circle cx="12" cy="10" r="3"></circle>
+				</svg>
+				Склад
+			</button>
+			<button id="detectLocationBtn" class="btn btn-secondary" type="button">Обновить геопозицию</button>
+		</div>
 	</header>
 
 	<main id="app" class="container">
 		<section id="status" class="status">
 			<span id="geoStatus">Ожидание геопозиции…</span>
+		</section>
+
+		<section class="route-section">
+			<button id="buildRouteBtn" class="btn btn-primary route-btn" type="button" disabled>
+				Поехать по маршруту
+			</button>
 		</section>
 
 		<section>

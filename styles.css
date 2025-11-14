@@ -31,11 +31,19 @@ body {
 	border-bottom: 1px solid var(--border);
 	background: linear-gradient(180deg, #0b1220 0%, rgba(11,18,32,0.85) 100%);
 	backdrop-filter: blur(8px);
+	gap: 12px;
+	flex-wrap: wrap;
 }
 .header h1 {
 	margin: 0;
 	font-size: 18px;
 	font-weight: 600;
+}
+.header-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
 }
 
 .search {
@@ -93,6 +101,27 @@ body {
 	gap: 8px;
 	align-items: start;
 }
+.checkbox-wrap {
+	flex-shrink: 0;
+	margin-top: 2px;
+}
+.supplier-checkbox {
+	width: 20px;
+	height: 20px;
+	cursor: pointer;
+	accent-color: var(--accent);
+}
+.route-section {
+	margin-bottom: 16px;
+	display: flex;
+	justify-content: center;
+}
+.route-btn {
+	font-size: 16px;
+	padding: 12px 24px;
+	width: 100%;
+	max-width: 400px;
+}
 .card-title {
 	font-weight: 600;
 	font-size: 16px;
@@ -115,6 +144,46 @@ body {
 	flex-wrap: wrap;
 }
 
+.dropdown {
+	position: relative;
+}
+.dropdown-toggle {
+	white-space: nowrap;
+}
+.dropdown-menu {
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
+	display: none;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px;
+	background: #0f172a;
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+	min-width: 180px;
+	z-index: 20;
+}
+.dropdown-menu.is-open {
+	display: flex;
+}
+.dropdown-item {
+	border: none;
+	background: #111e32;
+	color: var(--fg);
+	padding: 8px 10px;
+	border-radius: 8px;
+	text-align: left;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+}
+.dropdown-item:hover,
+.dropdown-item:focus-visible {
+	background: #1b2c4a;
+}
+
 .btn {
 	border: 1px solid var(--border);
 	background: #0e1729;
@@ -125,6 +194,12 @@ body {
 	font-weight: 600;
 	cursor: pointer;
 	touch-action: manipulation;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.btn-icon {
+	flex-shrink: 0;
 }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-primary {

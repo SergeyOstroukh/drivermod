@@ -4,13 +4,20 @@
 	const suppliersListEl = document.getElementById("suppliersList");
 	const geoStatusEl = document.getElementById("geoStatus");
 	const detectBtn = document.getElementById("detectLocationBtn");
+	const officeBtn = document.getElementById("officeBtn");
+	const warehouseBtn = document.getElementById("warehouseBtn");
 	const yearEl = document.getElementById("year");
 	const searchInput = document.getElementById("searchInput");
+
+	const OFFICE_COORDS = { lat: 53.883330, lon: 27.455246 };
+	const WAREHOUSE_COORDS = { lat: 53.839569, lon: 27.455060 };
 
 	let currentPosition = null; // { lat, lon, accuracy }
 	let suppliers = [];
 	let filteredSuppliers = [];
 	let searchQuery = "";
+	let openInfoMenu = null;
+	let selectedSuppliers = new Set(); // Set of supplier names (unique identifier)
 
 	function setYear() {
 		if (yearEl) yearEl.textContent = String(new Date().getFullYear());
@@ -24,11 +31,194 @@
 		geoStatusEl.textContent = text;
 	}
 
+	function closeInfoMenu() {
+		if (openInfoMenu) {
+			openInfoMenu.classList.remove("is-open");
+			openInfoMenu = null;
+		}
+	}
+
+	document.addEventListener("click", closeInfoMenu);
+
+	function parseInfoPoints(info) {
+		if (!info || typeof info !== "object") return [];
+		const points = [];
+		for (const [label, value] of Object.entries(info)) {
+			let lat = null;
+			let lon = null;
+			if (typeof value === "string") {
+				const parts = value.split(",").map((part) => part.trim());
+				if (parts.length >= 2) {
+					lat = Number(parts[0]);
+					lon = Number(parts[1]);
+				}
+			} else if (value && typeof value === "object") {
+				if ("lat" in value) lat = Number(value.lat);
+				if ("lon" in value) lon = Number(value.lon);
+				if ("lng" in value && (lon === null || Number.isNaN(lon))) lon = Number(value.lng);
+			}
+			if (Number.isFinite(lat) && Number.isFinite(lon)) {
+				points.push({ label, lat, lon });
+			}
+		}
+		return points;
+	}
+
+	function openRoute(toLat, toLon, label = "") {
+		if (currentPosition) {
+			const naviUrl = buildYandexNavigatorRouteUrl(
+				currentPosition.lat,
+				currentPosition.lon,
+				toLat,
+				toLon
+			);
+			const mapsUrl = buildYandexRouteUrl(
+				currentPosition.lat,
+				currentPosition.lon,
+				toLat,
+				toLon
+			);
+			openWithFallback(naviUrl, mapsUrl);
+		} else {
+			const naviPlace = buildYandexNavigatorPlaceUrl(toLat, toLon, label);
+			const mapsPlace = buildYandexPlaceUrl(toLat, toLon);
+			openWithFallback(naviPlace, mapsPlace);
+		}
+	}
+
+	function calculateDistance(lat1, lon1, lat2, lon2) {
+		// Формула гаверсинуса для расчета расстояния между двумя точками
+		const R = 6371000; // Радиус Земли в метрах
+		const dLat = (lat2 - lat1) * Math.PI / 180;
+		const dLon = (lon2 - lon1) * Math.PI / 180;
+		const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+			Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+			Math.sin(dLon / 2) * Math.sin(dLon / 2);
+		const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+		return R * c;
+	}
+
+	function optimizeRoute(startPoint, points) {
+		// Алгоритм ближайшего соседа для оптимизации маршрута
+		if (points.length === 0) return [];
+		if (points.length === 1) return points;
+
+		const route = [];
+		const remaining = [...points];
+		let current = startPoint;
+
+		while (remaining.length > 0) {
+			let nearestIndex = 0;
+			let nearestDistance = calculateDistance(
+				current.lat, current.lon,
+				remaining[0].lat, remaining[0].lon
+			);
+
+			for (let i = 1; i < remaining.length; i++) {
+				const distance = calculateDistance(
+					current.lat, current.lon,
+					remaining[i].lat, remaining[i].lon
+				);
+				if (distance < nearestDistance) {
+					nearestDistance = distance;
+					nearestIndex = i;
+				}
+			}
+
+			const nearest = remaining.splice(nearestIndex, 1)[0];
+			route.push(nearest);
+			current = nearest;
+		}
+
+		return route;
+	}
+
+	function buildMultiRoute() {
+		if (selectedSuppliers.size === 0) {
+			alert("Выберите хотя бы одного поставщика");
+			return;
+		}
+
+		if (!currentPosition) {
+			alert("Необходимо определить вашу геопозицию");
+			return;
+		}
+
+		// Получаем выбранных поставщиков по их ключам из полного списка
+		const selected = suppliers.filter(s => {
+			const key = `${s.name || ""}_${s.lat}_${s.lon}`;
+			return selectedSuppliers.has(key);
+		});
+
+		if (selected.length === 0) {
+			alert("Выбранные поставщики не найдены");
+			return;
+		}
+
+		// Преобразуем в точки
+		const points = selected.map(s => ({ lat: s.lat, lon: s.lon }));
+
+		// Оптимизируем маршрут
+		const startPoint = { lat: currentPosition.lat, lon: currentPosition.lon };
+		const optimizedRoute = optimizeRoute(startPoint, points);
+
+		// Строим маршрут: от текущей позиции через все точки
+		const allPoints = [startPoint, ...optimizedRoute];
+		const mapsUrl = buildYandexMultiRouteUrl(allPoints);
+
+		// Открываем маршрут
+		window.location.href = mapsUrl;
+	}
+
+	function createInfoDropdown(points, supplierName) {
+		const dropdown = document.createElement("div");
+		dropdown.className = "dropdown";
+
+		const toggleBtn = document.createElement("button");
+		toggleBtn.className = "btn btn-outline dropdown-toggle";
+		toggleBtn.type = "button";
+		toggleBtn.textContent = "Информация";
+
+		const menu = document.createElement("div");
+		menu.className = "dropdown-menu";
+
+		points.forEach((point) => {
+			const item = document.createElement("button");
+			item.type = "button";
+			item.className = "dropdown-item";
+			item.textContent = point.label;
+			item.addEventListener("click", (event) => {
+				event.stopPropagation();
+				closeInfoMenu();
+				const label = supplierName ? `${supplierName} — ${point.label}` : point.label;
+				openRoute(point.lat, point.lon, label.trim());
+			});
+			menu.appendChild(item);
+		});
+
+		menu.addEventListener("click", (event) => event.stopPropagation());
+
+		toggleBtn.addEventListener("click", (event) => {
+			event.stopPropagation();
+			const willOpen = !menu.classList.contains("is-open");
+			closeInfoMenu();
+			if (willOpen) {
+				menu.classList.add("is-open");
+				openInfoMenu = menu;
+			}
+		});
+
+		dropdown.appendChild(toggleBtn);
+		dropdown.appendChild(menu);
+		return dropdown;
+	}
+
 	function updateButtonsEnabledState() {
 		const goButtons = document.querySelectorAll("[data-role='go']");
 		goButtons.forEach((btn) => {
 			btn.disabled = !currentPosition;
 		});
+		updateRouteButton();
 	}
 
 	async function loadSuppliers() {
@@ -53,6 +243,17 @@
 
 	function buildYandexRouteUrl(fromLat, fromLon, toLat, toLon) {
 		const rtext = `${fromLat},${fromLon}~${toLat},${toLon}`;
+		const params = new URLSearchParams({
+			rtext,
+			rtt: "auto"
+		});
+		return `https://yandex.ru/maps/?${params.toString()}`;
+	}
+
+	function buildYandexMultiRouteUrl(points) {
+		// points: array of {lat, lon}
+		// Формат: lat1,lon1~lat2,lon2~lat3,lon3
+		const rtext = points.map(p => `${p.lat},${p.lon}`).join("~");
 		const params = new URLSearchParams({
 			rtext,
 			rtt: "auto"
@@ -99,13 +300,33 @@
 	function renderSuppliers(list = filteredSuppliers) {
 		if (!suppliersListEl) return;
 		suppliersListEl.innerHTML = "";
+		closeInfoMenu();
 
-		for (const supplier of list) {
+		for (let i = 0; i < list.length; i++) {
+			const supplier = list[i];
 			const li = document.createElement("li");
 			li.className = "card";
 
 			const header = document.createElement("div");
 			header.className = "card-header";
+
+			const checkboxWrap = document.createElement("div");
+			checkboxWrap.className = "checkbox-wrap";
+			const checkbox = document.createElement("input");
+			checkbox.type = "checkbox";
+			checkbox.className = "supplier-checkbox";
+			checkbox.id = `supplier-${i}`;
+			const supplierKey = `${supplier.name || ""}_${supplier.lat}_${supplier.lon}`;
+			checkbox.checked = selectedSuppliers.has(supplierKey);
+			checkbox.addEventListener("change", (e) => {
+				if (e.target.checked) {
+					selectedSuppliers.add(supplierKey);
+				} else {
+					selectedSuppliers.delete(supplierKey);
+				}
+				updateRouteButton();
+			});
+			checkboxWrap.appendChild(checkbox);
 
 			const titleWrap = document.createElement("div");
 			const title = document.createElement("h3");
@@ -121,6 +342,7 @@
 			coords.className = "coords";
 			coords.textContent = formatCoords(supplier.lat, supplier.lon);
 
+			header.appendChild(checkboxWrap);
 			header.appendChild(titleWrap);
 			header.appendChild(coords);
 
@@ -133,26 +355,7 @@
 			goBtn.textContent = "Поехали";
 			goBtn.setAttribute("data-role", "go");
 			goBtn.addEventListener("click", () => {
-				if (currentPosition) {
-					const naviUrl = buildYandexNavigatorRouteUrl(
-						currentPosition.lat,
-						currentPosition.lon,
-						supplier.lat,
-						supplier.lon
-					);
-					const mapsUrl = buildYandexRouteUrl(
-						currentPosition.lat,
-						currentPosition.lon,
-						supplier.lat,
-						supplier.lon
-					);
-					openWithFallback(naviUrl, mapsUrl);
-				} else {
-					// Если нет геолокации — попробуем точку в Навигаторе, затем fallback в Карты
-					const naviPlace = buildYandexNavigatorPlaceUrl(supplier.lat, supplier.lon, supplier.name || "");
-					const mapsPlace = buildYandexPlaceUrl(supplier.lat, supplier.lon);
-					openWithFallback(naviPlace, mapsPlace);
-				}
+				openRoute(supplier.lat, supplier.lon, supplier.name || "");
 			});
 
 			const openBtn = document.createElement("button");
@@ -168,12 +371,32 @@
 			actions.appendChild(goBtn);
 			actions.appendChild(openBtn);
 
+			const infoPoints = parseInfoPoints(supplier.info);
+			if (infoPoints.length) {
+				const dropdown = createInfoDropdown(infoPoints, supplier.name || "");
+				actions.appendChild(dropdown);
+			}
+
 			li.appendChild(header);
 			li.appendChild(actions);
 			suppliersListEl.appendChild(li);
 		}
 
 		updateButtonsEnabledState();
+		updateRouteButton();
+	}
+
+	function updateRouteButton() {
+		const routeBtn = document.getElementById("buildRouteBtn");
+		if (routeBtn) {
+			const count = selectedSuppliers.size;
+			routeBtn.disabled = count === 0 || !currentPosition;
+			if (count > 0) {
+				routeBtn.textContent = `Поехать по маршруту (${count})`;
+			} else {
+				routeBtn.textContent = "Поехать по маршруту";
+			}
+		}
 	}
 
 	function applyFilter() {
@@ -224,6 +447,20 @@
 
 	function attachEvents() {
 		if (detectBtn) detectBtn.addEventListener("click", detectLocation);
+		if (officeBtn) {
+			officeBtn.addEventListener("click", () => {
+				openRoute(OFFICE_COORDS.lat, OFFICE_COORDS.lon, "Офис");
+			});
+		}
+		if (warehouseBtn) {
+			warehouseBtn.addEventListener("click", () => {
+				openRoute(WAREHOUSE_COORDS.lat, WAREHOUSE_COORDS.lon, "Склад");
+			});
+		}
+		const buildRouteBtn = document.getElementById("buildRouteBtn");
+		if (buildRouteBtn) {
+			buildRouteBtn.addEventListener("click", buildMultiRoute);
+		}
 		if (searchInput) {
 			searchInput.addEventListener("input", (e) => {
 				searchQuery = e.target.value;
