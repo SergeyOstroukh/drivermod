@@ -388,6 +388,7 @@
 
 	function updateRouteButton() {
 		const routeBtn = document.getElementById("buildRouteBtn");
+		const clearBtn = document.getElementById("clearSelectionBtn");
 		if (routeBtn) {
 			const count = selectedSuppliers.size;
 			routeBtn.disabled = count === 0 || !currentPosition;
@@ -397,6 +398,19 @@
 				routeBtn.textContent = "Поехать по маршруту";
 			}
 		}
+		if (clearBtn) {
+			clearBtn.disabled = selectedSuppliers.size === 0;
+		}
+	}
+
+	function clearSelection() {
+		selectedSuppliers.clear();
+		// Обновляем все чекбоксы
+		const checkboxes = document.querySelectorAll(".supplier-checkbox");
+		checkboxes.forEach(checkbox => {
+			checkbox.checked = false;
+		});
+		updateRouteButton();
 	}
 
 	function applyFilter() {
@@ -460,6 +474,10 @@
 		const buildRouteBtn = document.getElementById("buildRouteBtn");
 		if (buildRouteBtn) {
 			buildRouteBtn.addEventListener("click", buildMultiRoute);
+		}
+		const clearSelectionBtn = document.getElementById("clearSelectionBtn");
+		if (clearSelectionBtn) {
+			clearSelectionBtn.addEventListener("click", clearSelection);
 		}
 		if (searchInput) {
 			searchInput.addEventListener("input", (e) => {
