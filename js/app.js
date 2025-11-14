@@ -115,22 +115,14 @@
 			const { points } = pendingRoute;
 			if (app === 'navigator') {
 				// Для навигатора с несколькими точками
-				// Яндекс.Навигатор имеет ограничения на множественные точки через deeplink
-				// Используем формат с via для промежуточных точек
+				// Яндекс.Навигатор через deeplink НЕ поддерживает множественные точки
+				// Открываем через Яндекс.Карты, где все точки отображаются корректно
+				// Пользователь сможет открыть маршрут в навигаторе из карт (кнопка "В навигатор")
 				if (points.length >= 2) {
-					const naviUrl = buildYandexNavigatorMultiRouteUrl(points);
-					if (naviUrl) {
-						window.location.href = naviUrl;
-					} else {
-						// Fallback: открываем только первую и последнюю точку
-						const naviUrl = buildYandexNavigatorRouteUrl(
-							points[0].lat,
-							points[0].lon,
-							points[points.length - 1].lat,
-							points[points.length - 1].lon
-						);
-						window.location.href = naviUrl;
-					}
+					// Открываем через Яндекс.Карты с множественными точками
+					// В картах есть кнопка "В навигатор", которая откроет маршрут в приложении
+					const mapsUrl = buildYandexMultiRouteUrl(points);
+					window.location.href = mapsUrl;
 				}
 			} else {
 				const mapsUrl = buildYandexMultiRouteUrl(points);
@@ -144,11 +136,18 @@
 	function showRouteModal() {
 		const modal = document.getElementById("routeModal");
 		const warning = document.getElementById("navigatorWarning");
+		const multiWarning = document.getElementById("multiRouteWarning");
 		if (modal) {
 			modal.classList.add("is-open");
 			// Показываем предупреждение, если ключ API не указан
 			if (warning) {
 				warning.style.display = YANDEX_NAVIGATOR_API_KEY ? "none" : "flex";
+			}
+			// Показываем предупреждение для множественных маршрутов
+			if (multiWarning && pendingRoute && pendingRoute.type === 'multi') {
+				multiWarning.style.display = "flex";
+			} else if (multiWarning) {
+				multiWarning.style.display = "none";
 			}
 		}
 	}

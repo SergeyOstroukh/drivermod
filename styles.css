@@ -358,6 +358,11 @@ body {
 .modal-warning svg {
 	flex-shrink: 0;
 }
+.modal-info {
+	background: rgba(16, 185, 129, 0.1);
+	border-color: rgba(16, 185, 129, 0.3);
+	color: #6ee7b7;
+}
 .modal-actions {
 	display: flex;
 	flex-direction: column;
