@@ -329,6 +329,7 @@
 			checkboxWrap.appendChild(checkbox);
 
 			const titleWrap = document.createElement("div");
+			titleWrap.className = "title-wrap";
 			const title = document.createElement("h3");
 			title.className = "card-title";
 			title.textContent = supplier.name || "Без названия";
