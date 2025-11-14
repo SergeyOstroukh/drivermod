@@ -59,6 +59,12 @@
 	<div id="routeModal" class="modal">
 		<div class="modal-content">
 			<h3 class="modal-title">Выберите способ открытия маршрута</h3>
+			<div id="navigatorWarning" class="modal-warning" style="display: none;">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"></path>
+				</svg>
+				<span>Лимит: 5 вызовов в сутки без ключа API</span>
+			</div>
 			<div class="modal-actions">
 				<button id="openNaviBtn" class="btn btn-primary modal-btn">
 					<svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

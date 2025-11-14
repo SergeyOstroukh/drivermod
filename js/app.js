@@ -11,6 +11,10 @@
 
 	const OFFICE_COORDS = { lat: 53.883330, lon: 27.455246 };
 	const WAREHOUSE_COORDS = { lat: 53.839569, lon: 27.455060 };
+	
+	// Ключ API для Яндекс.Навигатора (получить на https://yandex.ru/set/lp/navigatorb2b)
+	// Если ключ не указан, будет работать с лимитом 5 вызовов в сутки
+	const YANDEX_NAVIGATOR_API_KEY = "e50067ad-cd7a-48fa-b5f0-a6c751167c2d";
 
 	let currentPosition = null; // { lat, lon, accuracy }
 	let suppliers = [];
@@ -137,8 +141,13 @@
 
 	function showRouteModal() {
 		const modal = document.getElementById("routeModal");
+		const warning = document.getElementById("navigatorWarning");
 		if (modal) {
 			modal.classList.add("is-open");
+			// Показываем предупреждение, если ключ API не указан
+			if (warning) {
+				warning.style.display = YANDEX_NAVIGATOR_API_KEY ? "none" : "flex";
+			}
 		}
 	}
 
@@ -337,6 +346,12 @@
 			lat_from: String(fromLat),
 			lon_from: String(fromLon)
 		});
+		
+		// Добавляем ключ API, если он указан (для обхода лимита 5 вызовов в сутки)
+		if (YANDEX_NAVIGATOR_API_KEY) {
+			params.append("api_key", YANDEX_NAVIGATOR_API_KEY);
+		}
+		
 		return `yandexnavi://build_route_on_map?${params.toString()}`;
 	}
 
@@ -360,6 +375,11 @@
 			params.append("via", via);
 		}
 		
+		// Добавляем ключ API, если он указан
+		if (YANDEX_NAVIGATOR_API_KEY) {
+			params.append("api_key", YANDEX_NAVIGATOR_API_KEY);
+		}
+		
 		return `yandexnavi://build_route_on_map?${params.toString()}`;
 	}
 
@@ -374,6 +394,12 @@
 			lon: String(lon),
 			desc: name
 		});
+		
+		// Добавляем ключ API, если он указан
+		if (YANDEX_NAVIGATOR_API_KEY) {
+			params.append("api_key", YANDEX_NAVIGATOR_API_KEY);
+		}
+		
 		return `yandexnavi://show_point_on_map?${params.toString()}`;
 	}
 

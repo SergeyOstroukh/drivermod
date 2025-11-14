@@ -343,6 +343,21 @@ body {
 	font-weight: 600;
 	text-align: center;
 }
+.modal-warning {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 12px;
+	background: rgba(239, 68, 68, 0.1);
+	border: 1px solid rgba(239, 68, 68, 0.3);
+	border-radius: 8px;
+	margin-bottom: 16px;
+	font-size: 13px;
+	color: #fca5a5;
+}
+.modal-warning svg {
+	flex-shrink: 0;
+}
 .modal-actions {
 	display: flex;
 	flex-direction: column;
