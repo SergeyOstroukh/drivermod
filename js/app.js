@@ -18,6 +18,7 @@
 	let searchQuery = "";
 	let openInfoMenu = null;
 	let selectedSuppliers = new Set(); // Set of supplier names (unique identifier)
+	let pendingRoute = null; // { type: 'single' | 'multi', data: {...} }
 
 	function setYear() {
 		if (yearEl) yearEl.textContent = String(new Date().getFullYear());
@@ -65,25 +66,88 @@
 	}
 
 	function openRoute(toLat, toLon, label = "") {
-		if (currentPosition) {
-			const naviUrl = buildYandexNavigatorRouteUrl(
-				currentPosition.lat,
-				currentPosition.lon,
-				toLat,
-				toLon
-			);
-			const mapsUrl = buildYandexRouteUrl(
-				currentPosition.lat,
-				currentPosition.lon,
-				toLat,
-				toLon
-			);
-			openWithFallback(naviUrl, mapsUrl);
-		} else {
-			const naviPlace = buildYandexNavigatorPlaceUrl(toLat, toLon, label);
-			const mapsPlace = buildYandexPlaceUrl(toLat, toLon);
-			openWithFallback(naviPlace, mapsPlace);
+		pendingRoute = {
+			type: 'single',
+			toLat,
+			toLon,
+			label
+		};
+		showRouteModal();
+	}
+
+	function openRouteDirect(app = 'navigator') {
+		if (!pendingRoute) return;
+
+		if (pendingRoute.type === 'single') {
+			const { toLat, toLon, label } = pendingRoute;
+			if (app === 'navigator') {
+				if (currentPosition) {
+					const naviUrl = buildYandexNavigatorRouteUrl(
+						currentPosition.lat,
+						currentPosition.lon,
+						toLat,
+						toLon
+					);
+					window.location.href = naviUrl;
+				} else {
+					const naviPlace = buildYandexNavigatorPlaceUrl(toLat, toLon, label);
+					window.location.href = naviPlace;
+				}
+			} else {
+				if (currentPosition) {
+					const mapsUrl = buildYandexRouteUrl(
+						currentPosition.lat,
+						currentPosition.lon,
+						toLat,
+						toLon
+					);
+					window.location.href = mapsUrl;
+				} else {
+					const mapsPlace = buildYandexPlaceUrl(toLat, toLon);
+					window.location.href = mapsPlace;
+				}
+			}
+		} else if (pendingRoute.type === 'multi') {
+			const { points } = pendingRoute;
+			if (app === 'navigator') {
+				// Для навигатора с несколькими точками
+				if (points.length >= 2) {
+					const naviUrl = buildYandexNavigatorMultiRouteUrl(points);
+					if (naviUrl) {
+						window.location.href = naviUrl;
+					} else {
+						// Fallback на простой маршрут
+						const naviUrl = buildYandexNavigatorRouteUrl(
+							points[0].lat,
+							points[0].lon,
+							points[points.length - 1].lat,
+							points[points.length - 1].lon
+						);
+						window.location.href = naviUrl;
+					}
+				}
+			} else {
+				const mapsUrl = buildYandexMultiRouteUrl(points);
+				window.location.href = mapsUrl;
+			}
 		}
+
+		hideRouteModal();
+	}
+
+	function showRouteModal() {
+		const modal = document.getElementById("routeModal");
+		if (modal) {
+			modal.classList.add("is-open");
+		}
+	}
+
+	function hideRouteModal() {
+		const modal = document.getElementById("routeModal");
+		if (modal) {
+			modal.classList.remove("is-open");
+		}
+		pendingRoute = null;
 	}
 
 	function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -164,10 +228,13 @@
 
 		// Строим маршрут: от текущей позиции через все точки
 		const allPoints = [startPoint, ...optimizedRoute];
-		const mapsUrl = buildYandexMultiRouteUrl(allPoints);
-
-		// Открываем маршрут
-		window.location.href = mapsUrl;
+		
+		// Сохраняем данные маршрута и показываем модальное окно
+		pendingRoute = {
+			type: 'multi',
+			points: allPoints
+		};
+		showRouteModal();
 	}
 
 	function createInfoDropdown(points, supplierName) {
@@ -270,6 +337,29 @@
 			lat_from: String(fromLat),
 			lon_from: String(fromLon)
 		});
+		return `yandexnavi://build_route_on_map?${params.toString()}`;
+	}
+
+	function buildYandexNavigatorMultiRouteUrl(points) {
+		// Для навигатора с несколькими точками используем промежуточные точки
+		// Формат: yandexnavi://build_route_on_map?lat_to=...&lon_to=...&via=lat1,lon1|lat2,lon2
+		if (points.length < 2) return null;
+		
+		const start = points[0];
+		const end = points[points.length - 1];
+		const via = points.slice(1, -1).map(p => `${p.lat},${p.lon}`).join("|");
+		
+		const params = new URLSearchParams({
+			lat_from: String(start.lat),
+			lon_from: String(start.lon),
+			lat_to: String(end.lat),
+			lon_to: String(end.lon)
+		});
+		
+		if (via) {
+			params.append("via", via);
+		}
+		
 		return `yandexnavi://build_route_on_map?${params.toString()}`;
 	}
 
@@ -479,6 +569,26 @@
 		const clearSelectionBtn = document.getElementById("clearSelectionBtn");
 		if (clearSelectionBtn) {
 			clearSelectionBtn.addEventListener("click", clearSelection);
+		}
+		const openNaviBtn = document.getElementById("openNaviBtn");
+		if (openNaviBtn) {
+			openNaviBtn.addEventListener("click", () => openRouteDirect('navigator'));
+		}
+		const openMapsBtn = document.getElementById("openMapsBtn");
+		if (openMapsBtn) {
+			openMapsBtn.addEventListener("click", () => openRouteDirect('maps'));
+		}
+		const cancelRouteBtn = document.getElementById("cancelRouteBtn");
+		if (cancelRouteBtn) {
+			cancelRouteBtn.addEventListener("click", hideRouteModal);
+		}
+		const routeModal = document.getElementById("routeModal");
+		if (routeModal) {
+			routeModal.addEventListener("click", (e) => {
+				if (e.target === routeModal) {
+					hideRouteModal();
+				}
+			});
 		}
 		if (searchInput) {
 			searchInput.addEventListener("input", (e) => {
