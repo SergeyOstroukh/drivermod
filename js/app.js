@@ -115,29 +115,22 @@
 			const { points } = pendingRoute;
 			if (app === 'navigator') {
 				// Для навигатора с несколькими точками
-				// Яндекс.Навигатор через deeplink не поддерживает множественные точки напрямую
-				// Используем формат с rtext (как в картах), который может работать
+				// Яндекс.Навигатор имеет ограничения на множественные точки через deeplink
+				// Используем формат с via для промежуточных точек
 				if (points.length >= 2) {
-					// Формируем строку маршрута в формате rtext (lat1,lon1~lat2,lon2~...)
-					const rtext = points.map(p => `${p.lat},${p.lon}`).join("~");
-					
-					// Пробуем открыть через специальный формат навигатора с rtext
-					const params = new URLSearchParams({
-						rtext: rtext
-					});
-					
-					if (YANDEX_NAVIGATOR_API_KEY) {
-						params.append("api_key", YANDEX_NAVIGATOR_API_KEY);
-					}
-					
-					// Пробуем формат с rtext
-					const naviUrlWithRtext = `yandexnavi://build_route_on_map?${params.toString()}`;
-					
-					// Если не сработает, используем альтернативный формат
 					const naviUrl = buildYandexNavigatorMultiRouteUrl(points);
-					
-					// Пробуем сначала с rtext, если не сработает - fallback
-					window.location.href = naviUrlWithRtext;
+					if (naviUrl) {
+						window.location.href = naviUrl;
+					} else {
+						// Fallback: открываем только первую и последнюю точку
+						const naviUrl = buildYandexNavigatorRouteUrl(
+							points[0].lat,
+							points[0].lon,
+							points[points.length - 1].lat,
+							points[points.length - 1].lon
+						);
+						window.location.href = naviUrl;
+					}
 				}
 			} else {
 				const mapsUrl = buildYandexMultiRouteUrl(points);
@@ -366,12 +359,10 @@
 
 	function buildYandexNavigatorMultiRouteUrl(points) {
 		// Для навигатора с несколькими точками
-		// Яндекс.Навигатор не поддерживает множественные точки через deeplink напрямую
-		// Используем формат с промежуточными точками через параметр via_points
-		// Или открываем через Яндекс.Карты, которые поддерживают множественные точки
+		// Яндекс.Навигатор поддерживает промежуточные точки через параметр via
+		// Формат: lat1,lon1|lat2,lon2|... (разделитель |)
 		if (points.length < 2) return null;
 		
-		// Попробуем использовать формат с via_points (альтернативный формат)
 		const start = points[0];
 		const end = points[points.length - 1];
 		const viaPoints = points.slice(1, -1);
@@ -383,17 +374,11 @@
 			lon_to: String(end.lon)
 		});
 		
-		// Пробуем разные форматы для промежуточных точек
+		// Добавляем промежуточные точки через параметр via
+		// Формат: lat1,lon1|lat2,lon2|lat3,lon3
 		if (viaPoints.length > 0) {
-			// Формат 1: через запятую для каждой точки, разделенные точкой с запятой
-			const viaStr = viaPoints.map(p => `${p.lat},${p.lon}`).join(";");
+			const viaStr = viaPoints.map(p => `${p.lat},${p.lon}`).join("|");
 			params.append("via", viaStr);
-			
-			// Также пробуем добавить через via_points (если поддерживается)
-			viaPoints.forEach((p, i) => {
-				params.append(`via_lat_${i}`, String(p.lat));
-				params.append(`via_lon_${i}`, String(p.lon));
-			});
 		}
 		
 		// Добавляем ключ API, если он указан
