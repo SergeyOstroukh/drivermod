@@ -958,7 +958,10 @@
 		// Переключаем секции
 		vehiclesSection.style.display = "none";
 		mileageSection.style.display = "block";
-		loadMileageLog(vehicle.id);
+		
+		// Загружаем записи и проверяем, нужно ли показывать поле начального уровня топлива
+		await loadMileageLog(vehicle.id);
+		await checkAndShowFuelLevelField();
 	}
 
 	function closeMileageTable() {
@@ -1080,9 +1083,58 @@
 				fuelUsed = (shiftMileage * fuelConsumption / 100).toFixed(2);
 			}
 
-			// Получаем данные о топливе
+			// Рассчитываем уровень топлива автоматически
+			let fuelLevel = 0;
+			if (index === 0) {
+				// Для первой записи: используем введенное значение
+				fuelLevel = entry.fuel_level ? parseFloat(entry.fuel_level) : 0;
+			} else {
+				// Для последующих записей: рассчитываем на основе предыдущей записи
+				// Получаем уровень топлива из предыдущей записи
+				let prevFuelLevel = 0;
+				if (sortedEntries[index - 1].fuel_level) {
+					// Если в предыдущей записи есть введенное значение (первая запись)
+					prevFuelLevel = parseFloat(sortedEntries[index - 1].fuel_level);
+				} else {
+					// Если нет, используем рассчитанное значение из предыдущей итерации
+					prevFuelLevel = sortedEntries[index - 1].calculated_fuel_level || 0;
+				}
+				
+				// Рассчитываем расход для предыдущей записи
+				let prevShiftMileage = 0;
+				if (index === 1) {
+					// Для второй записи: разница с первой
+					prevShiftMileage = sortedEntries[0].mileage - (previousVehicleMileage || sortedEntries[0].mileage);
+					if (prevShiftMileage <= 0) {
+						prevShiftMileage = sortedEntries[0].mileage;
+					}
+				} else {
+					// Для последующих: разница с предыдущей записью
+					prevShiftMileage = sortedEntries[index - 1].mileage - sortedEntries[index - 2].mileage;
+				}
+				
+				const prevFuelUsed = prevShiftMileage > 0 && fuelConsumption > 0 
+					? (prevShiftMileage * fuelConsumption / 100) 
+					: 0;
+				const prevFuelRefill = sortedEntries[index - 1].fuel_refill ? parseFloat(sortedEntries[index - 1].fuel_refill) : 0;
+				
+				// Рассчитываем уровень после предыдущей смены
+				const levelAfterPrevShift = prevFuelLevel - prevFuelUsed + prevFuelRefill;
+				
+				// Текущий уровень = уровень после предыдущей смены - текущий расход + текущая заправка
+				const currentFuelUsed = shiftMileage > 0 && fuelConsumption > 0 
+					? (shiftMileage * fuelConsumption / 100) 
+					: 0;
+				const currentFuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
+				fuelLevel = levelAfterPrevShift - currentFuelUsed + currentFuelRefill;
+			}
+			
+			// Сохраняем рассчитанный уровень в объекте записи для использования в следующей итерации
+			entry.calculated_fuel_level = fuelLevel;
+
+			// Получаем данные о топливе для отображения
 			const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill).toFixed(2) : '—';
-			const fuelLevel = entry.fuel_level ? parseFloat(entry.fuel_level).toFixed(2) : '—';
+			const fuelLevelDisplay = fuelLevel >= 0 ? fuelLevel.toFixed(2) : '—';
 
 			const notes = entry.notes || '—';
 
@@ -1093,7 +1145,7 @@
 				<td class="shift-mileage-cell">${shiftMileage > 0 ? shiftMileage.toLocaleString() : '—'}</td>
 				<td class="fuel-cell">${fuelUsed}</td>
 				<td class="fuel-refill-cell">${fuelRefill}</td>
-				<td class="fuel-level-cell">${fuelLevel}</td>
+				<td class="fuel-level-cell">${fuelLevelDisplay}</td>
 				<td class="notes-cell" title="${notes}">${notes}</td>
 				<td class="actions-cell">
 					<button class="btn btn-outline btn-icon-only mileage-delete" data-id="${entry.id}" title="Удалить">
@@ -1130,12 +1182,16 @@
 				return false;
 			}
 
+			// Проверяем, есть ли уже записи для этого автомобиля
+			const existingEntries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
+			const hasEntries = existingEntries.length > 0;
+
 			const entry = {
 				vehicle_id: currentMileageVehicleId,
 				driver_id: parseInt(formData.get("driver_id")),
 				mileage: parseInt(formData.get("mileage")),
 				log_date: formData.get("log_date"),
-				fuel_level: parseFloat(formData.get("fuel_level")) || null,
+				fuel_level: hasEntries ? null : (parseFloat(formData.get("fuel_level")) || null), // Только для первой записи
 				fuel_refill: parseFloat(formData.get("fuel_refill")) || null,
 				notes: formData.get("notes")?.trim() || null
 			};
@@ -1152,6 +1208,12 @@
 
 			if (!entry.log_date) {
 				alert("Укажите дату");
+				return false;
+			}
+
+			// Если это первая запись, fuel_level обязателен
+			if (!hasEntries && (!entry.fuel_level || entry.fuel_level <= 0)) {
+				alert("Для первой записи необходимо указать начальный уровень топлива");
 				return false;
 			}
 
@@ -1178,6 +1240,9 @@
 				const today = new Date().toISOString().split('T')[0];
 				mileageDate.value = today;
 			}
+			
+			// Проверяем, нужно ли показывать поле начального уровня топлива
+			await checkAndShowFuelLevelField();
 			
 			return true;
 		} catch (err) {
