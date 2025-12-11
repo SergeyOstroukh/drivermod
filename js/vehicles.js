@@ -337,6 +337,14 @@
 				titleWrap.appendChild(mileageInfo);
 			}
 
+			// Расход топлива
+			if (vehicle.fuel_consumption) {
+				const fuelInfo = document.createElement("p");
+				fuelInfo.className = "card-subtitle";
+				fuelInfo.textContent = `⛽ Расход: ${vehicle.fuel_consumption} л/100км`;
+				titleWrap.appendChild(fuelInfo);
+			}
+
 			// Информация о техосмотре
 			if (vehicle.inspection_start || vehicle.inspection_expiry) {
 				const inspection = document.createElement("p");
@@ -411,6 +419,14 @@
 			const actions = document.createElement("div");
 			actions.className = "actions";
 
+			const mileageBtn = document.createElement("button");
+			mileageBtn.className = "btn btn-outline btn-icon-only";
+			mileageBtn.title = "Ввести пробег";
+			mileageBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+			</svg>`;
+			mileageBtn.addEventListener("click", () => openMileageModal(vehicle));
+
 			const historyBtn = document.createElement("button");
 			historyBtn.className = "btn btn-outline btn-icon-only";
 			historyBtn.title = "История использования";
@@ -428,6 +444,7 @@
 			</svg>`;
 			editBtn.addEventListener("click", () => openVehicleModal(vehicle));
 
+			actions.appendChild(mileageBtn);
 			actions.appendChild(historyBtn);
 			actions.appendChild(editBtn);
 			li.appendChild(header);
@@ -466,6 +483,7 @@
 			document.getElementById("vehiclePlate").value = vehicle.plate_number || "";
 			document.getElementById("vehicleDriver").value = vehicle.driver_id || "";
 			document.getElementById("vehicleMileage").value = vehicle.mileage || "";
+			document.getElementById("vehicleFuelConsumption").value = vehicle.fuel_consumption || "";
 			document.getElementById("vehicleOilChangeMileage").value = vehicle.oil_change_mileage || "";
 			document.getElementById("vehicleOilInfo").value = vehicle.oil_change_info || "";
 			document.getElementById("vehicleOilInterval").value = vehicle.oil_change_interval || "";
@@ -494,12 +512,13 @@
 		editingVehicleId = null;
 	}
 
-	async function saveVehicle(formData) {
+		async function saveVehicle(formData) {
 		try {
 			const vehicle = {
 				plate_number: formData.get("plate_number").trim(),
 				driver_id: formData.get("driver_id") || null,
 				mileage: parseInt(formData.get("mileage")) || 0,
+				fuel_consumption: parseFloat(formData.get("fuel_consumption")) || null,
 				oil_change_mileage: parseInt(formData.get("oil_change_mileage")) || null,
 				oil_change_info: formData.get("oil_change_info")?.trim() || null,
 				oil_change_interval: parseInt(formData.get("oil_change_interval")) || null,
@@ -822,6 +841,266 @@
 		if (historyDriverSelect) {
 			// Будет заполняться при открытии модального окна
 		}
+
+		// Лог пробега
+		const mileageForm = document.getElementById("mileageForm");
+		if (mileageForm) {
+			mileageForm.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				const formData = new FormData(e.target);
+				await saveMileageEntry(formData);
+			});
+		}
+
+		const backToVehiclesFromMileageBtn = document.getElementById("backToVehiclesFromMileageBtn");
+		if (backToVehiclesFromMileageBtn) {
+			backToVehiclesFromMileageBtn.addEventListener("click", closeMileageTable);
+		}
+
+		const mileageFilterBtn = document.getElementById("mileageFilterBtn");
+		if (mileageFilterBtn) {
+			mileageFilterBtn.addEventListener("click", () => {
+				if (currentMileageVehicleId) {
+					loadMileageLog(currentMileageVehicleId);
+				}
+			});
+		}
+
+		const printMileageBtn = document.getElementById("printMileageBtn");
+		if (printMileageBtn) {
+			printMileageBtn.addEventListener("click", printMileageTable);
+		}
+	}
+
+	// ============================================
+	// ЛОГ ПРОБЕГА
+	// ============================================
+
+	let currentMileageVehicleId = null;
+	let mileageLogEntries = [];
+	let currentVehicle = null;
+
+	function openMileageModal(vehicle) {
+		currentVehicle = vehicle;
+		openMileageTable(vehicle);
+	}
+
+	function openMileageTable(vehicle) {
+		const mileageSection = document.getElementById("mileageSection");
+		const vehiclesSection = document.getElementById("vehiclesSection");
+		const title = document.getElementById("mileageSectionTitle");
+		const driverSelect = document.getElementById("mileageDriver");
+		
+		if (!mileageSection || !vehiclesSection) return;
+
+		currentMileageVehicleId = vehicle.id;
+		if (title) {
+			title.textContent = `Лог пробега: ${vehicle.plate_number}`;
+		}
+
+		// Заполняем список водителей
+		if (driverSelect) {
+			driverSelect.innerHTML = '<option value="">Выберите водителя</option>';
+			drivers.forEach(driver => {
+				const option = document.createElement("option");
+				option.value = driver.id;
+				option.textContent = driver.name;
+				driverSelect.appendChild(option);
+			});
+		}
+
+		// Устанавливаем текущую дату по умолчанию
+		const mileageDate = document.getElementById("mileageDate");
+		if (mileageDate) {
+			const today = new Date().toISOString().split('T')[0];
+			mileageDate.value = today;
+		}
+
+		// Устанавливаем текущий месяц в фильтре
+		const monthFilter = document.getElementById("mileageMonthFilter");
+		if (monthFilter) {
+			const today = new Date();
+			const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+			monthFilter.value = month;
+		}
+
+		// Очищаем форму
+		const mileageForm = document.getElementById("mileageForm");
+		if (mileageForm) {
+			mileageForm.reset();
+			if (mileageDate) {
+				mileageDate.value = today;
+			}
+		}
+
+		// Переключаем секции
+		vehiclesSection.style.display = "none";
+		mileageSection.style.display = "block";
+		loadMileageLog(vehicle.id);
+	}
+
+	function closeMileageTable() {
+		const mileageSection = document.getElementById("mileageSection");
+		const vehiclesSection = document.getElementById("vehiclesSection");
+		
+		if (mileageSection) {
+			mileageSection.style.display = "none";
+		}
+		if (vehiclesSection) {
+			vehiclesSection.style.display = "block";
+		}
+		currentMileageVehicleId = null;
+		mileageLogEntries = [];
+		currentVehicle = null;
+	}
+
+	async function loadMileageLog(vehicleId) {
+		try {
+			const monthFilter = document.getElementById("mileageMonthFilter");
+			let startDate = null;
+			let endDate = null;
+
+			if (monthFilter && monthFilter.value) {
+				const [year, month] = monthFilter.value.split('-');
+				startDate = `${year}-${month}-01`;
+				const lastDay = new Date(year, month, 0).getDate();
+				endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+			}
+
+			mileageLogEntries = await window.VehiclesDB.getMileageLog(vehicleId, startDate, endDate);
+			// Сортируем по дате (от старых к новым) для правильного расчета пробега за смену
+			mileageLogEntries.sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+			renderMileageLog();
+		} catch (err) {
+			console.error("Ошибка загрузки лога пробега:", err);
+			mileageLogEntries = [];
+			renderMileageLog();
+		}
+	}
+
+	function renderMileageLog() {
+		const mileageTableBody = document.getElementById("mileageTableBody");
+		if (!mileageTableBody) return;
+
+		mileageTableBody.innerHTML = "";
+
+		if (mileageLogEntries.length === 0) {
+			const row = document.createElement("tr");
+			row.innerHTML = '<td colspan="7" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
+			mileageTableBody.appendChild(row);
+			return;
+		}
+
+		const fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
+
+		mileageLogEntries.forEach((entry, index) => {
+			const row = document.createElement("tr");
+
+			const driverName = entry.driver && entry.driver.name ? entry.driver.name : "Неизвестный водитель";
+			const date = entry.log_date ? new Date(entry.log_date).toLocaleDateString('ru-RU') : '?';
+			const mileage = entry.mileage || 0;
+			
+			// Рассчитываем пробег за смену (разница с предыдущей записью)
+			let shiftMileage = 0;
+			if (index > 0) {
+				const prevMileage = mileageLogEntries[index - 1].mileage || 0;
+				shiftMileage = mileage - prevMileage;
+			}
+
+			// Рассчитываем расход топлива
+			const fuelUsed = shiftMileage > 0 && fuelConsumption > 0 
+				? (shiftMileage * fuelConsumption / 100).toFixed(2)
+				: '—';
+
+			const notes = entry.notes || '—';
+
+			row.innerHTML = `
+				<td class="date-cell">${date}</td>
+				<td class="driver-cell">${driverName}</td>
+				<td class="mileage-cell">${mileage.toLocaleString()}</td>
+				<td class="shift-mileage-cell">${shiftMileage > 0 ? shiftMileage.toLocaleString() : '—'}</td>
+				<td class="fuel-cell">${fuelUsed}</td>
+				<td class="notes-cell" title="${notes}">${notes}</td>
+				<td class="actions-cell">
+					<button class="btn btn-outline btn-icon-only mileage-delete" data-id="${entry.id}" title="Удалить">
+						<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+						</svg>
+					</button>
+				</td>
+			`;
+
+			const deleteBtn = row.querySelector(".mileage-delete");
+			if (deleteBtn) {
+				deleteBtn.addEventListener("click", async () => {
+					if (confirm("Удалить эту запись из лога?")) {
+						try {
+							await window.VehiclesDB.deleteMileageLog(entry.id);
+							await loadMileageLog(currentMileageVehicleId);
+							await loadVehicles(); // Обновляем список автомобилей для обновления пробега
+						} catch (err) {
+							alert("Ошибка удаления: " + err.message);
+						}
+					}
+				});
+			}
+
+			mileageTableBody.appendChild(row);
+		});
+	}
+
+	async function saveMileageEntry(formData) {
+		try {
+			if (!currentMileageVehicleId) {
+				alert("Ошибка: не выбран автомобиль");
+				return false;
+			}
+
+			const entry = {
+				vehicle_id: currentMileageVehicleId,
+				driver_id: parseInt(formData.get("driver_id")),
+				mileage: parseInt(formData.get("mileage")),
+				log_date: formData.get("log_date"),
+				notes: formData.get("notes")?.trim() || null
+			};
+
+			if (!entry.driver_id || isNaN(entry.driver_id)) {
+				alert("Выберите водителя");
+				return false;
+			}
+
+			if (!entry.mileage || isNaN(entry.mileage)) {
+				alert("Укажите пробег");
+				return false;
+			}
+
+			if (!entry.log_date) {
+				alert("Укажите дату");
+				return false;
+			}
+
+			await window.VehiclesDB.addMileageLog(entry);
+			await loadMileageLog(currentMileageVehicleId);
+			await loadVehicles(); // Обновляем список автомобилей для обновления пробега
+			
+			// Очищаем форму
+			document.getElementById("mileageForm").reset();
+			const mileageDate = document.getElementById("mileageDate");
+			if (mileageDate) {
+				const today = new Date().toISOString().split('T')[0];
+				mileageDate.value = today;
+			}
+			
+			return true;
+		} catch (err) {
+			console.error("Ошибка сохранения записи пробега:", err);
+			alert("Ошибка сохранения: " + err.message);
+			return false;
+		}
+	}
+
+	function printMileageTable() {
+		window.print();
 	}
 
 	document.addEventListener("DOMContentLoaded", init);

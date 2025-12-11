@@ -743,4 +743,152 @@ body {
 	}
 }
 
+/* Стили для секции лога пробега */
+.mileage-content {
+	display: grid;
+	grid-template-columns: 1fr 2fr;
+	gap: 24px;
+	margin-top: 24px;
+}
+
+.mileage-form-section {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 20px;
+}
+
+.mileage-form-title {
+	margin: 0 0 20px 0;
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.mileage-table-section {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 20px;
+}
+
+.mileage-filters {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 20px;
+}
+
+.mileage-filters .form-label {
+	margin: 0;
+	white-space: nowrap;
+}
+
+.mileage-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.mileage-table thead {
+	background: #0e1729;
+}
+
+.mileage-table th {
+	padding: 12px;
+	text-align: left;
+	font-weight: 600;
+	font-size: 13px;
+	color: var(--muted);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	border-bottom: 2px solid var(--border);
+}
+
+.mileage-table td {
+	padding: 12px;
+	border-bottom: 1px solid var(--border);
+	font-size: 14px;
+	color: var(--fg);
+}
+
+.mileage-table tbody tr:hover {
+	background: #0e1729;
+}
+
+.mileage-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.mileage-table .date-cell {
+	color: var(--fg);
+	white-space: nowrap;
+}
+
+.mileage-table .driver-cell {
+	font-weight: 600;
+	color: var(--accent);
+}
+
+.mileage-table .mileage-cell {
+	font-weight: 500;
+}
+
+.mileage-table .shift-mileage-cell {
+	color: var(--accent);
+	font-weight: 600;
+}
+
+.mileage-table .fuel-cell {
+	color: var(--accent);
+	font-weight: 600;
+}
+
+.mileage-table .notes-cell {
+	color: var(--muted);
+	font-size: 13px;
+	max-width: 200px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.mileage-table .actions-cell {
+	white-space: nowrap;
+}
+
+@media print {
+	body * {
+		visibility: hidden;
+	}
+	.mileage-table-section,
+	.mileage-table-section * {
+		visibility: visible;
+	}
+	.mileage-table-section {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+	}
+	.mileage-table {
+		border: 1px solid #000;
+	}
+	.mileage-table th,
+	.mileage-table td {
+		border: 1px solid #000;
+		padding: 8px;
+	}
+	.mileage-filters,
+	.mileage-form-section,
+	button {
+		display: none !important;
+	}
+}
+
+@media (max-width: 900px) {
+	.mileage-content {
+		grid-template-columns: 1fr;
+	}
+}
+
 

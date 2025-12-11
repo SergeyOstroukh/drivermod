@@ -100,6 +100,82 @@
 			</section>
 		</div>
 
+		<!-- Раздел Лог пробега -->
+		<div id="mileageSection" class="content-section" style="display: none;">
+			<section class="section-header">
+				<button id="backToVehiclesFromMileageBtn" class="btn btn-outline" type="button">
+					<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M19 12H5M12 19l-7-7 7-7"></path>
+					</svg>
+					Назад к автомобилям
+				</button>
+				<h2 id="mileageSectionTitle" class="section-title">Лог пробега</h2>
+				<button id="printMileageBtn" class="btn btn-primary" type="button" style="margin-left: auto;">
+					<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<polyline points="6 9 6 2 18 2 18 9"></polyline>
+						<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+						<rect x="6" y="14" width="12" height="8"></rect>
+					</svg>
+					Печать
+				</button>
+			</section>
+			<section class="mileage-content">
+				<div class="mileage-form-section">
+					<h3 class="mileage-form-title">Ввести пробег</h3>
+					<form id="mileageForm" class="supplier-form">
+						<div class="form-group">
+							<label for="mileageDriver" class="form-label">Водитель *</label>
+							<select id="mileageDriver" name="driver_id" class="form-input" required>
+								<option value="">Выберите водителя</option>
+							</select>
+						</div>
+						<div class="form-group">
+							<label for="mileageValue" class="form-label">Общий пробег (км) *</label>
+							<input type="number" id="mileageValue" name="mileage" class="form-input" min="0" required placeholder="0" />
+						</div>
+						<div class="form-group">
+							<label for="mileageDate" class="form-label">Дата *</label>
+							<input type="date" id="mileageDate" name="log_date" class="form-input" required />
+						</div>
+						<div class="form-group">
+							<label for="mileageNotes" class="form-label">Примечания</label>
+							<textarea id="mileageNotes" name="notes" class="form-textarea" rows="2" placeholder="Дополнительная информация..."></textarea>
+						</div>
+						<div class="form-actions">
+							<button type="submit" class="btn btn-primary">Добавить</button>
+						</div>
+					</form>
+				</div>
+				<div class="mileage-table-section">
+					<div class="mileage-filters">
+						<label for="mileageMonthFilter" class="form-label">Месяц:</label>
+						<input type="month" id="mileageMonthFilter" class="form-input" />
+						<button id="mileageFilterBtn" class="btn btn-outline">Применить</button>
+					</div>
+					<div class="table-wrapper">
+						<table class="mileage-table" id="mileageTable">
+							<thead>
+								<tr>
+									<th>Дата</th>
+									<th>Водитель</th>
+									<th>Пробег (км)</th>
+									<th>Пробег за смену (км)</th>
+									<th>Расход топлива (л)</th>
+									<th>Примечания</th>
+									<th>Действия</th>
+								</tr>
+							</thead>
+							<tbody id="mileageTableBody">
+								<tr>
+									<td colspan="7" style="text-align: center; color: var(--muted);">Загрузка...</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</section>
+		</div>
+
 		<!-- Раздел История использования -->
 		<div id="historySection" class="content-section" style="display: none;">
 			<section class="section-header">
@@ -300,6 +376,10 @@
 				<div class="form-group">
 					<label for="vehicleMileage" class="form-label">Пробег (км)</label>
 					<input type="number" id="vehicleMileage" name="mileage" class="form-input" min="0" placeholder="0" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleFuelConsumption" class="form-label">Расход топлива (л/100км)</label>
+					<input type="number" id="vehicleFuelConsumption" name="fuel_consumption" class="form-input" min="0" step="0.1" placeholder="10.5" />
 				</div>
 				<div class="form-group">
 					<label for="vehicleOilChangeMileage" class="form-label">Пробег замены масла (км)</label>

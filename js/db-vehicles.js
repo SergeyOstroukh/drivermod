@@ -384,6 +384,209 @@
 	}
 
 	// Экспортируем API
+	// ============================================
+	// ЛОГ ПРОБЕГА
+	// ============================================
+
+	async function getMileageLog(vehicleId, startDate = null, endDate = null) {
+		try {
+			const client = initSupabase();
+			let query = client
+				.from('vehicle_mileage_log')
+				.select(`
+					*,
+					drivers (
+						id,
+						name,
+						phone
+					)
+				`)
+				.eq('vehicle_id', vehicleId)
+				.order('log_date', { ascending: false });
+
+			if (startDate) {
+				query = query.gte('log_date', startDate);
+			}
+			if (endDate) {
+				query = query.lte('log_date', endDate);
+			}
+
+			const { data, error } = await query;
+
+			if (error) {
+				console.error('Supabase error:', error);
+				throw error;
+			}
+
+			// Преобразуем данные водителя
+			return (data || []).map(item => {
+				let driver = null;
+				if (item.drivers) {
+					if (Array.isArray(item.drivers)) {
+						driver = item.drivers.length > 0 ? item.drivers[0] : null;
+					} else if (typeof item.drivers === 'object') {
+						driver = item.drivers;
+					}
+				}
+				return {
+					...item,
+					driver: driver
+				};
+			});
+		} catch (err) {
+			console.error('Ошибка получения лога пробега:', err);
+			throw err;
+		}
+	}
+
+	async function addMileageLog(entry) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_mileage_log')
+				.insert([entry])
+				.select(`
+					*,
+					drivers (
+						id,
+						name,
+						phone
+					)
+				`)
+				.single();
+
+			if (error) {
+				console.error('Supabase error:', error);
+				throw error;
+			}
+
+			// Обновляем пробег в vehicles
+			await updateVehicleMileage(entry.vehicle_id);
+
+			let driver = null;
+			if (data.drivers) {
+				if (Array.isArray(data.drivers)) {
+					driver = data.drivers.length > 0 ? data.drivers[0] : null;
+				} else if (typeof data.drivers === 'object') {
+					driver = data.drivers;
+				}
+			}
+
+			return {
+				...data,
+				driver: driver
+			};
+		} catch (err) {
+			console.error('Ошибка добавления записи пробега:', err);
+			throw err;
+		}
+	}
+
+	async function updateMileageLog(id, entry) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_mileage_log')
+				.update(entry)
+				.eq('id', id)
+				.select(`
+					*,
+					drivers (
+						id,
+						name,
+						phone
+					)
+				`)
+				.single();
+
+			if (error) {
+				console.error('Supabase error:', error);
+				throw error;
+			}
+
+			// Обновляем пробег в vehicles
+			if (entry.vehicle_id || data.vehicle_id) {
+				await updateVehicleMileage(entry.vehicle_id || data.vehicle_id);
+			}
+
+			let driver = null;
+			if (data.drivers) {
+				if (Array.isArray(data.drivers)) {
+					driver = data.drivers.length > 0 ? data.drivers[0] : null;
+				} else if (typeof data.drivers === 'object') {
+					driver = data.drivers;
+				}
+			}
+
+			return {
+				...data,
+				driver: driver
+			};
+		} catch (err) {
+			console.error('Ошибка обновления записи пробега:', err);
+			throw err;
+		}
+	}
+
+	async function deleteMileageLog(id) {
+		try {
+			const client = initSupabase();
+			
+			// Получаем vehicle_id перед удалением
+			const { data: logData } = await client
+				.from('vehicle_mileage_log')
+				.select('vehicle_id')
+				.eq('id', id)
+				.single();
+
+			const { error } = await client
+				.from('vehicle_mileage_log')
+				.delete()
+				.eq('id', id);
+
+			if (error) throw error;
+
+			// Обновляем пробег в vehicles
+			if (logData && logData.vehicle_id) {
+				await updateVehicleMileage(logData.vehicle_id);
+			}
+		} catch (err) {
+			console.error('Ошибка удаления записи пробега:', err);
+			throw err;
+		}
+	}
+
+	async function updateVehicleMileage(vehicleId) {
+		try {
+			const client = initSupabase();
+			// Получаем максимальный пробег из логов
+			const { data, error } = await client
+				.from('vehicle_mileage_log')
+				.select('mileage')
+				.eq('vehicle_id', vehicleId)
+				.order('mileage', { ascending: false })
+				.limit(1)
+				.single();
+
+			if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+				throw error;
+			}
+
+			const maxMileage = data ? data.mileage : 0;
+
+			// Обновляем пробег в vehicles
+			const { error: updateError } = await client
+				.from('vehicles')
+				.update({ mileage: maxMileage })
+				.eq('id', vehicleId);
+
+			if (updateError) throw updateError;
+		} catch (err) {
+			console.error('Ошибка обновления пробега автомобиля:', err);
+			throw err;
+		}
+	}
+
 	window.VehiclesDB = {
 		// Водители
 		getAllDrivers,
@@ -399,7 +602,12 @@
 		getVehicleHistory,
 		addHistoryEntry,
 		updateHistoryEntry,
-		deleteHistoryEntry
+		deleteHistoryEntry,
+		// Лог пробега
+		getMileageLog,
+		addMileageLog,
+		updateMileageLog,
+		deleteMileageLog
 	};
 })();
 
