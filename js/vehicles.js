@@ -14,15 +14,21 @@
 	// Навигация между разделами
 	function initNavigation() {
 		const navTabs = document.querySelectorAll(".nav-tab");
+		console.log("Инициализация навигации, найдено вкладок:", navTabs.length);
 		navTabs.forEach(tab => {
-			tab.addEventListener("click", () => {
+			tab.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
 				const section = tab.dataset.section;
+				console.log("Клик по вкладке, секция:", section);
 				switchSection(section);
 			});
 		});
 	}
 
 	function switchSection(section) {
+		console.log("switchSection вызвана, section:", section);
+		
 		// Обновляем активную вкладку
 		document.querySelectorAll(".nav-tab").forEach(tab => {
 			tab.classList.toggle("active", tab.dataset.section === section);
@@ -40,9 +46,15 @@
 
 		// Показываем нужный раздел
 		const targetSection = document.getElementById(`${section}Section`);
+		console.log("targetSection:", targetSection, "section:", section);
 		if (targetSection) {
+			// Убираем inline стили, если они есть
+			targetSection.removeAttribute("style");
 			targetSection.style.display = "block";
 			targetSection.classList.add("active");
+			console.log("Секция показана:", section, "display:", targetSection.style.display);
+		} else {
+			console.error("Секция не найдена:", `${section}Section`);
 		}
 
 		// Обновляем заголовок
