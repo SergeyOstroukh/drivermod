@@ -417,7 +417,7 @@
 			historyBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M3 3h18v18H3zM7 3v18M3 7h18M3 12h18M3 17h18"></path>
 			</svg>`;
-			historyBtn.addEventListener("click", () => openHistoryModal(vehicle));
+			historyBtn.addEventListener("click", () => openHistoryTable(vehicle));
 
 			const editBtn = document.createElement("button");
 			editBtn.className = "btn btn-outline btn-icon-only";
@@ -570,22 +570,20 @@
 	}
 
 	function renderHistory() {
-		const historyList = document.getElementById("historyList");
-		if (!historyList) return;
+		const historyTableBody = document.getElementById("historyTableBody");
+		if (!historyTableBody) return;
 
-		historyList.innerHTML = "";
+		historyTableBody.innerHTML = "";
 
 		if (historyEntries.length === 0) {
-			const empty = document.createElement("li");
-			empty.className = "history-item";
-			empty.textContent = "История пуста";
-			historyList.appendChild(empty);
+			const row = document.createElement("tr");
+			row.innerHTML = '<td colspan="5" style="text-align: center; color: var(--muted);">История пуста</td>';
+			historyTableBody.appendChild(row);
 			return;
 		}
 
 		historyEntries.forEach((entry) => {
-			const li = document.createElement("li");
-			li.className = "history-item";
+			const row = document.createElement("tr");
 
 			// Отладочный вывод
 			console.log("Обработка записи истории:", entry);
@@ -605,21 +603,29 @@
 			}
 			
 			const driverName = driver && driver.name ? driver.name : "Неизвестный водитель";
+			const driverPhone = driver && driver.phone ? driver.phone : "";
 			const startDate = entry.start_date ? new Date(entry.start_date).toLocaleDateString('ru-RU') : '?';
 			const endDate = entry.end_date ? new Date(entry.end_date).toLocaleDateString('ru-RU') : 'по настоящее время';
+			const notes = entry.notes || '—';
 
-			li.innerHTML = `
-				<div class="history-driver">👤 ${driverName}</div>
-				<div class="history-dates">${startDate} - ${endDate}</div>
-				${entry.notes ? `<div class="history-notes">${entry.notes}</div>` : ''}
-				<button class="btn btn-outline btn-icon-only history-delete" data-id="${entry.id}" title="Удалить">
-					<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-					</svg>
-				</button>
+			row.innerHTML = `
+				<td>
+					<div class="driver-name">👤 ${driverName}</div>
+					${driverPhone ? `<div class="driver-phone">${driverPhone}</div>` : ''}
+				</td>
+				<td class="date-cell">${startDate}</td>
+				<td class="date-cell">${endDate}</td>
+				<td class="notes-cell" title="${notes}">${notes}</td>
+				<td class="actions-cell">
+					<button class="btn btn-outline btn-icon-only history-delete" data-id="${entry.id}" title="Удалить">
+						<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+						</svg>
+					</button>
+				</td>
 			`;
 
-			const deleteBtn = li.querySelector(".history-delete");
+			const deleteBtn = row.querySelector(".history-delete");
 			if (deleteBtn) {
 				deleteBtn.addEventListener("click", async () => {
 					if (confirm("Удалить эту запись из истории?")) {
@@ -633,19 +639,22 @@
 				});
 			}
 
-			historyList.appendChild(li);
+			historyTableBody.appendChild(row);
 		});
 	}
 
-	function openHistoryModal(vehicle) {
-		const modal = document.getElementById("historyModal");
-		const title = document.getElementById("historyModalTitle");
+	function openHistoryTable(vehicle) {
+		const historySection = document.getElementById("historySection");
+		const vehiclesSection = document.getElementById("vehiclesSection");
+		const title = document.getElementById("historySectionTitle");
 		const driverSelect = document.getElementById("historyDriver");
 		
-		if (!modal || !title) return;
+		if (!historySection || !vehiclesSection) return;
 
 		currentHistoryVehicleId = vehicle.id;
-		title.textContent = `История использования: ${vehicle.plate_number}`;
+		if (title) {
+			title.textContent = `История использования: ${vehicle.plate_number}`;
+		}
 
 		// Заполняем список водителей
 		if (driverSelect) {
@@ -664,14 +673,21 @@
 			historyForm.reset();
 		}
 
-		modal.classList.add("is-open");
+		// Переключаем секции
+		vehiclesSection.style.display = "none";
+		historySection.style.display = "block";
 		loadHistory(vehicle.id);
 	}
 
-	function closeHistoryModal() {
-		const modal = document.getElementById("historyModal");
-		if (modal) {
-			modal.classList.remove("is-open");
+	function closeHistoryTable() {
+		const historySection = document.getElementById("historySection");
+		const vehiclesSection = document.getElementById("vehiclesSection");
+		
+		if (historySection) {
+			historySection.style.display = "none";
+		}
+		if (vehiclesSection) {
+			vehiclesSection.style.display = "block";
 		}
 		currentHistoryVehicleId = null;
 		historyEntries = [];
@@ -787,15 +803,6 @@
 			});
 		}
 
-		const historyModal = document.getElementById("historyModal");
-		if (historyModal) {
-			historyModal.addEventListener("click", (e) => {
-				if (e.target === historyModal) {
-					closeHistoryModal();
-				}
-			});
-		}
-
 		const historyForm = document.getElementById("historyForm");
 		if (historyForm) {
 			historyForm.addEventListener("submit", async (e) => {
@@ -805,9 +812,9 @@
 			});
 		}
 
-		const cancelHistoryBtn = document.getElementById("cancelHistoryBtn");
-		if (cancelHistoryBtn) {
-			cancelHistoryBtn.addEventListener("click", closeHistoryModal);
+		const backToVehiclesBtn = document.getElementById("backToVehiclesBtn");
+		if (backToVehiclesBtn) {
+			backToVehiclesBtn.addEventListener("click", closeHistoryTable);
 		}
 
 		// Заполняем список водителей в форме истории при открытии

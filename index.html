@@ -99,6 +99,69 @@
 				<ul id="vehiclesList" class="cards"></ul>
 			</section>
 		</div>
+
+		<!-- Раздел История использования -->
+		<div id="historySection" class="content-section" style="display: none;">
+			<section class="section-header">
+				<button id="backToVehiclesBtn" class="btn btn-outline" type="button">
+					<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M19 12H5M12 19l-7-7 7-7"></path>
+					</svg>
+					Назад к автомобилям
+				</button>
+				<h2 id="historySectionTitle" class="section-title">История использования</h2>
+			</section>
+			<section class="history-content">
+				<div class="history-form-section">
+					<h3 class="history-form-title">Добавить запись</h3>
+					<form id="historyForm" class="supplier-form">
+						<div class="form-group">
+							<label for="historyDriver" class="form-label">Водитель *</label>
+							<select id="historyDriver" name="history_driver_id" class="form-input" required>
+								<option value="">Выберите водителя</option>
+							</select>
+						</div>
+						<div class="form-group">
+							<label for="historyStartDate" class="form-label">Дата начала *</label>
+							<input type="date" id="historyStartDate" name="history_start_date" class="form-input" required />
+						</div>
+						<div class="form-group">
+							<label for="historyEndDate" class="form-label">Дата окончания</label>
+							<input type="date" id="historyEndDate" name="history_end_date" class="form-input" />
+							<small class="form-hint">Оставьте пустым, если период еще не закончен</small>
+						</div>
+						<div class="form-group">
+							<label for="historyNotes" class="form-label">Примечания</label>
+							<textarea id="historyNotes" name="history_notes" class="form-textarea" rows="2" placeholder="Дополнительная информация..."></textarea>
+						</div>
+						<div class="form-actions">
+							<button type="submit" class="btn btn-primary">Добавить</button>
+						</div>
+					</form>
+				</div>
+				<div class="history-table-section">
+					<h3 class="history-table-title">История</h3>
+					<div class="table-wrapper">
+						<table class="history-table">
+							<thead>
+								<tr>
+									<th>Водитель</th>
+									<th>Дата начала</th>
+									<th>Дата окончания</th>
+									<th>Примечания</th>
+									<th>Действия</th>
+								</tr>
+							</thead>
+							<tbody id="historyTableBody">
+								<tr>
+									<td colspan="5" style="text-align: center; color: var(--muted);">Загрузка...</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</section>
+		</div>
 	</main>
 
 	<footer class="footer">
@@ -288,46 +351,6 @@
 	</div>
 
 	<!-- Модальное окно для истории использования автомобиля -->
-	<div id="historyModal" class="modal">
-		<div class="modal-content modal-content-large">
-			<h3 class="modal-title" id="historyModalTitle">История использования</h3>
-			<div class="history-section">
-				<h4 class="history-section-title">Добавить запись</h4>
-				<form id="historyForm" class="supplier-form">
-					<div class="form-group">
-						<label for="historyDriver" class="form-label">Водитель *</label>
-						<select id="historyDriver" name="history_driver_id" class="form-input" required>
-							<option value="">Выберите водителя</option>
-						</select>
-					</div>
-					<div class="form-group">
-						<label for="historyStartDate" class="form-label">Дата начала *</label>
-						<input type="date" id="historyStartDate" name="history_start_date" class="form-input" required />
-					</div>
-					<div class="form-group">
-						<label for="historyEndDate" class="form-label">Дата окончания</label>
-						<input type="date" id="historyEndDate" name="history_end_date" class="form-input" />
-						<small class="form-hint">Оставьте пустым, если период еще не закончен</small>
-					</div>
-					<div class="form-group">
-						<label for="historyNotes" class="form-label">Примечания</label>
-						<textarea id="historyNotes" name="history_notes" class="form-textarea" rows="2" placeholder="Дополнительная информация..."></textarea>
-					</div>
-					<div class="form-actions">
-						<button type="submit" class="btn btn-primary modal-btn">Добавить</button>
-					</div>
-				</form>
-			</div>
-			<div class="history-section">
-				<h4 class="history-section-title">История</h4>
-				<ul id="historyList" class="history-list"></ul>
-			</div>
-			<div class="form-actions">
-				<button type="button" id="cancelHistoryBtn" class="btn btn-outline modal-btn">Закрыть</button>
-			</div>
-		</div>
-	</div>
-
 	<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
 	<script src="js/config.js"></script>
 	<script src="js/db.js"></script>

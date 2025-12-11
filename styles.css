@@ -626,4 +626,121 @@ body {
 	opacity: 1;
 }
 
+/* Стили для секции истории */
+.history-content {
+	display: grid;
+	grid-template-columns: 1fr 2fr;
+	gap: 24px;
+	margin-top: 24px;
+}
+
+.history-form-section {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 20px;
+}
+
+.history-form-title {
+	margin: 0 0 20px 0;
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.history-table-section {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 20px;
+}
+
+.history-table-title {
+	margin: 0 0 20px 0;
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.table-wrapper {
+	overflow-x: auto;
+}
+
+.history-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.history-table thead {
+	background: #0e1729;
+}
+
+.history-table th {
+	padding: 12px;
+	text-align: left;
+	font-weight: 600;
+	font-size: 13px;
+	color: var(--muted);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	border-bottom: 2px solid var(--border);
+}
+
+.history-table td {
+	padding: 12px;
+	border-bottom: 1px solid var(--border);
+	font-size: 14px;
+	color: var(--fg);
+}
+
+.history-table tbody tr:hover {
+	background: #0e1729;
+}
+
+.history-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.history-table .driver-name {
+	font-weight: 600;
+	color: var(--accent);
+}
+
+.history-table .driver-phone {
+	font-size: 12px;
+	color: var(--muted);
+	margin-top: 4px;
+}
+
+.history-table .date-cell {
+	color: var(--fg);
+	white-space: nowrap;
+}
+
+.history-table .notes-cell {
+	color: var(--muted);
+	font-size: 13px;
+	max-width: 200px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.history-table .actions-cell {
+	white-space: nowrap;
+}
+
+.section-title {
+	margin: 0;
+	font-size: 24px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+@media (max-width: 900px) {
+	.history-content {
+		grid-template-columns: 1fr;
+	}
+}
+
 
