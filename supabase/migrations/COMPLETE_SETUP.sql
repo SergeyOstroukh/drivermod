@@ -1,3 +1,14 @@
+-- ============================================
+-- ПОЛНАЯ НАСТРОЙКА ТАБЛИЦЫ SUPPLIERS
+-- ============================================
+-- Выполните этот скрипт в Supabase SQL Editor
+-- Он создаст таблицу со всеми необходимыми полями
+-- ============================================
+
+-- Удаляем таблицу, если она существует (для пересоздания)
+-- ЗАКОММЕНТИРУЙТЕ ЭТУ СТРОКУ, если хотите сохранить существующие данные!
+-- DROP TABLE IF EXISTS public.suppliers CASCADE;
+
 -- Создание таблицы suppliers для Supabase
 CREATE TABLE IF NOT EXISTS public.suppliers (
     id BIGSERIAL PRIMARY KEY,
@@ -58,4 +69,8 @@ CREATE POLICY "Allow anonymous update access" ON public.suppliers
 CREATE POLICY "Allow anonymous delete access" ON public.suppliers
     FOR DELETE
     USING (true);
+
+-- ============================================
+-- ГОТОВО! Таблица создана и настроена
+-- ============================================
 

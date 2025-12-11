@@ -172,6 +172,21 @@ body {
 	word-wrap: break-word;
 	overflow-wrap: break-word;
 }
+.card-working-hours {
+	margin: 4px 0 0 0;
+	font-size: 12px;
+	color: var(--accent);
+	word-wrap: break-word;
+	overflow-wrap: break-word;
+}
+.card-additional-info {
+	margin: 6px 0 0 0;
+	font-size: 12px;
+	color: var(--muted);
+	word-wrap: break-word;
+	overflow-wrap: break-word;
+	line-height: 1.4;
+}
 .coords {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 	font-size: 12px;

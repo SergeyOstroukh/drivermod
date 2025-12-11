@@ -488,6 +488,22 @@
 			titleWrap.appendChild(title);
 			titleWrap.appendChild(subtitle);
 
+			// Добавляем время работы, если есть
+			if (supplier.working_hours) {
+				const workingHours = document.createElement("p");
+				workingHours.className = "card-working-hours";
+				workingHours.textContent = `🕐 ${supplier.working_hours}`;
+				titleWrap.appendChild(workingHours);
+			}
+
+			// Добавляем дополнительную информацию, если есть
+			if (supplier.additional_info) {
+				const additionalInfo = document.createElement("p");
+				additionalInfo.className = "card-additional-info";
+				additionalInfo.textContent = supplier.additional_info;
+				titleWrap.appendChild(additionalInfo);
+			}
+
 			const coords = document.createElement("div");
 			coords.className = "coords";
 			coords.textContent = formatCoords(supplier.lat, supplier.lon);
@@ -639,6 +655,8 @@
 			document.getElementById("supplierAddress").value = supplier.address || "";
 			document.getElementById("supplierLat").value = supplier.lat || "";
 			document.getElementById("supplierLon").value = supplier.lon || "";
+			document.getElementById("supplierWorkingHours").value = supplier.working_hours || "";
+			document.getElementById("supplierAdditionalInfo").value = supplier.additional_info || "";
 			document.getElementById("supplierInfo").value = supplier.info ? JSON.stringify(supplier.info, null, 2) : "";
 			deleteBtn.style.display = "block";
 		} else {
@@ -664,7 +682,9 @@
 				name: formData.get("name").trim(),
 				address: formData.get("address")?.trim() || "",
 				lat: parseFloat(formData.get("lat")),
-				lon: parseFloat(formData.get("lon"))
+				lon: parseFloat(formData.get("lon")),
+				working_hours: formData.get("working_hours")?.trim() || null,
+				additional_info: formData.get("additional_info")?.trim() || null
 			};
 			
 			// Валидация
@@ -685,13 +705,13 @@
 				return false;
 			}
 			
-			// Парсим дополнительную информацию, если есть
+			// Парсим дополнительную информацию (JSON для дополнительных точек), если есть
 			const infoText = formData.get("info")?.trim();
 			if (infoText) {
 				try {
 					supplier.info = JSON.parse(infoText);
 				} catch (e) {
-					alert("Ошибка в формате JSON дополнительной информации. Поле будет проигнорировано.");
+					alert("Ошибка в формате JSON дополнительных точек. Поле будет проигнорировано.");
 				}
 			}
 			

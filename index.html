@@ -121,9 +121,18 @@
 					<input type="number" id="supplierLon" name="lon" class="form-input" step="any" required placeholder="27.413769" />
 				</div>
 				<div class="form-group">
-					<label for="supplierInfo" class="form-label">Дополнительная информация (JSON)</label>
-					<textarea id="supplierInfo" name="info" class="form-textarea" rows="4" placeholder='{"Склад": "53.874443, 27.413769", "Офис": "53.883330, 27.455246"}'></textarea>
-					<small class="form-hint">Необязательное поле. JSON объект с дополнительными точками</small>
+					<label for="supplierWorkingHours" class="form-label">Время работы</label>
+					<input type="text" id="supplierWorkingHours" name="working_hours" class="form-input" placeholder="Например: Пн-Пт: 9:00-18:00, Сб: 10:00-16:00" />
+				</div>
+				<div class="form-group">
+					<label for="supplierAdditionalInfo" class="form-label">Дополнительная информация</label>
+					<textarea id="supplierAdditionalInfo" name="additional_info" class="form-textarea" rows="4" placeholder="Любая дополнительная информация о поставщике..."></textarea>
+					<small class="form-hint">Необязательное поле. Любая дополнительная информация</small>
+				</div>
+				<div class="form-group">
+					<label for="supplierInfo" class="form-label">Дополнительные точки (JSON, опционально)</label>
+					<textarea id="supplierInfo" name="info" class="form-textarea" rows="3" placeholder='{"Склад": "53.874443, 27.413769", "Офис": "53.883330, 27.455246"}'></textarea>
+					<small class="form-hint">Необязательное поле. JSON объект с дополнительными точками для маршрутов</small>
 				</div>
 				<div class="form-actions">
 					<button type="submit" class="btn btn-primary modal-btn">Сохранить</button>
