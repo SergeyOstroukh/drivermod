@@ -28,15 +28,21 @@
 			tab.classList.toggle("active", tab.dataset.section === section);
 		});
 
-		// Скрываем все разделы
-		document.querySelectorAll(".content-section").forEach(sec => {
-			sec.style.display = "none";
+		// Скрываем только основные разделы (не historySection и mileageSection)
+		const mainSections = ["suppliersSection", "driversSection", "vehiclesSection"];
+		mainSections.forEach(sectionId => {
+			const sec = document.getElementById(sectionId);
+			if (sec) {
+				sec.style.display = "none";
+				sec.classList.remove("active");
+			}
 		});
 
 		// Показываем нужный раздел
 		const targetSection = document.getElementById(`${section}Section`);
 		if (targetSection) {
 			targetSection.style.display = "block";
+			targetSection.classList.add("active");
 		}
 
 		// Обновляем заголовок
