@@ -560,6 +560,7 @@
 	async function loadHistory(vehicleId) {
 		try {
 			historyEntries = await window.VehiclesDB.getVehicleHistory(vehicleId);
+			console.log("Загруженная история:", historyEntries);
 			renderHistory();
 		} catch (err) {
 			console.error("Ошибка загрузки истории:", err);
@@ -586,7 +587,24 @@
 			const li = document.createElement("li");
 			li.className = "history-item";
 
-			const driverName = entry.driver ? entry.driver.name : "Неизвестный водитель";
+			// Отладочный вывод
+			console.log("Обработка записи истории:", entry);
+			console.log("entry.driver:", entry.driver);
+			console.log("entry.drivers:", entry.drivers);
+			
+			// Проверяем разные варианты структуры данных
+			let driver = null;
+			if (entry.driver) {
+				driver = entry.driver;
+			} else if (entry.drivers) {
+				if (Array.isArray(entry.drivers)) {
+					driver = entry.drivers.length > 0 ? entry.drivers[0] : null;
+				} else if (typeof entry.drivers === 'object') {
+					driver = entry.drivers;
+				}
+			}
+			
+			const driverName = driver && driver.name ? driver.name : "Неизвестный водитель";
 			const startDate = entry.start_date ? new Date(entry.start_date).toLocaleDateString('ru-RU') : '?';
 			const endDate = entry.end_date ? new Date(entry.end_date).toLocaleDateString('ru-RU') : 'по настоящее время';
 
@@ -674,7 +692,9 @@
 				notes: formData.get("history_notes")?.trim() || null
 			};
 
-			if (!entry.driver_id) {
+			console.log("Сохранение записи истории:", entry);
+
+			if (!entry.driver_id || isNaN(entry.driver_id)) {
 				alert("Выберите водителя");
 				return false;
 			}
@@ -684,7 +704,8 @@
 				return false;
 			}
 
-			await window.VehiclesDB.addHistoryEntry(entry);
+			const savedEntry = await window.VehiclesDB.addHistoryEntry(entry);
+			console.log("Сохраненная запись:", savedEntry);
 			await loadHistory(currentHistoryVehicleId);
 			
 			// Очищаем форму

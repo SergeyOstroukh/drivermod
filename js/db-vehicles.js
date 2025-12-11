@@ -242,25 +242,48 @@
 	async function getVehicleHistory(vehicleId) {
 		try {
 			const client = initSupabase();
-			const { data, error } = await client
+			
+			// Загружаем историю
+			const { data: historyData, error: historyError } = await client
 				.from('vehicle_driver_history')
-				.select(`
-					*,
-					drivers!vehicle_driver_history_driver_id_fkey (
-						id,
-						name,
-						phone
-					)
-				`)
+				.select('*')
 				.eq('vehicle_id', vehicleId)
 				.order('start_date', { ascending: false });
 
-			if (error) throw error;
+			if (historyError) {
+				console.error('Supabase error при загрузке истории:', historyError);
+				throw historyError;
+			}
 			
-			// Преобразуем данные
-			return (data || []).map(item => ({
+			if (!historyData || historyData.length === 0) {
+				return [];
+			}
+			
+			// Собираем уникальные ID водителей
+			const driverIds = [...new Set(historyData.map(item => item.driver_id).filter(Boolean))];
+			
+			// Загружаем водителей отдельным запросом
+			let driversMap = {};
+			if (driverIds.length > 0) {
+				const { data: driversData, error: driversError } = await client
+					.from('drivers')
+					.select('id, name, phone')
+					.in('id', driverIds);
+				
+				if (driversError) {
+					console.error('Supabase error при загрузке водителей:', driversError);
+				} else if (driversData) {
+					driversMap = driversData.reduce((acc, driver) => {
+						acc[driver.id] = driver;
+						return acc;
+					}, {});
+				}
+			}
+			
+			// Объединяем данные
+			return historyData.map(item => ({
 				...item,
-				driver: (item.drivers && item.drivers.length > 0) ? item.drivers[0] : null
+				driver: item.driver_id ? driversMap[item.driver_id] || null : null
 			}));
 		} catch (err) {
 			console.error('Ошибка получения истории:', err);
@@ -274,20 +297,31 @@
 			const { data, error } = await client
 				.from('vehicle_driver_history')
 				.insert([entry])
-				.select(`
-					*,
-					drivers!vehicle_driver_history_driver_id_fkey (
-						id,
-						name,
-						phone
-					)
-				`)
+				.select('*')
 				.single();
 
-			if (error) throw error;
+			if (error) {
+				console.error('Supabase error:', error);
+				throw error;
+			}
+			
+			// Загружаем данные водителя отдельно
+			let driver = null;
+			if (data.driver_id) {
+				const { data: driverData, error: driverError } = await client
+					.from('drivers')
+					.select('id, name, phone')
+					.eq('id', data.driver_id)
+					.single();
+				
+				if (!driverError && driverData) {
+					driver = driverData;
+				}
+			}
+			
 			return {
 				...data,
-				driver: (data.drivers && data.drivers.length > 0) ? data.drivers[0] : null
+				driver: driver
 			};
 		} catch (err) {
 			console.error('Ошибка добавления записи истории:', err);
@@ -302,20 +336,31 @@
 				.from('vehicle_driver_history')
 				.update(entry)
 				.eq('id', id)
-				.select(`
-					*,
-					drivers!vehicle_driver_history_driver_id_fkey (
-						id,
-						name,
-						phone
-					)
-				`)
+				.select('*')
 				.single();
 
-			if (error) throw error;
+			if (error) {
+				console.error('Supabase error:', error);
+				throw error;
+			}
+			
+			// Загружаем данные водителя отдельно
+			let driver = null;
+			if (data.driver_id) {
+				const { data: driverData, error: driverError } = await client
+					.from('drivers')
+					.select('id, name, phone')
+					.eq('id', data.driver_id)
+					.single();
+				
+				if (!driverError && driverData) {
+					driver = driverData;
+				}
+			}
+			
 			return {
 				...data,
-				driver: (data.drivers && data.drivers.length > 0) ? data.drivers[0] : null
+				driver: driver
 			};
 		} catch (err) {
 			console.error('Ошибка обновления записи истории:', err);
