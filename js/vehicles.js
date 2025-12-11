@@ -1009,7 +1009,7 @@
 
 		if (mileageLogEntries.length === 0) {
 			const row = document.createElement("tr");
-			row.innerHTML = '<td colspan="7" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
+			row.innerHTML = '<td colspan="9" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
 			mileageTableBody.appendChild(row);
 			return;
 		}
@@ -1080,6 +1080,10 @@
 				fuelUsed = (shiftMileage * fuelConsumption / 100).toFixed(2);
 			}
 
+			// Получаем данные о топливе
+			const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill).toFixed(2) : '—';
+			const fuelLevel = entry.fuel_level ? parseFloat(entry.fuel_level).toFixed(2) : '—';
+
 			const notes = entry.notes || '—';
 
 			row.innerHTML = `
@@ -1088,6 +1092,8 @@
 				<td class="mileage-cell">${mileage.toLocaleString()}</td>
 				<td class="shift-mileage-cell">${shiftMileage > 0 ? shiftMileage.toLocaleString() : '—'}</td>
 				<td class="fuel-cell">${fuelUsed}</td>
+				<td class="fuel-refill-cell">${fuelRefill}</td>
+				<td class="fuel-level-cell">${fuelLevel}</td>
 				<td class="notes-cell" title="${notes}">${notes}</td>
 				<td class="actions-cell">
 					<button class="btn btn-outline btn-icon-only mileage-delete" data-id="${entry.id}" title="Удалить">
@@ -1129,6 +1135,8 @@
 				driver_id: parseInt(formData.get("driver_id")),
 				mileage: parseInt(formData.get("mileage")),
 				log_date: formData.get("log_date"),
+				fuel_level: parseFloat(formData.get("fuel_level")) || null,
+				fuel_refill: parseFloat(formData.get("fuel_refill")) || null,
 				notes: formData.get("notes")?.trim() || null
 			};
 
