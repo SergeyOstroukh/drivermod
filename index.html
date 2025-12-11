@@ -239,19 +239,31 @@
 					<input type="number" id="vehicleMileage" name="mileage" class="form-input" min="0" placeholder="0" />
 				</div>
 				<div class="form-group">
+					<label for="vehicleOilChangeMileage" class="form-label">Пробег замены масла (км)</label>
+					<input type="number" id="vehicleOilChangeMileage" name="oil_change_mileage" class="form-input" min="0" placeholder="50000" />
+				</div>
+				<div class="form-group">
 					<label for="vehicleOilInterval" class="form-label">Регламент замены масла (км)</label>
 					<input type="number" id="vehicleOilInterval" name="oil_change_interval" class="form-input" min="0" placeholder="10000" />
 				</div>
 				<div class="form-group full-width">
 					<label for="vehicleOilInfo" class="form-label">Информация по замене масла</label>
-					<textarea id="vehicleOilInfo" name="oil_change_info" class="form-textarea" rows="2" placeholder="Дата последней замены, тип масла и т.д."></textarea>
+					<textarea id="vehicleOilInfo" name="oil_change_info" class="form-textarea" rows="2" placeholder="Тип масла и т.д."></textarea>
 				</div>
 				<div class="form-group">
-					<label for="vehicleInspection" class="form-label">Техосмотр действует до</label>
+					<label for="vehicleInspectionStart" class="form-label">Техосмотр с</label>
+					<input type="date" id="vehicleInspectionStart" name="inspection_start" class="form-input" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleInspection" class="form-label">Техосмотр до</label>
 					<input type="date" id="vehicleInspection" name="inspection_expiry" class="form-input" />
 				</div>
 				<div class="form-group">
-					<label for="vehicleInsurance" class="form-label">Страховка действует до</label>
+					<label for="vehicleInsuranceStart" class="form-label">Страховка с</label>
+					<input type="date" id="vehicleInsuranceStart" name="insurance_start" class="form-input" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleInsurance" class="form-label">Страховка до</label>
 					<input type="date" id="vehicleInsurance" name="insurance_expiry" class="form-input" />
 				</div>
 				<div class="form-group">

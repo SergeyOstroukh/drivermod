@@ -309,31 +309,66 @@
 				titleWrap.appendChild(subtitle);
 			}
 
-			// Проверка сроков действия
-			const warnings = [];
-			if (vehicle.inspection_expiry) {
-				const expiry = new Date(vehicle.inspection_expiry);
-				const today = new Date();
-				const daysLeft = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
-				if (daysLeft < 30) {
-					warnings.push(`⚠️ Техосмотр: ${daysLeft} дн.`);
+			// Информация о техосмотре
+			if (vehicle.inspection_start || vehicle.inspection_expiry) {
+				const inspection = document.createElement("p");
+				inspection.className = "card-subtitle";
+				const start = vehicle.inspection_start ? new Date(vehicle.inspection_start).toLocaleDateString('ru-RU') : '?';
+				const end = vehicle.inspection_expiry ? new Date(vehicle.inspection_expiry).toLocaleDateString('ru-RU') : '?';
+				inspection.textContent = `🔧 Техосмотр: ${start} - ${end}`;
+				
+				// Проверка срока действия
+				if (vehicle.inspection_expiry) {
+					const expiry = new Date(vehicle.inspection_expiry);
+					const today = new Date();
+					const daysLeft = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+					if (daysLeft < 30) {
+						inspection.style.color = "var(--danger)";
+						inspection.textContent += ` (⚠️ ${daysLeft} дн.)`;
+					}
 				}
-			}
-			if (vehicle.insurance_expiry) {
-				const expiry = new Date(vehicle.insurance_expiry);
-				const today = new Date();
-				const daysLeft = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
-				if (daysLeft < 30) {
-					warnings.push(`⚠️ Страховка: ${daysLeft} дн.`);
-				}
+				titleWrap.appendChild(inspection);
 			}
 
-			if (warnings.length > 0) {
-				const warning = document.createElement("p");
-				warning.className = "card-working-hours";
-				warning.style.color = "var(--danger)";
-				warning.textContent = warnings.join(" • ");
-				titleWrap.appendChild(warning);
+			// Информация о страховке
+			if (vehicle.insurance_start || vehicle.insurance_expiry) {
+				const insurance = document.createElement("p");
+				insurance.className = "card-subtitle";
+				const start = vehicle.insurance_start ? new Date(vehicle.insurance_start).toLocaleDateString('ru-RU') : '?';
+				const end = vehicle.insurance_expiry ? new Date(vehicle.insurance_expiry).toLocaleDateString('ru-RU') : '?';
+				insurance.textContent = `🛡️ Страховка: ${start} - ${end}`;
+				
+				// Проверка срока действия
+				if (vehicle.insurance_expiry) {
+					const expiry = new Date(vehicle.insurance_expiry);
+					const today = new Date();
+					const daysLeft = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
+					if (daysLeft < 30) {
+						insurance.style.color = "var(--danger)";
+						insurance.textContent += ` (⚠️ ${daysLeft} дн.)`;
+					}
+				}
+				titleWrap.appendChild(insurance);
+			}
+
+			// Информация о замене масла
+			if (vehicle.oil_change_mileage || vehicle.oil_change_interval) {
+				const oil = document.createElement("p");
+				oil.className = "card-subtitle";
+				const changeMileage = vehicle.oil_change_mileage || 0;
+				const interval = vehicle.oil_change_interval || 0;
+				const nextChange = changeMileage + interval;
+				oil.textContent = `🛢️ Масло: заменили на ${changeMileage.toLocaleString()} км, следующая замена на ${nextChange.toLocaleString()} км`;
+				
+				// Проверка необходимости замены
+				if (vehicle.mileage && nextChange > 0) {
+					const kmLeft = nextChange - vehicle.mileage;
+					if (kmLeft < 500) {
+						oil.style.color = "var(--danger)";
+						oil.textContent += ` (⚠️ осталось ${kmLeft} км)`;
+					}
+				}
+				titleWrap.appendChild(oil);
 			}
 
 			if (vehicle.notes) {
@@ -395,9 +430,12 @@
 			document.getElementById("vehiclePlate").value = vehicle.plate_number || "";
 			document.getElementById("vehicleDriver").value = vehicle.driver_id || "";
 			document.getElementById("vehicleMileage").value = vehicle.mileage || "";
+			document.getElementById("vehicleOilChangeMileage").value = vehicle.oil_change_mileage || "";
 			document.getElementById("vehicleOilInfo").value = vehicle.oil_change_info || "";
 			document.getElementById("vehicleOilInterval").value = vehicle.oil_change_interval || "";
+			document.getElementById("vehicleInspectionStart").value = vehicle.inspection_start || "";
 			document.getElementById("vehicleInspection").value = vehicle.inspection_expiry || "";
+			document.getElementById("vehicleInsuranceStart").value = vehicle.insurance_start || "";
 			document.getElementById("vehicleInsurance").value = vehicle.insurance_expiry || "";
 			document.getElementById("vehiclePeriodStart").value = vehicle.driver_period_start || "";
 			document.getElementById("vehiclePeriodEnd").value = vehicle.driver_period_end || "";
@@ -426,9 +464,12 @@
 				plate_number: formData.get("plate_number").trim(),
 				driver_id: formData.get("driver_id") || null,
 				mileage: parseInt(formData.get("mileage")) || 0,
+				oil_change_mileage: parseInt(formData.get("oil_change_mileage")) || null,
 				oil_change_info: formData.get("oil_change_info")?.trim() || null,
 				oil_change_interval: parseInt(formData.get("oil_change_interval")) || null,
+				inspection_start: formData.get("inspection_start") || null,
 				inspection_expiry: formData.get("inspection_expiry") || null,
+				insurance_start: formData.get("insurance_start") || null,
 				insurance_expiry: formData.get("insurance_expiry") || null,
 				driver_period_start: formData.get("driver_period_start") || null,
 				driver_period_end: formData.get("driver_period_end") || null,
