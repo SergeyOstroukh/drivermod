@@ -1047,53 +1047,51 @@
 			return dateA - dateB;
 		});
 
+		// Сначала рассчитываем пробег за смену для всех записей и сохраняем
+		const shiftMileages = [];
 		sortedEntries.forEach((entry, index) => {
-			const row = document.createElement("tr");
-
-			const driverName = entry.driver && entry.driver.name ? entry.driver.name : "Неизвестный водитель";
-			const date = entry.log_date ? new Date(entry.log_date).toLocaleDateString('ru-RU') : '?';
-			const mileage = entry.mileage || 0;
-			
-			// Рассчитываем пробег за смену
 			let shiftMileage = 0;
 			if (index === 0) {
 				// Для первой (самой старой) записи в списке:
 				if (sortedEntries.length === 1) {
 					// Если это единственная запись, пробег за смену = разница с предыдущим пробегом из карточки
-					// Используем сохраненный предыдущий пробег или вычисляем из текущего пробега в карточке
-					const baseMileage = previousVehicleMileage !== null ? previousVehicleMileage : (vehicleMileage - mileage);
-					shiftMileage = mileage - baseMileage;
-					
-					// Если расчет дал <= 0, значит это первая запись вообще - пробег за смену = текущий пробег
+					const baseMileage = previousVehicleMileage !== null ? previousVehicleMileage : (vehicleMileage - entry.mileage);
+					shiftMileage = entry.mileage - baseMileage;
 					if (shiftMileage <= 0) {
-						shiftMileage = mileage;
+						shiftMileage = entry.mileage;
 					}
 				} else {
 					// Если есть другие записи, вычисляем базовый пробег
-					// Базовый пробег = текущий пробег в карточке минус сумма всех пробегов за смену из остальных записей
 					let totalShiftMileage = 0;
 					for (let i = 1; i < sortedEntries.length; i++) {
 						const prevMileage = sortedEntries[i - 1].mileage || 0;
 						totalShiftMileage += (sortedEntries[i].mileage - prevMileage);
 					}
 					const baseMileage = vehicleMileage - totalShiftMileage;
-					shiftMileage = mileage - baseMileage;
-					
-					// Если расчет дал <= 0, используем сохраненный предыдущий пробег
+					shiftMileage = entry.mileage - baseMileage;
 					if (shiftMileage <= 0 && previousVehicleMileage !== null) {
-						shiftMileage = mileage - previousVehicleMileage;
+						shiftMileage = entry.mileage - previousVehicleMileage;
 					}
-					
-					// Если все еще <= 0, значит пробег уже был обновлен, используем текущий пробег
 					if (shiftMileage <= 0) {
-						shiftMileage = mileage;
+						shiftMileage = entry.mileage;
 					}
 				}
 			} else {
 				// Для последующих записей: разница с предыдущей записью
 				const prevMileage = sortedEntries[index - 1].mileage || 0;
-				shiftMileage = mileage - prevMileage;
+				shiftMileage = entry.mileage - prevMileage;
 			}
+			shiftMileages.push(shiftMileage);
+		});
+
+		// Теперь создаем строки таблицы с расчетом уровня топлива
+		sortedEntries.forEach((entry, index) => {
+			const row = document.createElement("tr");
+
+			const driverName = entry.driver && entry.driver.name ? entry.driver.name : "Неизвестный водитель";
+			const date = entry.log_date ? new Date(entry.log_date).toLocaleDateString('ru-RU') : '?';
+			const mileage = entry.mileage || 0;
+			const shiftMileage = shiftMileages[index] || 0;
 
 			// Рассчитываем расход топлива
 			let fuelUsed = '—';
@@ -1118,25 +1116,17 @@
 					prevFuelLevel = sortedEntries[index - 1].calculated_fuel_level || 0;
 				}
 				
-				// Рассчитываем расход для предыдущей записи
-				let prevShiftMileage = 0;
-				if (index === 1) {
-					// Для второй записи: разница с первой
-					prevShiftMileage = sortedEntries[0].mileage - (previousVehicleMileage || sortedEntries[0].mileage);
-					if (prevShiftMileage <= 0) {
-						prevShiftMileage = sortedEntries[0].mileage;
-					}
-				} else {
-					// Для последующих: разница с предыдущей записью
-					prevShiftMileage = sortedEntries[index - 1].mileage - sortedEntries[index - 2].mileage;
-				}
+				// Используем уже рассчитанный пробег за смену для предыдущей записи
+				const prevShiftMileage = shiftMileages[index - 1] || 0;
 				
+				// Рассчитываем расход для предыдущей записи
 				const prevFuelUsed = prevShiftMileage > 0 && fuelConsumption > 0 
 					? (prevShiftMileage * fuelConsumption / 100) 
 					: 0;
 				const prevFuelRefill = sortedEntries[index - 1].fuel_refill ? parseFloat(sortedEntries[index - 1].fuel_refill) : 0;
 				
 				// Рассчитываем уровень после предыдущей смены
+				// Уровень после предыдущей смены = начальный уровень - расход + заправка
 				const levelAfterPrevShift = prevFuelLevel - prevFuelUsed + prevFuelRefill;
 				
 				// Текущий уровень = уровень после предыдущей смены - текущий расход + текущая заправка
@@ -1145,6 +1135,17 @@
 					: 0;
 				const currentFuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
 				fuelLevel = levelAfterPrevShift - currentFuelUsed + currentFuelRefill;
+				
+				console.log(`Расчет уровня топлива для записи ${index}:`, {
+					prevFuelLevel,
+					prevShiftMileage,
+					prevFuelUsed,
+					prevFuelRefill,
+					levelAfterPrevShift,
+					currentFuelUsed,
+					currentFuelRefill,
+					fuelLevel
+				});
 			}
 			
 			// Сохраняем рассчитанный уровень в объекте записи для использования в следующей итерации
