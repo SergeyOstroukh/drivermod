@@ -72,6 +72,18 @@ body {
 	margin: 0 auto;
 }
 
+@media (min-width: 1200px) {
+	.container {
+		max-width: 1400px;
+	}
+}
+
+@media (min-width: 1600px) {
+	.container {
+		max-width: 1800px;
+	}
+}
+
 .status {
 	margin-bottom: 12px;
 	color: var(--muted);
@@ -374,7 +386,19 @@ body {
 }
 
 @media (min-width: 560px) {
-	.cards { grid-template-columns: 1fr 1fr; }
+	.cards { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 900px) {
+	.cards { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (min-width: 1200px) {
+	.cards { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (min-width: 1600px) {
+	.cards { grid-template-columns: repeat(5, 1fr); }
 }
 
 /* Форма для добавления/редактирования поставщика */
