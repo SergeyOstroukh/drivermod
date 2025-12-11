@@ -1012,26 +1012,55 @@
 			return;
 		}
 
+		// Получаем расход топлива из карточки автомобиля
 		const fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
+		// Получаем текущий пробег из карточки автомобиля (для расчета первой записи)
+		const vehicleMileage = currentVehicle ? (currentVehicle.mileage || 0) : 0;
 
-		mileageLogEntries.forEach((entry, index) => {
+		// Сортируем записи по дате (от старых к новым) для правильного расчета
+		const sortedEntries = [...mileageLogEntries].sort((a, b) => {
+			const dateA = new Date(a.log_date);
+			const dateB = new Date(b.log_date);
+			return dateA - dateB;
+		});
+
+		sortedEntries.forEach((entry, index) => {
 			const row = document.createElement("tr");
 
 			const driverName = entry.driver && entry.driver.name ? entry.driver.name : "Неизвестный водитель";
 			const date = entry.log_date ? new Date(entry.log_date).toLocaleDateString('ru-RU') : '?';
 			const mileage = entry.mileage || 0;
 			
-			// Рассчитываем пробег за смену (разница с предыдущей записью)
+			// Рассчитываем пробег за смену
 			let shiftMileage = 0;
-			if (index > 0) {
-				const prevMileage = mileageLogEntries[index - 1].mileage || 0;
+			if (index === 0) {
+				// Для первой (самой старой) записи в списке:
+				// Вычисляем базовый пробег как текущий пробег в карточке минус сумма всех пробегов за смену из остальных записей
+				let totalShiftMileage = 0;
+				for (let i = 1; i < sortedEntries.length; i++) {
+					const prevMileage = sortedEntries[i - 1].mileage || 0;
+					totalShiftMileage += (sortedEntries[i].mileage - prevMileage);
+				}
+				// Базовый пробег = текущий пробег в карточке минус сумма всех пробегов за смену из остальных записей
+				const baseMileage = vehicleMileage - totalShiftMileage;
+				shiftMileage = mileage - baseMileage;
+				
+				// Если это единственная запись или расчет дал <= 0, 
+				// пробег за смену = текущий пробег (значит это первая запись вообще)
+				if (sortedEntries.length === 1 || shiftMileage <= 0) {
+					shiftMileage = mileage;
+				}
+			} else {
+				// Для последующих записей: разница с предыдущей записью
+				const prevMileage = sortedEntries[index - 1].mileage || 0;
 				shiftMileage = mileage - prevMileage;
 			}
 
 			// Рассчитываем расход топлива
-			const fuelUsed = shiftMileage > 0 && fuelConsumption > 0 
-				? (shiftMileage * fuelConsumption / 100).toFixed(2)
-				: '—';
+			let fuelUsed = '—';
+			if (shiftMileage > 0 && fuelConsumption > 0) {
+				fuelUsed = (shiftMileage * fuelConsumption / 100).toFixed(2);
+			}
 
 			const notes = entry.notes || '—';
 
