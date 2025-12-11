@@ -108,7 +108,7 @@
 				.from('vehicles')
 				.select(`
 					*,
-					drivers!vehicles_driver_id_fkey (
+					drivers (
 						id,
 						name,
 						phone
@@ -116,13 +116,29 @@
 				`)
 				.order('plate_number', { ascending: true });
 
-			if (error) throw error;
+			if (error) {
+				console.error('Supabase error:', error);
+				throw error;
+			}
 			
-			// Преобразуем данные для удобства (Supabase возвращает массив drivers)
-			return (data || []).map(vehicle => ({
-				...vehicle,
-				drivers: (vehicle.drivers && vehicle.drivers.length > 0) ? vehicle.drivers[0] : null
-			}));
+			// Преобразуем данные для удобства
+			return (data || []).map(vehicle => {
+				let driver = null;
+				
+				// Supabase может вернуть данные в разных форматах
+				if (vehicle.drivers) {
+					if (Array.isArray(vehicle.drivers)) {
+						driver = vehicle.drivers.length > 0 ? vehicle.drivers[0] : null;
+					} else if (typeof vehicle.drivers === 'object') {
+						driver = vehicle.drivers;
+					}
+				}
+				
+				return {
+					...vehicle,
+					drivers: driver
+				};
+			});
 		} catch (err) {
 			console.error('Ошибка получения автомобилей:', err);
 			throw err;
@@ -137,7 +153,7 @@
 				.insert([vehicle])
 				.select(`
 					*,
-					drivers!vehicles_driver_id_fkey (
+					drivers (
 						id,
 						name,
 						phone
@@ -146,9 +162,19 @@
 				.single();
 
 			if (error) throw error;
+			
+			let driver = null;
+			if (data.drivers) {
+				if (Array.isArray(data.drivers)) {
+					driver = data.drivers.length > 0 ? data.drivers[0] : null;
+				} else if (typeof data.drivers === 'object') {
+					driver = data.drivers;
+				}
+			}
+			
 			return {
 				...data,
-				drivers: (data.drivers && data.drivers.length > 0) ? data.drivers[0] : null
+				drivers: driver
 			};
 		} catch (err) {
 			console.error('Ошибка добавления автомобиля:', err);
@@ -165,7 +191,7 @@
 				.eq('id', id)
 				.select(`
 					*,
-					drivers!vehicles_driver_id_fkey (
+					drivers (
 						id,
 						name,
 						phone
@@ -174,9 +200,19 @@
 				.single();
 
 			if (error) throw error;
+			
+			let driver = null;
+			if (data.drivers) {
+				if (Array.isArray(data.drivers)) {
+					driver = data.drivers.length > 0 ? data.drivers[0] : null;
+				} else if (typeof data.drivers === 'object') {
+					driver = data.drivers;
+				}
+			}
+			
 			return {
 				...data,
-				drivers: (data.drivers && data.drivers.length > 0) ? data.drivers[0] : null
+				drivers: driver
 			};
 		} catch (err) {
 			console.error('Ошибка обновления автомобиля:', err);

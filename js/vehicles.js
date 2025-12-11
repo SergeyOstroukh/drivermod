@@ -296,15 +296,36 @@
 			titleWrap.appendChild(title);
 
 			// Текущий водитель (выделяем жирным)
-			if (vehicle.drivers && vehicle.drivers.name) {
+			// Проверяем разные варианты структуры данных
+			let driver = null;
+			if (vehicle.drivers) {
+				// Если это объект
+				if (typeof vehicle.drivers === 'object' && !Array.isArray(vehicle.drivers)) {
+					driver = vehicle.drivers;
+				}
+				// Если это массив
+				else if (Array.isArray(vehicle.drivers) && vehicle.drivers.length > 0) {
+					driver = vehicle.drivers[0];
+				}
+			}
+			
+			if (driver && driver.name) {
 				const driverInfo = document.createElement("p");
 				driverInfo.className = "card-subtitle";
 				driverInfo.style.fontWeight = "600";
 				driverInfo.style.color = "var(--accent)";
-				driverInfo.textContent = `👤 Водитель: ${vehicle.drivers.name}`;
-				if (vehicle.drivers.phone) {
-					driverInfo.textContent += ` (${vehicle.drivers.phone})`;
+				driverInfo.textContent = `👤 Водитель: ${driver.name}`;
+				if (driver.phone) {
+					driverInfo.textContent += ` (${driver.phone})`;
 				}
+				titleWrap.appendChild(driverInfo);
+			} else if (vehicle.driver_id) {
+				// Если водитель назначен, но данные не загрузились
+				const driverInfo = document.createElement("p");
+				driverInfo.className = "card-subtitle";
+				driverInfo.style.fontStyle = "italic";
+				driverInfo.style.color = "var(--muted)";
+				driverInfo.textContent = `👤 Водитель: загрузка...`;
 				titleWrap.appendChild(driverInfo);
 			}
 
