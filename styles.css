@@ -388,6 +388,13 @@ body {
 		min-width: auto;
 		max-width: 100%;
 	}
+	.supplier-form.two-columns {
+		grid-template-columns: 1fr;
+	}
+	.modal-content-extra-large {
+		max-width: 100%;
+		padding: 16px;
+	}
 }
 
 .modal {
@@ -415,6 +422,8 @@ body {
 	max-width: 400px;
 	width: 100%;
 	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+	max-height: 90vh;
+	overflow-y: auto;
 }
 .modal-title {
 	margin: 0 0 20px 0;
@@ -471,6 +480,25 @@ body {
 /* Форма для добавления/редактирования поставщика */
 .modal-content-large {
 	max-width: 500px;
+}
+.modal-content-extra-large {
+	max-width: 900px;
+	max-height: 90vh;
+	overflow-y: auto;
+}
+.supplier-form.two-columns {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 16px;
+}
+.supplier-form.two-columns .form-group {
+	margin: 0;
+}
+.supplier-form.two-columns .form-group.full-width {
+	grid-column: 1 / -1;
+}
+.supplier-form.two-columns .form-actions {
+	grid-column: 1 / -1;
 }
 .supplier-form {
 	display: flex;

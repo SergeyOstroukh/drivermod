@@ -221,9 +221,9 @@
 
 	<!-- Модальное окно для автомобиля -->
 	<div id="vehicleModal" class="modal">
-		<div class="modal-content modal-content-large">
+		<div class="modal-content modal-content-extra-large">
 			<h3 class="modal-title" id="vehicleModalTitle">Добавить автомобиль</h3>
-			<form id="vehicleForm" class="supplier-form">
+			<form id="vehicleForm" class="supplier-form two-columns">
 				<div class="form-group">
 					<label for="vehiclePlate" class="form-label">Гос. номер *</label>
 					<input type="text" id="vehiclePlate" name="plate_number" class="form-input" required placeholder="1234 AB-7" />
@@ -239,12 +239,12 @@
 					<input type="number" id="vehicleMileage" name="mileage" class="form-input" min="0" placeholder="0" />
 				</div>
 				<div class="form-group">
-					<label for="vehicleOilInfo" class="form-label">Информация по замене масла</label>
-					<textarea id="vehicleOilInfo" name="oil_change_info" class="form-textarea" rows="2" placeholder="Дата последней замены, тип масла и т.д."></textarea>
-				</div>
-				<div class="form-group">
 					<label for="vehicleOilInterval" class="form-label">Регламент замены масла (км)</label>
 					<input type="number" id="vehicleOilInterval" name="oil_change_interval" class="form-input" min="0" placeholder="10000" />
+				</div>
+				<div class="form-group full-width">
+					<label for="vehicleOilInfo" class="form-label">Информация по замене масла</label>
+					<textarea id="vehicleOilInfo" name="oil_change_info" class="form-textarea" rows="2" placeholder="Дата последней замены, тип масла и т.д."></textarea>
 				</div>
 				<div class="form-group">
 					<label for="vehicleInspection" class="form-label">Техосмотр действует до</label>
@@ -262,7 +262,7 @@
 					<label for="vehiclePeriodEnd" class="form-label">Период использования (по)</label>
 					<input type="date" id="vehiclePeriodEnd" name="driver_period_end" class="form-input" />
 				</div>
-				<div class="form-group">
+				<div class="form-group full-width">
 					<label for="vehicleNotes" class="form-label">Примечания</label>
 					<textarea id="vehicleNotes" name="notes" class="form-textarea" rows="3" placeholder="Дополнительная информация..."></textarea>
 				</div>
