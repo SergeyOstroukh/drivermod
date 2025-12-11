@@ -1100,20 +1100,27 @@
 			}
 
 			// Рассчитываем уровень топлива автоматически
-			let fuelLevel = 0;
+			let fuelLevel = null;
 			if (index === 0) {
 				// Для первой записи: используем введенное значение
-				fuelLevel = entry.fuel_level ? parseFloat(entry.fuel_level) : 0;
-			} else {
+				fuelLevel = entry.fuel_level ? parseFloat(entry.fuel_level) : null;
+				console.log(`Первая запись (index ${index}):`, {
+					date,
+					fuel_level_from_db: entry.fuel_level,
+					fuelLevel
+				});
+			} else if (index > 0) {
 				// Для последующих записей: рассчитываем на основе предыдущей записи
 				// Получаем уровень топлива из предыдущей записи
 				let prevFuelLevel = 0;
 				if (sortedEntries[index - 1].fuel_level) {
 					// Если в предыдущей записи есть введенное значение (первая запись)
 					prevFuelLevel = parseFloat(sortedEntries[index - 1].fuel_level);
+					console.log(`Предыдущая запись имеет введенное значение fuel_level:`, prevFuelLevel);
 				} else {
 					// Если нет, используем рассчитанное значение из предыдущей итерации
 					prevFuelLevel = sortedEntries[index - 1].calculated_fuel_level || 0;
+					console.log(`Предыдущая запись использует calculated_fuel_level:`, prevFuelLevel);
 				}
 				
 				// Используем уже рассчитанный пробег за смену для предыдущей записи
@@ -1136,24 +1143,45 @@
 				const currentFuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
 				fuelLevel = levelAfterPrevShift - currentFuelUsed + currentFuelRefill;
 				
-				console.log(`Расчет уровня топлива для записи ${index}:`, {
+				console.log(`Расчет уровня топлива для записи ${index} (${date}):`, {
 					prevFuelLevel,
 					prevShiftMileage,
-					prevFuelUsed,
+					prevFuelUsed: prevFuelUsed.toFixed(2),
 					prevFuelRefill,
-					levelAfterPrevShift,
-					currentFuelUsed,
+					levelAfterPrevShift: levelAfterPrevShift.toFixed(2),
+					currentFuelUsed: currentFuelUsed.toFixed(2),
 					currentFuelRefill,
-					fuelLevel
+					fuelLevel: fuelLevel.toFixed(2)
 				});
 			}
 			
 			// Сохраняем рассчитанный уровень в объекте записи для использования в следующей итерации
+			// Важно: сохраняем даже если null, чтобы следующая итерация знала, что расчет был выполнен
 			entry.calculated_fuel_level = fuelLevel;
+			
+			// Если fuelLevel все еще null после расчета для второй и последующих записей, значит что-то пошло не так
+			if (fuelLevel === null && index > 0) {
+				console.error(`ОШИБКА: fuelLevel остался null для записи ${index}!`, {
+					entry,
+					prevEntry: sortedEntries[index - 1],
+					shiftMileage,
+					shiftMileages
+				});
+			}
 
 			// Получаем данные о топливе для отображения
 			const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill).toFixed(2) : '—';
-			const fuelLevelDisplay = fuelLevel >= 0 ? fuelLevel.toFixed(2) : '—';
+			// Отображаем уровень топлива (даже если отрицательный, чтобы видеть проблему)
+			const fuelLevelDisplay = fuelLevel !== null && fuelLevel !== undefined ? fuelLevel.toFixed(2) : '—';
+			
+			console.log(`Запись ${index}:`, {
+				date,
+				mileage,
+				shiftMileage,
+				fuelLevel,
+				fuelLevelDisplay,
+				entry_fuel_level: entry.fuel_level
+			});
 
 			const notes = entry.notes || '—';
 
