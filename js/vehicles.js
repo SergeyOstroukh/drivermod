@@ -913,7 +913,7 @@
 		openMileageTable(actualVehicle);
 	}
 
-	function openMileageTable(vehicle) {
+	async function openMileageTable(vehicle) {
 		console.log("openMileageTable вызвана, vehicle:", vehicle);
 		const mileageSection = document.getElementById("mileageSection");
 		const vehiclesSection = document.getElementById("vehiclesSection");
