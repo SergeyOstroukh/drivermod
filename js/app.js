@@ -23,6 +23,7 @@
 	let openInfoMenu = null;
 	let selectedSuppliers = new Set(); // Set of supplier names (unique identifier)
 	let pendingRoute = null; // { type: 'single' | 'multi', data: {...} }
+	let editingSupplierId = null; // ID поставщика, который редактируется
 
 	function setYear() {
 		if (yearEl) yearEl.textContent = String(new Date().getFullYear());
@@ -300,21 +301,48 @@
 
 	async function loadSuppliers() {
 		try {
-			const res = await fetch("suppliers.json", { cache: "no-store" });
-			if (!res.ok) throw new Error("Не удалось загрузить suppliers.json");
-			const data = await res.json();
-			if (!Array.isArray(data)) throw new Error("Неверный формат suppliers.json");
-			suppliers = data;
+			// Проверяем подключение к Supabase
+			const connection = await window.SuppliersDB.checkConnection();
+			if (!connection.connected) {
+				setGeoStatus(`Ошибка подключения к базе данных: ${connection.message || 'Проверьте, запущен ли Docker контейнер'}`);
+				suppliers = [];
+				filteredSuppliers = [];
+				return;
+			}
+
+			// Проверяем, есть ли данные в базе
+			const hasData = await window.SuppliersDB.hasData();
+			
+			if (!hasData) {
+				// Если база пуста, пытаемся импортировать из suppliers.json
+				try {
+					const res = await fetch("suppliers.json", { cache: "no-store" });
+					if (res.ok) {
+						const data = await res.json();
+						if (Array.isArray(data) && data.length > 0) {
+							await window.SuppliersDB.import(data);
+							setGeoStatus(`Импортировано ${data.length} поставщиков из suppliers.json`);
+						}
+					}
+				} catch (err) {
+					console.warn("Не удалось загрузить suppliers.json для импорта:", err);
+				}
+			}
+			
+			// Загружаем данные из базы с ID
+			suppliers = await window.SuppliersDB.getAllWithId();
 			filteredSuppliers = suppliers.slice();
+			
+			if (suppliers.length === 0) {
+				setGeoStatus("База данных пуста. Добавьте первого поставщика.");
+			} else {
+				setGeoStatus(`Загружено ${suppliers.length} поставщиков из PostgreSQL`);
+			}
 		} catch (err) {
-			console.error(err);
-			// Fallback sample if file missing
-			suppliers = [
-				{ name: "Поставщик 1", address: "Склад на МКАД", lat: 55.751999, lon: 37.617734 },
-				{ name: "Поставщик 2", address: "Терминал Юг", lat: 55.579210, lon: 37.692110 }
-			];
-			setGeoStatus("Не удалось загрузить suppliers.json — использую пример.");
-			filteredSuppliers = suppliers.slice();
+			console.error("Ошибка загрузки поставщиков:", err);
+			setGeoStatus(`Ошибка загрузки данных: ${err.message || 'Проверьте подключение к базе данных'}`);
+			suppliers = [];
+			filteredSuppliers = [];
 		}
 	}
 
@@ -490,8 +518,22 @@
 				openWithFallback(naviPlace, mapsPlace);
 			});
 
+			// Кнопка редактирования
+			const editBtn = document.createElement("button");
+			editBtn.className = "btn btn-outline btn-icon-only";
+			editBtn.type = "button";
+			editBtn.title = "Редактировать";
+			editBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+				<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+			</svg>`;
+			editBtn.addEventListener("click", () => {
+				openSupplierModal(supplier);
+			});
+
 			actions.appendChild(goBtn);
 			actions.appendChild(openBtn);
+			actions.appendChild(editBtn);
 
 			const infoPoints = parseInfoPoints(supplier.info);
 			if (infoPoints.length) {
@@ -581,6 +623,117 @@
 		);
 	}
 
+	function openSupplierModal(supplier = null) {
+		const modal = document.getElementById("supplierModal");
+		const form = document.getElementById("supplierForm");
+		const title = document.getElementById("supplierModalTitle");
+		const deleteBtn = document.getElementById("deleteSupplierBtn");
+		
+		if (!modal || !form) return;
+		
+		editingSupplierId = supplier ? supplier.id : null;
+		
+		if (supplier) {
+			title.textContent = "Редактировать поставщика";
+			document.getElementById("supplierName").value = supplier.name || "";
+			document.getElementById("supplierAddress").value = supplier.address || "";
+			document.getElementById("supplierLat").value = supplier.lat || "";
+			document.getElementById("supplierLon").value = supplier.lon || "";
+			document.getElementById("supplierInfo").value = supplier.info ? JSON.stringify(supplier.info, null, 2) : "";
+			deleteBtn.style.display = "block";
+		} else {
+			title.textContent = "Добавить поставщика";
+			form.reset();
+			deleteBtn.style.display = "none";
+		}
+		
+		modal.classList.add("is-open");
+	}
+
+	function closeSupplierModal() {
+		const modal = document.getElementById("supplierModal");
+		if (modal) {
+			modal.classList.remove("is-open");
+		}
+		editingSupplierId = null;
+	}
+
+	async function saveSupplier(formData) {
+		try {
+			const supplier = {
+				name: formData.get("name").trim(),
+				address: formData.get("address")?.trim() || "",
+				lat: parseFloat(formData.get("lat")),
+				lon: parseFloat(formData.get("lon"))
+			};
+			
+			// Валидация
+			if (!supplier.name) {
+				alert("Название обязательно для заполнения");
+				return false;
+			}
+			if (isNaN(supplier.lat) || isNaN(supplier.lon)) {
+				alert("Координаты должны быть числами");
+				return false;
+			}
+			if (supplier.lat < -90 || supplier.lat > 90) {
+				alert("Широта должна быть от -90 до 90");
+				return false;
+			}
+			if (supplier.lon < -180 || supplier.lon > 180) {
+				alert("Долгота должна быть от -180 до 180");
+				return false;
+			}
+			
+			// Парсим дополнительную информацию, если есть
+			const infoText = formData.get("info")?.trim();
+			if (infoText) {
+				try {
+					supplier.info = JSON.parse(infoText);
+				} catch (e) {
+					alert("Ошибка в формате JSON дополнительной информации. Поле будет проигнорировано.");
+				}
+			}
+			
+			// Обновляем или добавляем поставщика
+			if (editingSupplierId) {
+				// Редактируем существующего
+				await window.SuppliersDB.update(editingSupplierId, supplier);
+			} else {
+				// Добавляем нового
+				await window.SuppliersDB.add(supplier);
+			}
+			
+			// Перезагружаем список
+			await loadSuppliers();
+			renderSuppliers(filteredSuppliers);
+			closeSupplierModal();
+			return true;
+		} catch (err) {
+			console.error("Ошибка сохранения поставщика:", err);
+			alert("Не удалось сохранить поставщика: " + err.message);
+			return false;
+		}
+	}
+
+	async function deleteSupplier() {
+		if (!editingSupplierId) return;
+		
+		if (!confirm("Вы уверены, что хотите удалить этого поставщика?")) {
+			return;
+		}
+		
+		try {
+			await window.SuppliersDB.delete(editingSupplierId);
+			await loadSuppliers();
+			renderSuppliers(filteredSuppliers);
+			closeSupplierModal();
+		} catch (err) {
+			console.error("Ошибка удаления поставщика:", err);
+			alert("Не удалось удалить поставщика: " + err.message);
+		}
+	}
+
 	function attachEvents() {
 		if (detectBtn) detectBtn.addEventListener("click", detectLocation);
 		if (officeBtn) {
@@ -592,6 +745,10 @@
 			warehouseBtn.addEventListener("click", () => {
 				openRoute(WAREHOUSE_COORDS.lat, WAREHOUSE_COORDS.lon, "Склад");
 			});
+		}
+		const addSupplierBtn = document.getElementById("addSupplierBtn");
+		if (addSupplierBtn) {
+			addSupplierBtn.addEventListener("click", () => openSupplierModal());
 		}
 		const buildRouteBtn = document.getElementById("buildRouteBtn");
 		if (buildRouteBtn) {
@@ -620,6 +777,30 @@
 					hideRouteModal();
 				}
 			});
+		}
+		const supplierModal = document.getElementById("supplierModal");
+		if (supplierModal) {
+			supplierModal.addEventListener("click", (e) => {
+				if (e.target === supplierModal) {
+					closeSupplierModal();
+				}
+			});
+		}
+		const supplierForm = document.getElementById("supplierForm");
+		if (supplierForm) {
+			supplierForm.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				const formData = new FormData(e.target);
+				await saveSupplier(formData);
+			});
+		}
+		const cancelSupplierBtn = document.getElementById("cancelSupplierBtn");
+		if (cancelSupplierBtn) {
+			cancelSupplierBtn.addEventListener("click", closeSupplierModal);
+		}
+		const deleteSupplierBtn = document.getElementById("deleteSupplierBtn");
+		if (deleteSupplierBtn) {
+			deleteSupplierBtn.addEventListener("click", deleteSupplier);
 		}
 		if (searchInput) {
 			searchInput.addEventListener("input", (e) => {

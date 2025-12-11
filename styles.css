@@ -377,4 +377,75 @@ body {
 	.cards { grid-template-columns: 1fr 1fr; }
 }
 
+/* Форма для добавления/редактирования поставщика */
+.modal-content-large {
+	max-width: 500px;
+}
+.supplier-form {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+.form-group {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.form-label {
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--fg);
+}
+.form-input,
+.form-textarea {
+	width: 100%;
+	background: #0e1729;
+	color: var(--fg);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 10px 12px;
+	font-size: 14px;
+	font-family: inherit;
+}
+.form-input:focus,
+.form-textarea:focus {
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+.form-textarea {
+	resize: vertical;
+	min-height: 80px;
+}
+.form-hint {
+	font-size: 12px;
+	color: var(--muted);
+	margin-top: -4px;
+}
+.form-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 8px;
+}
+.form-actions .modal-btn {
+	margin: 0;
+}
+
+/* Кнопки редактирования/удаления в карточке */
+.card-edit-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 4px;
+}
+.btn-icon-only {
+	padding: 6px;
+	width: 32px;
+	height: 32px;
+	justify-content: center;
+}
+.btn-icon-only .btn-icon {
+	margin: 0;
+}
+
 

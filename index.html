@@ -15,6 +15,13 @@
 			<input id="searchInput" class="search-input" type="search" placeholder="Поиск по названию" autocomplete="off" />
 		</label>
 		<div class="header-actions">
+			<button id="addSupplierBtn" class="btn btn-primary" type="button">
+				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<line x1="12" y1="5" x2="12" y2="19"></line>
+					<line x1="5" y1="12" x2="19" y2="12"></line>
+				</svg>
+				Добавить
+			</button>
 			<button id="officeBtn" class="btn btn-secondary" type="button">
 				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
@@ -93,6 +100,43 @@
 		</div>
 	</div>
 
+	<div id="supplierModal" class="modal">
+		<div class="modal-content modal-content-large">
+			<h3 class="modal-title" id="supplierModalTitle">Добавить поставщика</h3>
+			<form id="supplierForm" class="supplier-form">
+				<div class="form-group">
+					<label for="supplierName" class="form-label">Название *</label>
+					<input type="text" id="supplierName" name="name" class="form-input" required placeholder="Например: Агропарк-М" />
+				</div>
+				<div class="form-group">
+					<label for="supplierAddress" class="form-label">Адрес</label>
+					<input type="text" id="supplierAddress" name="address" class="form-input" placeholder="Например: 4 пер. монтажников 5" />
+				</div>
+				<div class="form-group">
+					<label for="supplierLat" class="form-label">Широта (lat) *</label>
+					<input type="number" id="supplierLat" name="lat" class="form-input" step="any" required placeholder="53.874443" />
+				</div>
+				<div class="form-group">
+					<label for="supplierLon" class="form-label">Долгота (lon) *</label>
+					<input type="number" id="supplierLon" name="lon" class="form-input" step="any" required placeholder="27.413769" />
+				</div>
+				<div class="form-group">
+					<label for="supplierInfo" class="form-label">Дополнительная информация (JSON)</label>
+					<textarea id="supplierInfo" name="info" class="form-textarea" rows="4" placeholder='{"Склад": "53.874443, 27.413769", "Офис": "53.883330, 27.455246"}'></textarea>
+					<small class="form-hint">Необязательное поле. JSON объект с дополнительными точками</small>
+				</div>
+				<div class="form-actions">
+					<button type="submit" class="btn btn-primary modal-btn">Сохранить</button>
+					<button type="button" id="cancelSupplierBtn" class="btn btn-outline modal-btn">Отмена</button>
+					<button type="button" id="deleteSupplierBtn" class="btn btn-danger modal-btn" style="display: none;">Удалить</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
+	<script src="js/config.js"></script>
+	<script src="js/db.js"></script>
 	<script src="js/app.js"></script>
 </body>
 </html>
