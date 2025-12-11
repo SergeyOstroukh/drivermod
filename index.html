@@ -10,11 +10,17 @@
 </head>
 <body>
 	<header class="header">
-		<h1>Поставщики</h1>
-		<label class="search">
-			<input id="searchInput" class="search-input" type="search" placeholder="Поиск по названию" autocomplete="off" />
-		</label>
-		<div class="header-actions">
+		<nav class="nav-tabs">
+			<button class="nav-tab active" data-section="suppliers">Поставщики</button>
+			<button class="nav-tab" data-section="drivers">Водители</button>
+			<button class="nav-tab" data-section="vehicles">Автомобили</button>
+		</nav>
+		<div class="header-top">
+			<h1 id="pageTitle">Поставщики</h1>
+			<label class="search">
+				<input id="searchInput" class="search-input" type="search" placeholder="Поиск по названию" autocomplete="off" />
+			</label>
+			<div class="header-actions">
 			<button id="addSupplierBtn" class="btn btn-primary" type="button">
 				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<line x1="12" y1="5" x2="12" y2="19"></line>
@@ -37,26 +43,62 @@
 				Склад
 			</button>
 			<button id="detectLocationBtn" class="btn btn-secondary" type="button">Обновить геопозицию</button>
+			</div>
 		</div>
 	</header>
 
 	<main id="app" class="container">
-		<section id="status" class="status">
-			<span id="geoStatus">Ожидание геопозиции…</span>
-		</section>
+		<!-- Раздел Поставщики -->
+		<div id="suppliersSection" class="content-section active">
+			<section id="status" class="status">
+				<span id="geoStatus">Ожидание геопозиции…</span>
+			</section>
 
-		<section class="route-section">
-			<button id="buildRouteBtn" class="btn btn-primary route-btn" type="button" disabled>
-				Поехать по маршруту
-			</button>
-			<button id="clearSelectionBtn" class="btn btn-outline route-btn" type="button">
-				Сбросить выбранное
-			</button>
-		</section>
+			<section class="route-section">
+				<button id="buildRouteBtn" class="btn btn-primary route-btn" type="button" disabled>
+					Поехать по маршруту
+				</button>
+				<button id="clearSelectionBtn" class="btn btn-outline route-btn" type="button">
+					Сбросить выбранное
+				</button>
+			</section>
 
-		<section>
-			<ul id="suppliersList" class="cards"></ul>
-		</section>
+			<section>
+				<ul id="suppliersList" class="cards"></ul>
+			</section>
+		</div>
+
+		<!-- Раздел Водители -->
+		<div id="driversSection" class="content-section" style="display: none;">
+			<section class="section-header">
+				<button id="addDriverBtn" class="btn btn-primary" type="button">
+					<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="12" y1="5" x2="12" y2="19"></line>
+						<line x1="5" y1="12" x2="19" y2="12"></line>
+					</svg>
+					Добавить водителя
+				</button>
+			</section>
+			<section>
+				<ul id="driversList" class="cards"></ul>
+			</section>
+		</div>
+
+		<!-- Раздел Автомобили -->
+		<div id="vehiclesSection" class="content-section" style="display: none;">
+			<section class="section-header">
+				<button id="addVehicleBtn" class="btn btn-primary" type="button">
+					<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="12" y1="5" x2="12" y2="19"></line>
+						<line x1="5" y1="12" x2="19" y2="12"></line>
+					</svg>
+					Добавить автомобиль
+				</button>
+			</section>
+			<section>
+				<ul id="vehiclesList" class="cards"></ul>
+			</section>
+		</div>
 	</main>
 
 	<footer class="footer">
@@ -143,10 +185,102 @@
 		</div>
 	</div>
 
+	<!-- Модальное окно для водителя -->
+	<div id="driverModal" class="modal">
+		<div class="modal-content modal-content-large">
+			<h3 class="modal-title" id="driverModalTitle">Добавить водителя</h3>
+			<form id="driverForm" class="supplier-form">
+				<div class="form-group">
+					<label for="driverName" class="form-label">ФИО *</label>
+					<input type="text" id="driverName" name="name" class="form-input" required placeholder="Иванов Иван Иванович" />
+				</div>
+				<div class="form-group">
+					<label for="driverPhone" class="form-label">Телефон</label>
+					<input type="tel" id="driverPhone" name="phone" class="form-input" placeholder="+375 29 123-45-67" />
+				</div>
+				<div class="form-group">
+					<label for="driverLicense" class="form-label">Номер водительского удостоверения</label>
+					<input type="text" id="driverLicense" name="license_number" class="form-input" placeholder="AB123456" />
+				</div>
+				<div class="form-group">
+					<label for="driverLicenseExpiry" class="form-label">Срок действия удостоверения</label>
+					<input type="date" id="driverLicenseExpiry" name="license_expiry" class="form-input" />
+				</div>
+				<div class="form-group">
+					<label for="driverNotes" class="form-label">Примечания</label>
+					<textarea id="driverNotes" name="notes" class="form-textarea" rows="3" placeholder="Дополнительная информация..."></textarea>
+				</div>
+				<div class="form-actions">
+					<button type="submit" class="btn btn-primary modal-btn">Сохранить</button>
+					<button type="button" id="cancelDriverBtn" class="btn btn-outline modal-btn">Отмена</button>
+					<button type="button" id="deleteDriverBtn" class="btn btn-danger modal-btn" style="display: none;">Удалить</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<!-- Модальное окно для автомобиля -->
+	<div id="vehicleModal" class="modal">
+		<div class="modal-content modal-content-large">
+			<h3 class="modal-title" id="vehicleModalTitle">Добавить автомобиль</h3>
+			<form id="vehicleForm" class="supplier-form">
+				<div class="form-group">
+					<label for="vehiclePlate" class="form-label">Гос. номер *</label>
+					<input type="text" id="vehiclePlate" name="plate_number" class="form-input" required placeholder="1234 AB-7" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleDriver" class="form-label">Водитель</label>
+					<select id="vehicleDriver" name="driver_id" class="form-input">
+						<option value="">Не назначен</option>
+					</select>
+				</div>
+				<div class="form-group">
+					<label for="vehicleMileage" class="form-label">Пробег (км)</label>
+					<input type="number" id="vehicleMileage" name="mileage" class="form-input" min="0" placeholder="0" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleOilInfo" class="form-label">Информация по замене масла</label>
+					<textarea id="vehicleOilInfo" name="oil_change_info" class="form-textarea" rows="2" placeholder="Дата последней замены, тип масла и т.д."></textarea>
+				</div>
+				<div class="form-group">
+					<label for="vehicleOilInterval" class="form-label">Регламент замены масла (км)</label>
+					<input type="number" id="vehicleOilInterval" name="oil_change_interval" class="form-input" min="0" placeholder="10000" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleInspection" class="form-label">Техосмотр действует до</label>
+					<input type="date" id="vehicleInspection" name="inspection_expiry" class="form-input" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleInsurance" class="form-label">Страховка действует до</label>
+					<input type="date" id="vehicleInsurance" name="insurance_expiry" class="form-input" />
+				</div>
+				<div class="form-group">
+					<label for="vehiclePeriodStart" class="form-label">Период использования (с)</label>
+					<input type="date" id="vehiclePeriodStart" name="driver_period_start" class="form-input" />
+				</div>
+				<div class="form-group">
+					<label for="vehiclePeriodEnd" class="form-label">Период использования (по)</label>
+					<input type="date" id="vehiclePeriodEnd" name="driver_period_end" class="form-input" />
+				</div>
+				<div class="form-group">
+					<label for="vehicleNotes" class="form-label">Примечания</label>
+					<textarea id="vehicleNotes" name="notes" class="form-textarea" rows="3" placeholder="Дополнительная информация..."></textarea>
+				</div>
+				<div class="form-actions">
+					<button type="submit" class="btn btn-primary modal-btn">Сохранить</button>
+					<button type="button" id="cancelVehicleBtn" class="btn btn-outline modal-btn">Отмена</button>
+					<button type="button" id="deleteVehicleBtn" class="btn btn-danger modal-btn" style="display: none;">Удалить</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
 	<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
 	<script src="js/config.js"></script>
 	<script src="js/db.js"></script>
+	<script src="js/db-vehicles.js"></script>
 	<script src="js/app.js"></script>
+	<script src="js/vehicles.js"></script>
 </body>
 </html>
 

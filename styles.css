@@ -25,14 +25,56 @@ body {
 	top: 0;
 	z-index: 10;
 	display: flex;
-	align-items: center;
-	justify-content: space-between;
+	flex-direction: column;
 	padding: 12px 16px;
 	border-bottom: 1px solid var(--border);
 	background: linear-gradient(180deg, #0b1220 0%, rgba(11,18,32,0.85) 100%);
 	backdrop-filter: blur(8px);
 	gap: 12px;
+}
+.header-top {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
 	flex-wrap: wrap;
+}
+.nav-tabs {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 8px;
+	border-bottom: 1px solid var(--border);
+	padding-bottom: 8px;
+}
+.nav-tab {
+	background: transparent;
+	border: none;
+	color: var(--muted);
+	padding: 8px 16px;
+	border-radius: 8px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 500;
+	transition: all 0.2s;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -9px;
+}
+.nav-tab:hover {
+	color: var(--fg);
+	background: rgba(255, 255, 255, 0.05);
+}
+.nav-tab.active {
+	color: var(--accent);
+	border-bottom-color: var(--accent);
+}
+.content-section {
+	display: none;
+}
+.content-section.active {
+	display: block;
+}
+.section-header {
+	margin-bottom: 16px;
 }
 .header h1 {
 	margin: 0;
@@ -104,7 +146,8 @@ body {
 	border: 1px solid var(--border);
 	border-radius: 12px;
 	padding: 14px;
-	display: grid;
+	display: flex;
+	flex-direction: column;
 	gap: 10px;
 }
 .card-header {
@@ -213,6 +256,11 @@ body {
 	display: flex;
 	gap: 8px;
 	flex-wrap: wrap;
+	align-items: flex-start;
+}
+.actions .btn {
+	flex: 0 0 auto;
+	min-width: 100px;
 }
 
 .dropdown {
@@ -268,7 +316,11 @@ body {
 	touch-action: manipulation;
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
 	gap: 6px;
+	flex-shrink: 0;
+	white-space: nowrap;
+	min-width: fit-content;
 }
 .btn-icon {
 	flex-shrink: 0;
