@@ -293,20 +293,27 @@
 			const title = document.createElement("h3");
 			title.className = "card-title";
 			title.textContent = vehicle.plate_number || "Без номера";
+			titleWrap.appendChild(title);
 
-			const info = [];
+			// Текущий водитель (выделяем жирным)
 			if (vehicle.drivers && vehicle.drivers.name) {
-				info.push(`👤 ${vehicle.drivers.name}`);
-			}
-			if (vehicle.mileage) {
-				info.push(`📊 ${vehicle.mileage.toLocaleString()} км`);
+				const driverInfo = document.createElement("p");
+				driverInfo.className = "card-subtitle";
+				driverInfo.style.fontWeight = "600";
+				driverInfo.style.color = "var(--accent)";
+				driverInfo.textContent = `👤 Водитель: ${vehicle.drivers.name}`;
+				if (vehicle.drivers.phone) {
+					driverInfo.textContent += ` (${vehicle.drivers.phone})`;
+				}
+				titleWrap.appendChild(driverInfo);
 			}
 
-			if (info.length > 0) {
-				const subtitle = document.createElement("p");
-				subtitle.className = "card-subtitle";
-				subtitle.textContent = info.join(" • ");
-				titleWrap.appendChild(subtitle);
+			// Пробег
+			if (vehicle.mileage) {
+				const mileageInfo = document.createElement("p");
+				mileageInfo.className = "card-subtitle";
+				mileageInfo.textContent = `📊 Пробег: ${vehicle.mileage.toLocaleString()} км`;
+				titleWrap.appendChild(mileageInfo);
 			}
 
 			// Информация о техосмотре
@@ -378,11 +385,18 @@
 				titleWrap.appendChild(notes);
 			}
 
-			titleWrap.appendChild(title);
 			header.appendChild(titleWrap);
 
 			const actions = document.createElement("div");
 			actions.className = "actions";
+
+			const historyBtn = document.createElement("button");
+			historyBtn.className = "btn btn-outline btn-icon-only";
+			historyBtn.title = "История использования";
+			historyBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M3 3h18v18H3zM7 3v18M3 7h18M3 12h18M3 17h18"></path>
+			</svg>`;
+			historyBtn.addEventListener("click", () => openHistoryModal(vehicle));
 
 			const editBtn = document.createElement("button");
 			editBtn.className = "btn btn-outline btn-icon-only";
@@ -393,6 +407,7 @@
 			</svg>`;
 			editBtn.addEventListener("click", () => openVehicleModal(vehicle));
 
+			actions.appendChild(historyBtn);
 			actions.appendChild(editBtn);
 			li.appendChild(header);
 			li.appendChild(actions);
@@ -514,6 +529,153 @@
 		}
 	}
 
+	// ============================================
+	// ИСТОРИЯ ИСПОЛЬЗОВАНИЯ
+	// ============================================
+
+	let currentHistoryVehicleId = null;
+	let historyEntries = [];
+
+	async function loadHistory(vehicleId) {
+		try {
+			historyEntries = await window.VehiclesDB.getVehicleHistory(vehicleId);
+			renderHistory();
+		} catch (err) {
+			console.error("Ошибка загрузки истории:", err);
+			historyEntries = [];
+			renderHistory();
+		}
+	}
+
+	function renderHistory() {
+		const historyList = document.getElementById("historyList");
+		if (!historyList) return;
+
+		historyList.innerHTML = "";
+
+		if (historyEntries.length === 0) {
+			const empty = document.createElement("li");
+			empty.className = "history-item";
+			empty.textContent = "История пуста";
+			historyList.appendChild(empty);
+			return;
+		}
+
+		historyEntries.forEach((entry) => {
+			const li = document.createElement("li");
+			li.className = "history-item";
+
+			const driverName = entry.driver ? entry.driver.name : "Неизвестный водитель";
+			const startDate = entry.start_date ? new Date(entry.start_date).toLocaleDateString('ru-RU') : '?';
+			const endDate = entry.end_date ? new Date(entry.end_date).toLocaleDateString('ru-RU') : 'по настоящее время';
+
+			li.innerHTML = `
+				<div class="history-driver">👤 ${driverName}</div>
+				<div class="history-dates">${startDate} - ${endDate}</div>
+				${entry.notes ? `<div class="history-notes">${entry.notes}</div>` : ''}
+				<button class="btn btn-outline btn-icon-only history-delete" data-id="${entry.id}" title="Удалить">
+					<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+					</svg>
+				</button>
+			`;
+
+			const deleteBtn = li.querySelector(".history-delete");
+			if (deleteBtn) {
+				deleteBtn.addEventListener("click", async () => {
+					if (confirm("Удалить эту запись из истории?")) {
+						try {
+							await window.VehiclesDB.deleteHistoryEntry(entry.id);
+							await loadHistory(currentHistoryVehicleId);
+						} catch (err) {
+							alert("Ошибка удаления: " + err.message);
+						}
+					}
+				});
+			}
+
+			historyList.appendChild(li);
+		});
+	}
+
+	function openHistoryModal(vehicle) {
+		const modal = document.getElementById("historyModal");
+		const title = document.getElementById("historyModalTitle");
+		const driverSelect = document.getElementById("historyDriver");
+		
+		if (!modal || !title) return;
+
+		currentHistoryVehicleId = vehicle.id;
+		title.textContent = `История использования: ${vehicle.plate_number}`;
+
+		// Заполняем список водителей
+		if (driverSelect) {
+			driverSelect.innerHTML = '<option value="">Выберите водителя</option>';
+			drivers.forEach(driver => {
+				const option = document.createElement("option");
+				option.value = driver.id;
+				option.textContent = driver.name;
+				driverSelect.appendChild(option);
+			});
+		}
+
+		// Очищаем форму
+		const historyForm = document.getElementById("historyForm");
+		if (historyForm) {
+			historyForm.reset();
+		}
+
+		modal.classList.add("is-open");
+		loadHistory(vehicle.id);
+	}
+
+	function closeHistoryModal() {
+		const modal = document.getElementById("historyModal");
+		if (modal) {
+			modal.classList.remove("is-open");
+		}
+		currentHistoryVehicleId = null;
+		historyEntries = [];
+	}
+
+	async function saveHistoryEntry(formData) {
+		try {
+			if (!currentHistoryVehicleId) {
+				alert("Ошибка: не выбран автомобиль");
+				return false;
+			}
+
+			const entry = {
+				vehicle_id: currentHistoryVehicleId,
+				driver_id: parseInt(formData.get("history_driver_id")),
+				start_date: formData.get("history_start_date"),
+				end_date: formData.get("history_end_date") || null,
+				notes: formData.get("history_notes")?.trim() || null
+			};
+
+			if (!entry.driver_id) {
+				alert("Выберите водителя");
+				return false;
+			}
+
+			if (!entry.start_date) {
+				alert("Укажите дату начала");
+				return false;
+			}
+
+			await window.VehiclesDB.addHistoryEntry(entry);
+			await loadHistory(currentHistoryVehicleId);
+			
+			// Очищаем форму
+			document.getElementById("historyForm").reset();
+			return true;
+		} catch (err) {
+			console.error("Ошибка сохранения записи истории:", err);
+			alert("Не удалось сохранить: " + err.message);
+			return false;
+		}
+	}
+
 	// Инициализация
 	function init() {
 		initNavigation();
@@ -581,6 +743,35 @@
 					closeVehicleModal();
 				}
 			});
+		}
+
+		const historyModal = document.getElementById("historyModal");
+		if (historyModal) {
+			historyModal.addEventListener("click", (e) => {
+				if (e.target === historyModal) {
+					closeHistoryModal();
+				}
+			});
+		}
+
+		const historyForm = document.getElementById("historyForm");
+		if (historyForm) {
+			historyForm.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				const formData = new FormData(e.target);
+				await saveHistoryEntry(formData);
+			});
+		}
+
+		const cancelHistoryBtn = document.getElementById("cancelHistoryBtn");
+		if (cancelHistoryBtn) {
+			cancelHistoryBtn.addEventListener("click", closeHistoryModal);
+		}
+
+		// Заполняем список водителей в форме истории при открытии
+		const historyDriverSelect = document.getElementById("historyDriver");
+		if (historyDriverSelect) {
+			// Будет заполняться при открытии модального окна
 		}
 	}
 

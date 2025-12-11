@@ -199,6 +199,109 @@
 		}
 	}
 
+	// ============================================
+	// ИСТОРИЯ ИСПОЛЬЗОВАНИЯ АВТОМОБИЛЕЙ
+	// ============================================
+
+	async function getVehicleHistory(vehicleId) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_driver_history')
+				.select(`
+					*,
+					drivers!vehicle_driver_history_driver_id_fkey (
+						id,
+						name,
+						phone
+					)
+				`)
+				.eq('vehicle_id', vehicleId)
+				.order('start_date', { ascending: false });
+
+			if (error) throw error;
+			
+			// Преобразуем данные
+			return (data || []).map(item => ({
+				...item,
+				driver: (item.drivers && item.drivers.length > 0) ? item.drivers[0] : null
+			}));
+		} catch (err) {
+			console.error('Ошибка получения истории:', err);
+			throw err;
+		}
+	}
+
+	async function addHistoryEntry(entry) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_driver_history')
+				.insert([entry])
+				.select(`
+					*,
+					drivers!vehicle_driver_history_driver_id_fkey (
+						id,
+						name,
+						phone
+					)
+				`)
+				.single();
+
+			if (error) throw error;
+			return {
+				...data,
+				driver: (data.drivers && data.drivers.length > 0) ? data.drivers[0] : null
+			};
+		} catch (err) {
+			console.error('Ошибка добавления записи истории:', err);
+			throw err;
+		}
+	}
+
+	async function updateHistoryEntry(id, entry) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_driver_history')
+				.update(entry)
+				.eq('id', id)
+				.select(`
+					*,
+					drivers!vehicle_driver_history_driver_id_fkey (
+						id,
+						name,
+						phone
+					)
+				`)
+				.single();
+
+			if (error) throw error;
+			return {
+				...data,
+				driver: (data.drivers && data.drivers.length > 0) ? data.drivers[0] : null
+			};
+		} catch (err) {
+			console.error('Ошибка обновления записи истории:', err);
+			throw err;
+		}
+	}
+
+	async function deleteHistoryEntry(id) {
+		try {
+			const client = initSupabase();
+			const { error } = await client
+				.from('vehicle_driver_history')
+				.delete()
+				.eq('id', id);
+
+			if (error) throw error;
+		} catch (err) {
+			console.error('Ошибка удаления записи истории:', err);
+			throw err;
+		}
+	}
+
 	// Экспортируем API
 	window.VehiclesDB = {
 		// Водители
@@ -210,7 +313,12 @@
 		getAllVehicles,
 		addVehicle,
 		updateVehicle,
-		deleteVehicle
+		deleteVehicle,
+		// История
+		getVehicleHistory,
+		addHistoryEntry,
+		updateHistoryEntry,
+		deleteHistoryEntry
 	};
 })();
 
