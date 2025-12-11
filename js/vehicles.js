@@ -1274,6 +1274,44 @@
 		window.print();
 	}
 
+	async function checkAndShowFuelLevelField() {
+		const fuelLevelGroup = document.getElementById("fuelLevelGroup");
+		const fuelLevelInput = document.getElementById("mileageFuelLevel");
+		
+		if (!fuelLevelGroup || !fuelLevelInput) {
+			console.warn("Элементы fuelLevelGroup или mileageFuelLevel не найдены");
+			return;
+		}
+		
+		try {
+			// Проверяем, есть ли уже записи для этого автомобиля
+			if (currentMileageVehicleId) {
+				const allEntries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
+				if (allEntries.length === 0) {
+					// Нет записей - показываем поле и делаем его обязательным
+					fuelLevelGroup.style.display = "block";
+					fuelLevelInput.required = true;
+					console.log("Поле начального уровня топлива показано (нет записей)");
+				} else {
+					// Есть записи - скрываем поле
+					fuelLevelGroup.style.display = "none";
+					fuelLevelInput.required = false;
+					fuelLevelInput.value = "";
+					console.log("Поле начального уровня топлива скрыто (есть записи)");
+				}
+			} else {
+				// Если автомобиль не выбран, скрываем поле
+				fuelLevelGroup.style.display = "none";
+				fuelLevelInput.required = false;
+			}
+		} catch (err) {
+			console.error("Ошибка проверки записей:", err);
+			// В случае ошибки показываем поле на всякий случай
+			fuelLevelGroup.style.display = "block";
+			fuelLevelInput.required = true;
+		}
+	}
+
 	document.addEventListener("DOMContentLoaded", init);
 })();
 
