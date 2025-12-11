@@ -425,7 +425,12 @@
 			mileageBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
 			</svg>`;
-			mileageBtn.addEventListener("click", () => openMileageModal(vehicle));
+			mileageBtn.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				console.log("Кнопка ввести пробег нажата, автомобиль:", vehicle);
+				openMileageModal(vehicle);
+			});
 
 			const historyBtn = document.createElement("button");
 			historyBtn.className = "btn btn-outline btn-icon-only";
@@ -881,17 +886,32 @@
 	let currentVehicle = null;
 
 	function openMileageModal(vehicle) {
-		currentVehicle = vehicle;
-		openMileageTable(vehicle);
+		console.log("openMileageModal вызвана, vehicle:", vehicle);
+		// Находим актуальные данные автомобиля из массива vehicles
+		const actualVehicle = vehicles.find(v => v.id === vehicle.id) || vehicle;
+		currentVehicle = actualVehicle;
+		console.log("currentVehicle установлен:", currentVehicle);
+		openMileageTable(actualVehicle);
 	}
 
 	function openMileageTable(vehicle) {
+		console.log("openMileageTable вызвана, vehicle:", vehicle);
 		const mileageSection = document.getElementById("mileageSection");
 		const vehiclesSection = document.getElementById("vehiclesSection");
 		const title = document.getElementById("mileageSectionTitle");
 		const driverSelect = document.getElementById("mileageDriver");
 		
-		if (!mileageSection || !vehiclesSection) return;
+		if (!mileageSection) {
+			console.error("mileageSection не найдена!");
+			alert("Ошибка: секция лога пробега не найдена. Проверьте консоль браузера.");
+			return;
+		}
+		
+		if (!vehiclesSection) {
+			console.error("vehiclesSection не найдена!");
+			alert("Ошибка: секция автомобилей не найдена. Проверьте консоль браузера.");
+			return;
+		}
 
 		currentMileageVehicleId = vehicle.id;
 		if (title) {
@@ -929,6 +949,7 @@
 		if (mileageForm) {
 			mileageForm.reset();
 			if (mileageDate) {
+				const today = new Date().toISOString().split('T')[0];
 				mileageDate.value = today;
 			}
 		}
