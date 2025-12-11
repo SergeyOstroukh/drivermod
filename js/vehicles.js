@@ -884,6 +884,7 @@
 	let currentMileageVehicleId = null;
 	let mileageLogEntries = [];
 	let currentVehicle = null;
+	let previousVehicleMileage = null; // Сохраняем предыдущий пробег перед добавлением записи
 
 	function openMileageModal(vehicle) {
 		console.log("openMileageModal вызвана, vehicle:", vehicle);
@@ -973,6 +974,7 @@
 		currentMileageVehicleId = null;
 		mileageLogEntries = [];
 		currentVehicle = null;
+		previousVehicleMileage = null;
 	}
 
 	async function loadMileageLog(vehicleId) {
@@ -1035,20 +1037,36 @@
 			let shiftMileage = 0;
 			if (index === 0) {
 				// Для первой (самой старой) записи в списке:
-				// Вычисляем базовый пробег как текущий пробег в карточке минус сумма всех пробегов за смену из остальных записей
-				let totalShiftMileage = 0;
-				for (let i = 1; i < sortedEntries.length; i++) {
-					const prevMileage = sortedEntries[i - 1].mileage || 0;
-					totalShiftMileage += (sortedEntries[i].mileage - prevMileage);
-				}
-				// Базовый пробег = текущий пробег в карточке минус сумма всех пробегов за смену из остальных записей
-				const baseMileage = vehicleMileage - totalShiftMileage;
-				shiftMileage = mileage - baseMileage;
-				
-				// Если это единственная запись или расчет дал <= 0, 
-				// пробег за смену = текущий пробег (значит это первая запись вообще)
-				if (sortedEntries.length === 1 || shiftMileage <= 0) {
-					shiftMileage = mileage;
+				if (sortedEntries.length === 1) {
+					// Если это единственная запись, пробег за смену = разница с предыдущим пробегом из карточки
+					// Используем сохраненный предыдущий пробег или вычисляем из текущего пробега в карточке
+					const baseMileage = previousVehicleMileage !== null ? previousVehicleMileage : (vehicleMileage - mileage);
+					shiftMileage = mileage - baseMileage;
+					
+					// Если расчет дал <= 0, значит это первая запись вообще - пробег за смену = текущий пробег
+					if (shiftMileage <= 0) {
+						shiftMileage = mileage;
+					}
+				} else {
+					// Если есть другие записи, вычисляем базовый пробег
+					// Базовый пробег = текущий пробег в карточке минус сумма всех пробегов за смену из остальных записей
+					let totalShiftMileage = 0;
+					for (let i = 1; i < sortedEntries.length; i++) {
+						const prevMileage = sortedEntries[i - 1].mileage || 0;
+						totalShiftMileage += (sortedEntries[i].mileage - prevMileage);
+					}
+					const baseMileage = vehicleMileage - totalShiftMileage;
+					shiftMileage = mileage - baseMileage;
+					
+					// Если расчет дал <= 0, используем сохраненный предыдущий пробег
+					if (shiftMileage <= 0 && previousVehicleMileage !== null) {
+						shiftMileage = mileage - previousVehicleMileage;
+					}
+					
+					// Если все еще <= 0, значит пробег уже был обновлен, используем текущий пробег
+					if (shiftMileage <= 0) {
+						shiftMileage = mileage;
+					}
 				}
 			} else {
 				// Для последующих записей: разница с предыдущей записью
@@ -1129,9 +1147,21 @@
 				return false;
 			}
 
+			// Сохраняем текущий пробег перед добавлением записи
+			const currentMileage = currentVehicle ? (currentVehicle.mileage || 0) : 0;
+			if (previousVehicleMileage === null) {
+				previousVehicleMileage = currentMileage;
+			}
+			
 			await window.VehiclesDB.addMileageLog(entry);
-			await loadMileageLog(currentMileageVehicleId);
 			await loadVehicles(); // Обновляем список автомобилей для обновления пробега
+			// Обновляем currentVehicle после загрузки
+			vehicles = await window.VehiclesDB.getAllVehicles();
+			const updatedVehicle = vehicles.find(v => v.id === currentMileageVehicleId);
+			if (updatedVehicle) {
+				currentVehicle = updatedVehicle;
+			}
+			await loadMileageLog(currentMileageVehicleId);
 			
 			// Очищаем форму
 			document.getElementById("mileageForm").reset();
