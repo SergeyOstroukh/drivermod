@@ -572,15 +572,20 @@
 				throw error;
 			}
 
-			const maxMileage = data ? data.mileage : 0;
+			// Если есть записи, обновляем пробег на максимальный
+			// Если записей нет, не обновляем пробег (оставляем прежний)
+			if (data && data.mileage) {
+				const maxMileage = data.mileage;
 
-			// Обновляем пробег в vehicles
-			const { error: updateError } = await client
-				.from('vehicles')
-				.update({ mileage: maxMileage })
-				.eq('id', vehicleId);
+				// Обновляем пробег в vehicles
+				const { error: updateError } = await client
+					.from('vehicles')
+					.update({ mileage: maxMileage })
+					.eq('id', vehicleId);
 
-			if (updateError) throw updateError;
+				if (updateError) throw updateError;
+			}
+			// Если записей нет (data === null), пробег не обновляем - остается прежний
 		} catch (err) {
 			console.error('Ошибка обновления пробега автомобиля:', err);
 			throw err;

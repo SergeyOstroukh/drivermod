@@ -1055,10 +1055,15 @@
 				// Для первой (самой старой) записи в списке:
 				if (sortedEntries.length === 1) {
 					// Если это единственная запись, пробег за смену = разница с предыдущим пробегом из карточки
-					const baseMileage = previousVehicleMileage !== null ? previousVehicleMileage : (vehicleMileage - entry.mileage);
-					shiftMileage = entry.mileage - baseMileage;
+					if (previousVehicleMileage !== null) {
+						shiftMileage = entry.mileage - previousVehicleMileage;
+					} else {
+						// Если нет предыдущего пробега, не можем вычислить пробег за смену
+						shiftMileage = 0;
+					}
+					// Если получилось отрицательное или нулевое значение, значит это первая запись - пробег за смену неизвестен
 					if (shiftMileage <= 0) {
-						shiftMileage = entry.mileage;
+						shiftMileage = 0;
 					}
 				} else {
 					// Если есть другие записи, вычисляем базовый пробег
@@ -1069,11 +1074,15 @@
 					}
 					const baseMileage = vehicleMileage - totalShiftMileage;
 					shiftMileage = entry.mileage - baseMileage;
+					
+					// Если не получилось вычислить, пробуем через previousVehicleMileage
 					if (shiftMileage <= 0 && previousVehicleMileage !== null) {
 						shiftMileage = entry.mileage - previousVehicleMileage;
 					}
+					
+					// Если все равно не получилось, пробег за смену неизвестен
 					if (shiftMileage <= 0) {
-						shiftMileage = entry.mileage;
+						shiftMileage = 0;
 					}
 				}
 			} else {
@@ -1102,11 +1111,23 @@
 			// Рассчитываем уровень топлива автоматически
 			let fuelLevel = null;
 			if (index === 0) {
-				// Для первой записи: используем введенное значение
-				fuelLevel = entry.fuel_level ? parseFloat(entry.fuel_level) : null;
+				// Для первой записи: используем введенное значение как начальный уровень
+				// Если есть пробег за смену, вычитаем расход и добавляем заправку
+				if (entry.fuel_level) {
+					const initialFuelLevel = parseFloat(entry.fuel_level);
+					const fuelUsed = shiftMileage > 0 && fuelConsumption > 0 
+						? (shiftMileage * fuelConsumption / 100) 
+						: 0;
+					const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
+					// Уровень после смены = начальный уровень - расход + заправка
+					fuelLevel = initialFuelLevel - fuelUsed + fuelRefill;
+				} else {
+					fuelLevel = null;
+				}
 				console.log(`Первая запись (index ${index}):`, {
 					date,
 					fuel_level_from_db: entry.fuel_level,
+					shiftMileage,
 					fuelLevel
 				});
 			} else if (index > 0) {

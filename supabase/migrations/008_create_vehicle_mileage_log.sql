@@ -34,15 +34,21 @@ CREATE TRIGGER update_mileage_log_updated_at BEFORE UPDATE ON public.vehicle_mil
 -- Функция для автоматического обновления пробега в vehicles при добавлении записи
 CREATE OR REPLACE FUNCTION update_vehicle_mileage()
 RETURNS TRIGGER AS $$
+DECLARE
+    max_mileage INTEGER;
 BEGIN
-    -- Обновляем пробег в таблице vehicles на максимальный из логов
-    UPDATE public.vehicles
-    SET mileage = (
-        SELECT MAX(mileage) 
-        FROM public.vehicle_mileage_log 
-        WHERE vehicle_id = NEW.vehicle_id
-    )
-    WHERE id = NEW.vehicle_id;
+    -- Получаем максимальный пробег из логов
+    SELECT MAX(mileage) INTO max_mileage
+    FROM public.vehicle_mileage_log 
+    WHERE vehicle_id = NEW.vehicle_id;
+    
+    -- Обновляем пробег только если есть записи (max_mileage не NULL)
+    IF max_mileage IS NOT NULL THEN
+        UPDATE public.vehicles
+        SET mileage = max_mileage
+        WHERE id = NEW.vehicle_id;
+    END IF;
+    -- Если записей нет, пробег не обновляем - остается прежний
     
     RETURN NEW;
 END;
