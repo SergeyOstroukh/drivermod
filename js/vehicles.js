@@ -1183,7 +1183,7 @@
 				<td class="mileage-return-cell">${mileageReturnDisplay}</td>
 				<td class="shift-mileage-cell">${shiftMileageDisplay}</td>
 				<td class="fuel-level-out-cell">${fuelLevelOutDisplay}</td>
-				<td class="fuel-level-return-cell">${fuelLevelReturnDisplay}</td>
+				<td class="fuel-level-return-cell editable-cell" data-entry-id="${entry.id}" data-fuel-level-out="${fuelLevelOut !== null ? fuelLevelOut : ''}" data-fuel-refill="${fuelRefill}" style="cursor: pointer;" title="Нажмите для редактирования">${fuelLevelReturnDisplay}</td>
 				<td class="fuel-refill-cell">${fuelRefillDisplay}</td>
 				<td class="actual-fuel-consumption-cell">${actualFuelConsumptionDisplay}</td>
 				<td class="actions-cell">
@@ -1194,6 +1194,69 @@
 					</button>
 				</td>
 			`;
+
+			// Добавляем обработчик для редактирования остатка при возвращении
+			const fuelLevelReturnCell = row.querySelector(".fuel-level-return-cell.editable-cell");
+			if (fuelLevelReturnCell && fuelLevelOut !== null) {
+				fuelLevelReturnCell.addEventListener("click", function() {
+					const cell = this;
+					const currentValue = fuelLevelReturn !== null ? fuelLevelReturn.toFixed(2) : '';
+					const input = document.createElement("input");
+					input.type = "number";
+					input.step = "0.01";
+					input.min = "0";
+					input.value = currentValue;
+					input.className = "editable-input";
+					input.style.cssText = "width: 100%; padding: 4px; border: 2px solid var(--accent); border-radius: 4px; background: var(--card); color: var(--fg); font-size: 14px;";
+					
+					cell.innerHTML = '';
+					cell.appendChild(input);
+					input.focus();
+					input.select();
+
+					const saveValue = async () => {
+						const newValue = parseFloat(input.value);
+						if (isNaN(newValue) || newValue < 0) {
+							alert("Введите корректное значение (положительное число)");
+							cell.textContent = currentValue;
+							return;
+						}
+
+						try {
+							// Получаем данные для пересчета
+							const fuelLevelOutValue = parseFloat(cell.dataset.fuelLevelOut);
+							const fuelRefillValue = parseFloat(cell.dataset.fuelRefill) || 0;
+							
+							// Пересчитываем фактический расход
+							const newActualConsumption = fuelLevelOutValue - newValue + fuelRefillValue;
+							
+							// Обновляем запись в БД
+							const entryId = parseInt(cell.dataset.entryId);
+							await window.VehiclesDB.updateMileageLog(entryId, {
+								fuel_level_return: newValue,
+								actual_fuel_consumption: newActualConsumption
+							});
+							
+							// Перезагружаем таблицу
+							await loadMileageLog(currentMileageVehicleId);
+						} catch (err) {
+							console.error("Ошибка обновления остатка топлива:", err);
+							alert("Ошибка обновления: " + err.message);
+							cell.textContent = currentValue;
+						}
+					};
+
+					input.addEventListener("blur", saveValue);
+					input.addEventListener("keydown", (e) => {
+						if (e.key === "Enter") {
+							e.preventDefault();
+							input.blur();
+						} else if (e.key === "Escape") {
+							cell.textContent = currentValue;
+						}
+					});
+				});
+			}
 
 			const deleteBtn = row.querySelector(".mileage-delete");
 			if (deleteBtn) {
