@@ -1122,8 +1122,14 @@
 				fuelLevelOut = entry.fuel_level_out ? parseFloat(entry.fuel_level_out) : 
 				              (entry.fuel_level ? parseFloat(entry.fuel_level) : null);
 			} else {
-				// Для последующих записей: остаток при возвращении предыдущей записи
-				fuelLevelOut = sortedEntries[index - 1].calculated_fuel_level_return || null;
+				// Для последующих записей: остаток при возвращении предыдущей записи из БД
+				const prevEntry = sortedEntries[index - 1];
+				if (prevEntry.fuel_level_return !== null && prevEntry.fuel_level_return !== undefined) {
+					fuelLevelOut = parseFloat(prevEntry.fuel_level_return);
+				} else {
+					// Если в БД нет значения, используем вычисленное (для обратной совместимости)
+					fuelLevelOut = prevEntry.calculated_fuel_level_return || null;
+				}
 			}
 
 			// 6. Заправка литров (вводит водитель)
@@ -1176,6 +1182,85 @@
 			const fuelRefillDisplay = fuelRefill > 0 ? fuelRefill.toFixed(2) : '—';
 			const actualFuelConsumptionDisplay = actualFuelConsumption !== null ? actualFuelConsumption.toFixed(2) : '—';
 
+			// Создаем редактируемое поле для остатка топлива при возвращении
+			const fuelLevelReturnInput = document.createElement("input");
+			fuelLevelReturnInput.type = "number";
+			fuelLevelReturnInput.className = "fuel-level-return-input";
+			fuelLevelReturnInput.step = "0.1";
+			fuelLevelReturnInput.min = "0";
+			fuelLevelReturnInput.value = fuelLevelReturn !== null ? fuelLevelReturn.toFixed(2) : "";
+			fuelLevelReturnInput.style.width = "80px";
+			fuelLevelReturnInput.style.padding = "4px 6px";
+			fuelLevelReturnInput.style.border = "1px solid var(--border)";
+			fuelLevelReturnInput.style.borderRadius = "4px";
+			fuelLevelReturnInput.style.fontSize = "14px";
+			fuelLevelReturnInput.style.textAlign = "right";
+			fuelLevelReturnInput.title = "Нажмите для редактирования остатка топлива при возвращении. Изменение автоматически пересчитает фактический расход.";
+			
+			// Сохраняем исходное значение для отмены изменений
+			const originalValue = fuelLevelReturn !== null ? fuelLevelReturn : null;
+			
+			// Обработчик изменения значения
+			fuelLevelReturnInput.addEventListener("blur", async () => {
+				const inputValue = fuelLevelReturnInput.value.trim();
+				if (inputValue === "") {
+					// Если поле пустое, восстанавливаем старое значение
+					fuelLevelReturnInput.value = originalValue !== null ? originalValue.toFixed(2) : "";
+					return;
+				}
+				
+				const newValue = parseFloat(inputValue);
+				if (isNaN(newValue) || newValue < 0) {
+					// Восстанавливаем старое значение при неверном вводе
+					fuelLevelReturnInput.value = originalValue !== null ? originalValue.toFixed(2) : "";
+					alert("Введите корректное значение (число >= 0)");
+					return;
+				}
+				
+				// Если значение не изменилось, ничего не делаем
+				if (originalValue !== null && Math.abs(newValue - originalValue) < 0.01) {
+					return;
+				}
+				
+				// Пересчитываем фактический расход
+				const newActualConsumption = fuelLevelOut !== null 
+					? fuelLevelOut - newValue + fuelRefill 
+					: null;
+				
+				// Обновляем запись в БД
+				try {
+					const updateData = {
+						fuel_level_return: newValue,
+						actual_fuel_consumption: newActualConsumption
+					};
+					
+					await window.VehiclesDB.updateMileageLog(entry.id, updateData);
+					
+					// Перезагружаем таблицу для обновления всех зависимых записей
+					await loadMileageLog(currentMileageVehicleId);
+				} catch (err) {
+					console.error("Ошибка обновления остатка топлива:", err);
+					alert("Ошибка обновления: " + err.message);
+					// Восстанавливаем старое значение
+					fuelLevelReturnInput.value = originalValue !== null ? originalValue.toFixed(2) : "";
+				}
+			});
+			
+			// Обработчик Enter для сохранения
+			fuelLevelReturnInput.addEventListener("keydown", (e) => {
+				if (e.key === "Enter") {
+					fuelLevelReturnInput.blur();
+				} else if (e.key === "Escape") {
+					// Отменяем изменения при Escape
+					fuelLevelReturnInput.value = originalValue !== null ? originalValue.toFixed(2) : "";
+					fuelLevelReturnInput.blur();
+				}
+			});
+
+			const fuelLevelReturnCell = document.createElement("td");
+			fuelLevelReturnCell.className = "fuel-level-return-cell";
+			fuelLevelReturnCell.appendChild(fuelLevelReturnInput);
+
 			row.innerHTML = `
 				<td class="shift-number-cell">${shiftNumberDisplay}</td>
 				<td class="date-cell">${date}</td>
@@ -1183,7 +1268,6 @@
 				<td class="mileage-return-cell">${mileageReturnDisplay}</td>
 				<td class="shift-mileage-cell">${shiftMileageDisplay}</td>
 				<td class="fuel-level-out-cell">${fuelLevelOutDisplay}</td>
-				<td class="fuel-level-return-cell">${fuelLevelReturnDisplay}</td>
 				<td class="fuel-refill-cell">${fuelRefillDisplay}</td>
 				<td class="actual-fuel-consumption-cell">${actualFuelConsumptionDisplay}</td>
 				<td class="actions-cell">
@@ -1194,6 +1278,10 @@
 					</button>
 				</td>
 			`;
+
+			// Вставляем ячейку с редактируемым полем перед ячейкой с заправкой
+			const fuelRefillCell = row.querySelector(".fuel-refill-cell");
+			row.insertBefore(fuelLevelReturnCell, fuelRefillCell);
 
 			const deleteBtn = row.querySelector(".mileage-delete");
 			if (deleteBtn) {
