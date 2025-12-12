@@ -1112,29 +1112,35 @@
 			} else if (index > 0) {
 				// Для последующих записей: рассчитываем на основе предыдущей записи
 				// Получаем уровень топлива из предыдущей записи
-				let prevFuelLevel = 0;
+				let levelAfterPrevShift = 0;
+				
 				if (sortedEntries[index - 1].fuel_level) {
 					// Если в предыдущей записи есть введенное значение (первая запись)
-					prevFuelLevel = parseFloat(sortedEntries[index - 1].fuel_level);
-					console.log(`Предыдущая запись имеет введенное значение fuel_level:`, prevFuelLevel);
+					// Это начальный уровень, нужно вычесть расход и добавить заправку
+					const prevFuelLevel = parseFloat(sortedEntries[index - 1].fuel_level);
+					const prevShiftMileage = shiftMileages[index - 1] || 0;
+					const prevFuelUsed = prevShiftMileage > 0 && fuelConsumption > 0 
+						? (prevShiftMileage * fuelConsumption / 100) 
+						: 0;
+					const prevFuelRefill = sortedEntries[index - 1].fuel_refill ? parseFloat(sortedEntries[index - 1].fuel_refill) : 0;
+					
+					// Уровень после предыдущей смены = начальный уровень - расход + заправка
+					levelAfterPrevShift = prevFuelLevel - prevFuelUsed + prevFuelRefill;
+					
+					console.log(`Предыдущая запись имеет введенное значение fuel_level:`, {
+						prevFuelLevel,
+						prevShiftMileage,
+						prevFuelUsed: prevFuelUsed.toFixed(2),
+						prevFuelRefill,
+						levelAfterPrevShift: levelAfterPrevShift.toFixed(2)
+					});
 				} else {
 					// Если нет, используем рассчитанное значение из предыдущей итерации
-					prevFuelLevel = sortedEntries[index - 1].calculated_fuel_level || 0;
-					console.log(`Предыдущая запись использует calculated_fuel_level:`, prevFuelLevel);
+					// Это уже уровень ПОСЛЕ предыдущей смены, не нужно вычитать расход снова
+					levelAfterPrevShift = sortedEntries[index - 1].calculated_fuel_level || 0;
+					
+					console.log(`Предыдущая запись использует calculated_fuel_level (уже после смены):`, levelAfterPrevShift);
 				}
-				
-				// Используем уже рассчитанный пробег за смену для предыдущей записи
-				const prevShiftMileage = shiftMileages[index - 1] || 0;
-				
-				// Рассчитываем расход для предыдущей записи
-				const prevFuelUsed = prevShiftMileage > 0 && fuelConsumption > 0 
-					? (prevShiftMileage * fuelConsumption / 100) 
-					: 0;
-				const prevFuelRefill = sortedEntries[index - 1].fuel_refill ? parseFloat(sortedEntries[index - 1].fuel_refill) : 0;
-				
-				// Рассчитываем уровень после предыдущей смены
-				// Уровень после предыдущей смены = начальный уровень - расход + заправка
-				const levelAfterPrevShift = prevFuelLevel - prevFuelUsed + prevFuelRefill;
 				
 				// Текущий уровень = уровень после предыдущей смены - текущий расход + текущая заправка
 				const currentFuelUsed = shiftMileage > 0 && fuelConsumption > 0 
@@ -1144,11 +1150,8 @@
 				fuelLevel = levelAfterPrevShift - currentFuelUsed + currentFuelRefill;
 				
 				console.log(`Расчет уровня топлива для записи ${index} (${date}):`, {
-					prevFuelLevel,
-					prevShiftMileage,
-					prevFuelUsed: prevFuelUsed.toFixed(2),
-					prevFuelRefill,
 					levelAfterPrevShift: levelAfterPrevShift.toFixed(2),
+					currentShiftMileage: shiftMileage,
 					currentFuelUsed: currentFuelUsed.toFixed(2),
 					currentFuelRefill,
 					fuelLevel: fuelLevel.toFixed(2)
