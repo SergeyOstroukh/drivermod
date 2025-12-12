@@ -866,6 +866,36 @@ body {
 	white-space: nowrap;
 }
 
+.mileage-print-header {
+	margin-bottom: 20px;
+	padding: 16px;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+}
+
+.print-header-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 24px;
+	align-items: center;
+}
+
+.print-header-item {
+	font-size: 14px;
+	color: var(--fg);
+}
+
+.print-header-item strong {
+	color: var(--muted);
+	margin-right: 8px;
+}
+
+.print-header-item span {
+	color: var(--fg);
+	font-weight: 500;
+}
+
 @media print {
 	body * {
 		visibility: hidden;
@@ -879,6 +909,27 @@ body {
 		left: 0;
 		top: 0;
 		width: 100%;
+	}
+	.mileage-print-header {
+		display: block !important;
+		visibility: visible !important;
+		margin-bottom: 20px;
+		padding: 12px;
+		border: 1px solid #000;
+		background: #fff;
+	}
+	.print-header-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 20px;
+	}
+	.print-header-item {
+		font-size: 14px;
+		color: #000;
+	}
+	.print-header-item strong {
+		color: #000;
+		font-weight: 600;
 	}
 	.mileage-table {
 		border: 1px solid #000;

@@ -163,6 +163,19 @@
 						<input type="month" id="mileageMonthFilter" class="form-input" />
 						<button id="mileageFilterBtn" class="btn btn-outline">Применить</button>
 					</div>
+					<div id="mileagePrintHeader" class="mileage-print-header" style="display: none;">
+						<div class="print-header-row">
+							<div class="print-header-item">
+								<strong>Водитель:</strong> <span id="printDriverName">—</span>
+							</div>
+							<div class="print-header-item">
+								<strong>Автомобиль:</strong> <span id="printVehicleName">—</span>
+							</div>
+							<div class="print-header-item">
+								<strong>Период:</strong> <span id="printPeriod">—</span>
+							</div>
+						</div>
+					</div>
 					<div class="table-wrapper">
 						<table class="mileage-table" id="mileageTable">
 							<thead>

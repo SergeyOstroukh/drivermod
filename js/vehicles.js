@@ -1256,7 +1256,84 @@
 	}
 
 	function printMileageTable() {
+		// Получаем информацию для заголовка
+		const printHeader = document.getElementById("mileagePrintHeader");
+		const printDriverName = document.getElementById("printDriverName");
+		const printVehicleName = document.getElementById("printVehicleName");
+		const printPeriod = document.getElementById("printPeriod");
+
+		if (printHeader && printDriverName && printVehicleName && printPeriod) {
+			// Информация об автомобиле
+			const vehicleName = currentVehicle ? 
+				`${currentVehicle.brand || ''} ${currentVehicle.model || ''} ${currentVehicle.plate_number || ''}`.trim() || 
+				currentVehicle.plate_number || '—' : '—';
+			printVehicleName.textContent = vehicleName;
+
+			// Информация о водителе - берем из записей
+			// Если все записи от одного водителя, показываем только его фамилию
+			let driverNames = [];
+			if (mileageLogEntries.length > 0) {
+				const uniqueDrivers = new Set();
+				mileageLogEntries.forEach(entry => {
+					if (entry.driver && entry.driver.name) {
+						uniqueDrivers.add(entry.driver.name);
+					}
+				});
+				driverNames = Array.from(uniqueDrivers);
+			}
+			
+			// Если водитель один, берем только фамилию (первое слово)
+			let driverDisplay = '—';
+			if (driverNames.length === 1) {
+				const fullName = driverNames[0];
+				const nameParts = fullName.trim().split(/\s+/);
+				driverDisplay = nameParts[0] || fullName; // Берем первое слово (фамилию)
+			} else if (driverNames.length > 1) {
+				// Если несколько водителей, показываем все фамилии
+				driverDisplay = driverNames.map(name => {
+					const nameParts = name.trim().split(/\s+/);
+					return nameParts[0] || name;
+				}).join(', ');
+			}
+			printDriverName.textContent = driverDisplay;
+
+			// Информация о периоде
+			const monthFilter = document.getElementById("mileageMonthFilter");
+			let periodText = '—';
+			if (monthFilter && monthFilter.value) {
+				const [year, month] = monthFilter.value.split('-');
+				const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 
+				                   'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+				periodText = `${monthNames[parseInt(month) - 1]} ${year}`;
+			} else if (mileageLogEntries.length > 0) {
+				// Если нет фильтра, определяем период по датам записей
+				const dates = mileageLogEntries.map(e => new Date(e.log_date)).sort((a, b) => a - b);
+				if (dates.length > 0) {
+					const firstDate = dates[0];
+					const lastDate = dates[dates.length - 1];
+					const firstDateStr = firstDate.toLocaleDateString('ru-RU');
+					const lastDateStr = lastDate.toLocaleDateString('ru-RU');
+					if (firstDateStr === lastDateStr) {
+						periodText = firstDateStr;
+					} else {
+						periodText = `${firstDateStr} - ${lastDateStr}`;
+					}
+				}
+			}
+			printPeriod.textContent = periodText;
+
+			// Показываем заголовок
+			printHeader.style.display = 'block';
+		}
+
 		window.print();
+
+		// Скрываем заголовок после печати
+		if (printHeader) {
+			setTimeout(() => {
+				printHeader.style.display = 'none';
+			}, 100);
+		}
 	}
 
 	async function checkAndShowFuelLevelField() {
