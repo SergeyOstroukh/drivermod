@@ -1089,7 +1089,8 @@
 			const row = document.createElement("tr");
 
 			// 1. Номер смены (фактическое число управления ТС)
-			const shiftNumber = entry.shift_number || (index + 1);
+			// Используем порядковый номер записи в отсортированном списке
+			const shiftNumber = index + 1;
 
 			// 2. Километраж при выезде
 			let mileageOut = 0;
