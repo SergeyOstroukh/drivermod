@@ -1051,6 +1051,39 @@
 			return dateA - dateB;
 		});
 
+		// Определяем previousVehicleMileage для первой записи
+		// Используем сохраненное значение mileage_out из БД, если оно есть
+		if (previousVehicleMileage === null && sortedEntries.length > 0) {
+			const firstEntry = sortedEntries[0];
+			if (firstEntry.mileage_out !== null && firstEntry.mileage_out !== undefined) {
+				// Используем сохраненное значение из БД
+				previousVehicleMileage = parseInt(firstEntry.mileage_out);
+			} else {
+				// Если mileage_out не сохранен в БД, вычисляем на основе текущего пробега
+				// и суммы всех пробегов за смены
+				let totalShiftMileage = 0;
+				for (let i = 1; i < sortedEntries.length; i++) {
+					const prevMileage = sortedEntries[i - 1].mileage || 0;
+					const currentMileage = sortedEntries[i].mileage || 0;
+					totalShiftMileage += (currentMileage - prevMileage);
+				}
+				// previousVehicleMileage = текущий пробег - сумма всех пробегов за смены - пробег первой записи
+				// Но это неточно, так как текущий пробег уже обновлен
+				// Лучше просто использовать 0 или вычислять: текущий пробег - пробег первой записи
+				if (sortedEntries.length === 1) {
+					// Для одной записи: пробег за смену = текущий пробег - previousVehicleMileage
+					// Но мы не знаем previousVehicleMileage, поэтому используем 0
+					previousVehicleMileage = 0;
+				} else {
+					// Для нескольких записей: вычисляем на основе текущего пробега
+					previousVehicleMileage = vehicleMileage - totalShiftMileage - (firstEntry.mileage || 0);
+					if (previousVehicleMileage < 0) {
+						previousVehicleMileage = 0;
+					}
+				}
+			}
+		}
+
 		// Теперь создаем строки таблицы с расчетом всех полей
 		sortedEntries.forEach((entry, index) => {
 			const row = document.createElement("tr");
@@ -1060,9 +1093,16 @@
 
 			// 2. Километраж при выезде
 			let mileageOut = 0;
-			if (index === 0) {
-				// Для первой записи: используем предыдущий пробег из карточки или 0
-				mileageOut = previousVehicleMileage !== null ? previousVehicleMileage : 0;
+			// Используем сохраненное значение из БД, если есть
+			if (entry.mileage_out !== null && entry.mileage_out !== undefined) {
+				mileageOut = parseInt(entry.mileage_out);
+			} else if (index === 0) {
+				// Для первой записи: если нет в БД, используем previousVehicleMileage
+				if (previousVehicleMileage !== null) {
+					mileageOut = previousVehicleMileage;
+				} else {
+					mileageOut = 0;
+				}
 			} else {
 				// Для последующих записей: километраж при возвращении предыдущей записи
 				mileageOut = sortedEntries[index - 1].mileage || 0;
@@ -1186,15 +1226,26 @@
 			const mileageReturn = parseInt(formData.get("mileage"));
 			const fuelRefill = parseFloat(formData.get("fuel_refill")) || null;
 			
-			// Для первой записи получаем начальный уровень топлива при выезде
-			const fuelLevelOut = hasEntries ? null : (parseFloat(formData.get("fuel_level_out")) || null);
+			// Определяем fuel_level_out
+			let fuelLevelOut = null;
+			if (!hasEntries) {
+				// Для первой записи получаем начальный уровень топлива при выезде
+				fuelLevelOut = parseFloat(formData.get("fuel_level_out")) || null;
+			} else {
+				// Для последующих записей: fuel_level_out = предыдущий fuel_level_return
+				const sortedExisting = [...existingEntries].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+				const lastEntry = sortedExisting[sortedExisting.length - 1];
+				fuelLevelOut = lastEntry.fuel_level_return !== null && lastEntry.fuel_level_return !== undefined 
+					? parseFloat(lastEntry.fuel_level_return) 
+					: null;
+			}
 
 			const entry = {
 				vehicle_id: currentMileageVehicleId,
 				driver_id: parseInt(formData.get("driver_id")),
 				mileage: mileageReturn, // Километраж при возвращении
 				log_date: formData.get("log_date"),
-				fuel_level_out: fuelLevelOut, // Только для первой записи
+				fuel_level_out: fuelLevelOut, // Для первой записи - из формы, для последующих - из предыдущей записи
 				fuel_refill: fuelRefill,
 				notes: formData.get("notes")?.trim() || null
 			};
@@ -1224,6 +1275,41 @@
 			const currentMileage = currentVehicle ? (currentVehicle.mileage || 0) : 0;
 			if (previousVehicleMileage === null) {
 				previousVehicleMileage = currentMileage;
+			}
+
+			// Определяем mileage_out для сохранения в БД
+			let mileageOut = 0;
+			if (!hasEntries) {
+				// Для первой записи
+				entry.mileage_out = previousVehicleMileage;
+				mileageOut = previousVehicleMileage;
+			} else {
+				// Для последующих записей: mileage_out = предыдущий mileage (километраж при возвращении)
+				// Сортируем существующие записи по дате
+				const sortedExisting = [...existingEntries].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+				const lastEntry = sortedExisting[sortedExisting.length - 1];
+				mileageOut = lastEntry.mileage || 0;
+				entry.mileage_out = mileageOut;
+			}
+
+			// Рассчитываем пробег за смену
+			const shiftMileage = mileageReturn - mileageOut;
+			
+			// Рассчитываем остаток при возвращении и фактический расход
+			if (fuelLevelOut !== null && shiftMileage > 0) {
+				const fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
+				if (fuelConsumption > 0) {
+					const expectedConsumption = (shiftMileage * fuelConsumption / 100);
+					entry.fuel_level_return = fuelLevelOut - expectedConsumption + (fuelRefill || 0);
+					entry.actual_fuel_consumption = fuelLevelOut - entry.fuel_level_return + (fuelRefill || 0);
+				} else {
+					entry.fuel_level_return = fuelLevelOut + (fuelRefill || 0);
+					entry.actual_fuel_consumption = fuelLevelOut - entry.fuel_level_return + (fuelRefill || 0);
+				}
+			} else if (fuelLevelOut !== null) {
+				// Если пробег = 0, остаток при возвращении = остаток при выезде + заправка
+				entry.fuel_level_return = fuelLevelOut + (fuelRefill || 0);
+				entry.actual_fuel_consumption = fuelLevelOut - entry.fuel_level_return + (fuelRefill || 0);
 			}
 			
 			await window.VehiclesDB.addMileageLog(entry);
