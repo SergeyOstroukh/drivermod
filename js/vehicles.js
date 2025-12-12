@@ -1028,9 +1028,9 @@
 
 		mileageTableBody.innerHTML = "";
 
-		if (mileageLogEntries.length === 0) {
+			if (mileageLogEntries.length === 0) {
 			const row = document.createElement("tr");
-			row.innerHTML = '<td colspan="9" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
+			row.innerHTML = '<td colspan="10" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
 			mileageTableBody.appendChild(row);
 			return;
 		}
@@ -1038,7 +1038,7 @@
 		// Обновляем colspan для пустой таблицы
 		const emptyRow = mileageTableBody.querySelector('tr');
 		if (emptyRow && emptyRow.innerHTML.includes('colspan')) {
-			emptyRow.innerHTML = '<td colspan="9" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
+			emptyRow.innerHTML = '<td colspan="10" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
 		}
 
 		// Получаем текущий пробег из карточки автомобиля (для расчета первой записи)
@@ -1167,6 +1167,7 @@
 
 			// Форматируем значения для отображения
 			const shiftNumberDisplay = shiftNumber;
+			const date = entry.log_date ? new Date(entry.log_date).toLocaleDateString('ru-RU') : '—';
 			const mileageOutDisplay = mileageOut > 0 ? mileageOut.toLocaleString() : '—';
 			const mileageReturnDisplay = mileageReturn.toLocaleString();
 			const shiftMileageDisplay = shiftMileage > 0 ? shiftMileage.toLocaleString() : '—';
@@ -1177,6 +1178,7 @@
 
 			row.innerHTML = `
 				<td class="shift-number-cell">${shiftNumberDisplay}</td>
+				<td class="date-cell">${date}</td>
 				<td class="mileage-out-cell">${mileageOutDisplay}</td>
 				<td class="mileage-return-cell">${mileageReturnDisplay}</td>
 				<td class="shift-mileage-cell">${shiftMileageDisplay}</td>
