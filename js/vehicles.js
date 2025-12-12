@@ -1136,10 +1136,13 @@
 			const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
 
 			// 7. Остаток топлива при возвращении (автоматически)
-			// Сначала рассчитываем остаток при возвращении по нормативному расходу
+			// Сначала проверяем, есть ли сохраненное значение в БД - оно имеет приоритет
 			let fuelLevelReturn = null;
-			if (fuelLevelOut !== null && shiftMileage > 0) {
-				// Используем нормативный расход для расчета ожидаемого расхода
+			if (entry.fuel_level_return !== null && entry.fuel_level_return !== undefined) {
+				// Если есть сохраненное значение в БД, используем его (это может быть исправленное вручную значение)
+				fuelLevelReturn = parseFloat(entry.fuel_level_return);
+			} else if (fuelLevelOut !== null && shiftMileage > 0) {
+				// Если нет сохраненного значения, рассчитываем по нормативному расходу
 				const fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
 				if (fuelConsumption > 0) {
 					// Рассчитываем ожидаемый расход по нормативу
@@ -1150,9 +1153,6 @@
 					// Если нет нормативного расхода, остаток при возвращении = остаток при выезде + заправка
 					fuelLevelReturn = fuelLevelOut + fuelRefill;
 				}
-			} else if (entry.fuel_level_return !== null && entry.fuel_level_return !== undefined) {
-				// Если есть сохраненное значение в БД, используем его
-				fuelLevelReturn = parseFloat(entry.fuel_level_return);
 			}
 
 			// 8. Фактический расход топлива за смену (автоматически)
@@ -1202,12 +1202,15 @@
 			
 			// Обработчик изменения значения
 			fuelLevelReturnInput.addEventListener("blur", async () => {
-				const inputValue = fuelLevelReturnInput.value.trim();
+				let inputValue = fuelLevelReturnInput.value.trim();
 				if (inputValue === "") {
 					// Если поле пустое, восстанавливаем старое значение
 					fuelLevelReturnInput.value = originalValue !== null ? originalValue.toFixed(2) : "";
 					return;
 				}
+				
+				// Заменяем запятую на точку для корректного парсинга
+				inputValue = inputValue.replace(',', '.');
 				
 				const newValue = parseFloat(inputValue);
 				if (isNaN(newValue) || newValue < 0) {
@@ -1229,20 +1232,43 @@
 				
 				// Обновляем запись в БД
 				try {
+					// Показываем индикацию сохранения
+					fuelLevelReturnInput.style.backgroundColor = "#2a3a2a";
+					fuelLevelReturnInput.disabled = true;
+					
 					const updateData = {
 						fuel_level_return: newValue,
 						actual_fuel_consumption: newActualConsumption
 					};
 					
-					await window.VehiclesDB.updateMileageLog(entry.id, updateData);
+					console.log("Обновление записи:", entry.id, updateData);
+					const updatedEntry = await window.VehiclesDB.updateMileageLog(entry.id, updateData);
+					
+					console.log("Запись обновлена:", updatedEntry);
+					
+					// Проверяем, что значение действительно обновлено
+					if (updatedEntry && updatedEntry.fuel_level_return !== null && updatedEntry.fuel_level_return !== undefined) {
+						const savedValue = parseFloat(updatedEntry.fuel_level_return);
+						if (Math.abs(savedValue - newValue) > 0.01) {
+							console.warn("Значение не совпадает! Ожидалось:", newValue, "Получено:", savedValue);
+						} else {
+							console.log("Значение успешно сохранено:", savedValue);
+						}
+					}
 					
 					// Перезагружаем таблицу для обновления всех зависимых записей
 					await loadMileageLog(currentMileageVehicleId);
+					
+					// Восстанавливаем нормальный вид поля
+					fuelLevelReturnInput.style.backgroundColor = "";
+					fuelLevelReturnInput.disabled = false;
 				} catch (err) {
 					console.error("Ошибка обновления остатка топлива:", err);
 					alert("Ошибка обновления: " + err.message);
 					// Восстанавливаем старое значение
 					fuelLevelReturnInput.value = originalValue !== null ? originalValue.toFixed(2) : "";
+					fuelLevelReturnInput.style.backgroundColor = "";
+					fuelLevelReturnInput.disabled = false;
 				}
 			});
 			
@@ -1254,6 +1280,16 @@
 					// Отменяем изменения при Escape
 					fuelLevelReturnInput.value = originalValue !== null ? originalValue.toFixed(2) : "";
 					fuelLevelReturnInput.blur();
+				}
+			});
+			
+			// Обработчик ввода для замены запятой на точку в реальном времени
+			fuelLevelReturnInput.addEventListener("input", (e) => {
+				let value = e.target.value;
+				// Заменяем запятую на точку
+				if (value.includes(',')) {
+					value = value.replace(',', '.');
+					e.target.value = value;
 				}
 			});
 

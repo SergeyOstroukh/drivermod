@@ -485,6 +485,7 @@
 	async function updateMileageLog(id, entry) {
 		try {
 			const client = initSupabase();
+			console.log('updateMileageLog: обновление записи', id, 'данными:', entry);
 			const { data, error } = await client
 				.from('vehicle_mileage_log')
 				.update(entry)
@@ -503,6 +504,8 @@
 				console.error('Supabase error:', error);
 				throw error;
 			}
+			
+			console.log('updateMileageLog: запись обновлена, получены данные:', data);
 
 			// Обновляем пробег в vehicles
 			if (entry.vehicle_id || data.vehicle_id) {
