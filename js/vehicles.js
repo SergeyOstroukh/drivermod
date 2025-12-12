@@ -1214,48 +1214,107 @@
 					input.focus();
 					input.select();
 
+					let isSaving = false;
+					
 					const saveValue = async () => {
-						const newValue = parseFloat(input.value);
-						if (isNaN(newValue) || newValue < 0) {
-							alert("Введите корректное значение (положительное число)");
+						if (isSaving) return; // Предотвращаем двойное сохранение
+						
+						const inputValue = input.value.trim();
+						if (!inputValue) {
+							// Если поле пустое, возвращаем старое значение
 							cell.textContent = currentValue;
 							return;
 						}
+						
+						const newValue = parseFloat(inputValue);
+						if (isNaN(newValue) || newValue < 0) {
+							alert("Введите корректное значение (положительное число)");
+							input.value = currentValue;
+							input.focus();
+							return;
+						}
+
+						// Проверяем, изменилось ли значение
+						if (Math.abs(newValue - parseFloat(currentValue)) < 0.01) {
+							// Значение не изменилось, просто возвращаем отображение
+							cell.textContent = currentValue;
+							return;
+						}
+
+						isSaving = true;
+						cell.textContent = "Сохранение...";
 
 						try {
 							// Получаем данные для пересчета
 							const fuelLevelOutValue = parseFloat(cell.dataset.fuelLevelOut);
 							const fuelRefillValue = parseFloat(cell.dataset.fuelRefill) || 0;
 							
+							if (isNaN(fuelLevelOutValue)) {
+								throw new Error("Не удалось получить остаток при выезде");
+							}
+							
 							// Пересчитываем фактический расход
 							const newActualConsumption = fuelLevelOutValue - newValue + fuelRefillValue;
 							
-							// Обновляем запись в БД
-							const entryId = parseInt(cell.dataset.entryId);
-							await window.VehiclesDB.updateMileageLog(entryId, {
+							console.log("Обновление записи:", {
+								entryId: cell.dataset.entryId,
 								fuel_level_return: newValue,
-								actual_fuel_consumption: newActualConsumption
+								actual_fuel_consumption: newActualConsumption,
+								fuelLevelOut: fuelLevelOutValue,
+								fuelRefill: fuelRefillValue
 							});
 							
+							// Обновляем запись в БД
+							const entryId = parseInt(cell.dataset.entryId);
+							if (isNaN(entryId)) {
+								throw new Error("Неверный ID записи");
+							}
+							
+							const updateData = {
+								fuel_level_return: newValue,
+								actual_fuel_consumption: newActualConsumption
+							};
+							
+							console.log("Отправка данных на обновление:", updateData);
+							
+							const updatedEntry = await window.VehiclesDB.updateMileageLog(entryId, updateData);
+							
+							console.log("Запись успешно обновлена:", updatedEntry);
+							
 							// Перезагружаем таблицу
-							await loadMileageLog(currentMileageVehicleId);
+							if (currentMileageVehicleId) {
+								await loadMileageLog(currentMileageVehicleId);
+							} else {
+								console.error("currentMileageVehicleId не установлен!");
+							}
 						} catch (err) {
 							console.error("Ошибка обновления остатка топлива:", err);
-							alert("Ошибка обновления: " + err.message);
+							alert("Ошибка обновления: " + (err.message || err));
 							cell.textContent = currentValue;
+						} finally {
+							isSaving = false;
 						}
 					};
 
-					input.addEventListener("blur", saveValue);
+					// Сохраняем при потере фокуса
+					input.addEventListener("blur", () => {
+						if (!isSaving) {
+							saveValue();
+						}
+					});
+					
+					// Сохраняем при нажатии Enter
 					input.addEventListener("keydown", (e) => {
 						if (e.key === "Enter") {
 							e.preventDefault();
-							input.blur();
+							saveValue();
 						} else if (e.key === "Escape") {
+							e.preventDefault();
+							isSaving = false;
 							cell.textContent = currentValue;
 						}
 					});
-				});
+				}
 			}
 
 			const deleteBtn = row.querySelector(".mileage-delete");
