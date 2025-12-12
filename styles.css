@@ -897,6 +897,10 @@ body {
 }
 
 @media print {
+	@page {
+		size: A4 landscape;
+		margin: 10mm;
+	}
 	body * {
 		visibility: hidden;
 	}
@@ -933,11 +937,57 @@ body {
 	}
 	.mileage-table {
 		border: 1px solid #000;
+		border-collapse: collapse;
+		page-break-inside: auto;
+	}
+	.mileage-table tbody tr {
+		page-break-inside: avoid;
+		page-break-after: auto;
+	}
+	.mileage-table thead {
+		display: table-header-group;
+	}
+	.mileage-table tfoot {
+		display: table-footer-group;
 	}
 	.mileage-table th,
 	.mileage-table td {
 		border: 1px solid #000;
+		padding: 3px 4px;
+		font-size: 9px;
+		line-height: 1.1;
+	}
+	.mileage-table th {
+		padding: 4px 4px;
+		font-size: 8px;
+		font-weight: 600;
+		letter-spacing: 0.3px;
+	}
+	.mileage-table .fuel-level-return-input {
+		width: 50px !important;
+		padding: 1px 3px !important;
+		font-size: 9px !important;
+		border: 1px solid #000 !important;
+		height: auto !important;
+	}
+	.mileage-table .shift-number-cell,
+	.mileage-table .date-cell {
+		white-space: nowrap;
+		width: auto;
+	}
+	.mileage-table .actions-cell {
+		width: 30px;
+		padding: 2px !important;
+	}
+	.mileage-table .actions-cell button {
+		display: none !important;
+	}
+	.mileage-print-header {
+		margin-bottom: 10px;
 		padding: 8px;
+	}
+	.print-header-item {
+		font-size: 11px;
 	}
 	.mileage-filters,
 	.mileage-form-section,
