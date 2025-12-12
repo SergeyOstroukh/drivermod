@@ -130,20 +130,21 @@
 							</select>
 						</div>
 						<div class="form-group">
-							<label for="mileageValue" class="form-label">Общий пробег (км) *</label>
+							<label for="mileageValue" class="form-label">Километраж при возвращении (км) *</label>
 							<input type="number" id="mileageValue" name="mileage" class="form-input" min="0" required placeholder="0" />
+							<small class="form-hint">Общий пробег автомобиля при возвращении</small>
 						</div>
 						<div class="form-group">
 							<label for="mileageDate" class="form-label">Дата *</label>
 							<input type="date" id="mileageDate" name="log_date" class="form-input" required />
 						</div>
 						<div class="form-group" id="fuelLevelGroup" style="display: none;">
-							<label for="mileageFuelLevel" class="form-label">Начальный уровень топлива (л) *</label>
-							<input type="number" id="mileageFuelLevel" name="fuel_level" class="form-input" min="0" step="0.1" placeholder="0" />
+							<label for="mileageFuelLevel" class="form-label">Начальный уровень топлива при выезде (л) *</label>
+							<input type="number" id="mileageFuelLevel" name="fuel_level_out" class="form-input" min="0" step="0.1" placeholder="0" />
 							<small class="form-hint">Укажите только для первой записи</small>
 						</div>
 						<div class="form-group">
-							<label for="mileageFuelRefill" class="form-label">Заправка за смену (л)</label>
+							<label for="mileageFuelRefill" class="form-label">Заправка литров</label>
 							<input type="number" id="mileageFuelRefill" name="fuel_refill" class="form-input" min="0" step="0.1" placeholder="0" />
 							<small class="form-hint">Оставьте пустым, если заправки не было</small>
 						</div>
@@ -166,14 +167,14 @@
 						<table class="mileage-table" id="mileageTable">
 							<thead>
 								<tr>
-									<th>Дата</th>
-									<th>Водитель</th>
-									<th>Пробег (км)</th>
-									<th>Пробег за смену (км)</th>
-									<th>Расход топлива (л)</th>
+									<th>№</th>
+									<th>Км при выезде</th>
+									<th>Км при возвращении</th>
+									<th>Пробег за сегодня (км)</th>
+									<th>Остаток при выезде (л)</th>
+									<th>Остаток при возвращении (л)</th>
 									<th>Заправка (л)</th>
-									<th>Уровень топлива (л)</th>
-									<th>Примечания</th>
+									<th>Факт. расход (л)</th>
 									<th>Действия</th>
 								</tr>
 							</thead>

@@ -1035,8 +1035,12 @@
 			return;
 		}
 
-		// Получаем расход топлива из карточки автомобиля
-		const fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
+		// Обновляем colspan для пустой таблицы
+		const emptyRow = mileageTableBody.querySelector('tr');
+		if (emptyRow && emptyRow.innerHTML.includes('colspan')) {
+			emptyRow.innerHTML = '<td colspan="9" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
+		}
+
 		// Получаем текущий пробег из карточки автомобиля (для расчета первой записи)
 		const vehicleMileage = currentVehicle ? (currentVehicle.mileage || 0) : 0;
 
@@ -1047,177 +1051,98 @@
 			return dateA - dateB;
 		});
 
-		// Сначала рассчитываем пробег за смену для всех записей и сохраняем
-		const shiftMileages = [];
-		sortedEntries.forEach((entry, index) => {
-			let shiftMileage = 0;
-			if (index === 0) {
-				// Для первой (самой старой) записи в списке:
-				if (sortedEntries.length === 1) {
-					// Если это единственная запись, пробег за смену = разница с предыдущим пробегом из карточки
-					if (previousVehicleMileage !== null) {
-						shiftMileage = entry.mileage - previousVehicleMileage;
-					} else {
-						// Если нет предыдущего пробега, не можем вычислить пробег за смену
-						shiftMileage = 0;
-					}
-					// Если получилось отрицательное или нулевое значение, значит это первая запись - пробег за смену неизвестен
-					if (shiftMileage <= 0) {
-						shiftMileage = 0;
-					}
-				} else {
-					// Если есть другие записи, вычисляем базовый пробег
-					let totalShiftMileage = 0;
-					for (let i = 1; i < sortedEntries.length; i++) {
-						const prevMileage = sortedEntries[i - 1].mileage || 0;
-						totalShiftMileage += (sortedEntries[i].mileage - prevMileage);
-					}
-					const baseMileage = vehicleMileage - totalShiftMileage;
-					shiftMileage = entry.mileage - baseMileage;
-					
-					// Если не получилось вычислить, пробуем через previousVehicleMileage
-					if (shiftMileage <= 0 && previousVehicleMileage !== null) {
-						shiftMileage = entry.mileage - previousVehicleMileage;
-					}
-					
-					// Если все равно не получилось, пробег за смену неизвестен
-					if (shiftMileage <= 0) {
-						shiftMileage = 0;
-					}
-				}
-			} else {
-				// Для последующих записей: разница с предыдущей записью
-				const prevMileage = sortedEntries[index - 1].mileage || 0;
-				shiftMileage = entry.mileage - prevMileage;
-			}
-			shiftMileages.push(shiftMileage);
-		});
-
-		// Теперь создаем строки таблицы с расчетом уровня топлива
+		// Теперь создаем строки таблицы с расчетом всех полей
 		sortedEntries.forEach((entry, index) => {
 			const row = document.createElement("tr");
 
-			const driverName = entry.driver && entry.driver.name ? entry.driver.name : "Неизвестный водитель";
-			const date = entry.log_date ? new Date(entry.log_date).toLocaleDateString('ru-RU') : '?';
-			const mileage = entry.mileage || 0;
-			const shiftMileage = shiftMileages[index] || 0;
+			// 1. Номер смены (фактическое число управления ТС)
+			const shiftNumber = entry.shift_number || (index + 1);
 
-			// Рассчитываем расход топлива
-			let fuelUsed = '—';
-			if (shiftMileage > 0 && fuelConsumption > 0) {
-				fuelUsed = (shiftMileage * fuelConsumption / 100).toFixed(2);
-			}
-
-			// Рассчитываем уровень топлива автоматически
-			let fuelLevel = null;
+			// 2. Километраж при выезде
+			let mileageOut = 0;
 			if (index === 0) {
-				// Для первой записи: используем введенное значение как начальный уровень
-				// Если есть пробег за смену, вычитаем расход и добавляем заправку
-				if (entry.fuel_level) {
-					const initialFuelLevel = parseFloat(entry.fuel_level);
-					const fuelUsed = shiftMileage > 0 && fuelConsumption > 0 
-						? (shiftMileage * fuelConsumption / 100) 
-						: 0;
-					const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
-					// Уровень после смены = начальный уровень - расход + заправка
-					fuelLevel = initialFuelLevel - fuelUsed + fuelRefill;
-				} else {
-					fuelLevel = null;
-				}
-				console.log(`Первая запись (index ${index}):`, {
-					date,
-					fuel_level_from_db: entry.fuel_level,
-					shiftMileage,
-					fuelLevel
-				});
-			} else if (index > 0) {
-				// Для последующих записей: рассчитываем на основе предыдущей записи
-				// Получаем уровень топлива из предыдущей записи
-				let levelAfterPrevShift = 0;
-				
-				if (sortedEntries[index - 1].fuel_level) {
-					// Если в предыдущей записи есть введенное значение (первая запись)
-					// Это начальный уровень, нужно вычесть расход и добавить заправку
-					const prevFuelLevel = parseFloat(sortedEntries[index - 1].fuel_level);
-					const prevShiftMileage = shiftMileages[index - 1] || 0;
-					const prevFuelUsed = prevShiftMileage > 0 && fuelConsumption > 0 
-						? (prevShiftMileage * fuelConsumption / 100) 
-						: 0;
-					const prevFuelRefill = sortedEntries[index - 1].fuel_refill ? parseFloat(sortedEntries[index - 1].fuel_refill) : 0;
-					
-					// Уровень после предыдущей смены = начальный уровень - расход + заправка
-					levelAfterPrevShift = prevFuelLevel - prevFuelUsed + prevFuelRefill;
-					
-					console.log(`Предыдущая запись имеет введенное значение fuel_level:`, {
-						prevFuelLevel,
-						prevShiftMileage,
-						prevFuelUsed: prevFuelUsed.toFixed(2),
-						prevFuelRefill,
-						levelAfterPrevShift: levelAfterPrevShift.toFixed(2)
-					});
-				} else {
-					// Если нет, используем рассчитанное значение из предыдущей итерации
-					// Это уже уровень ПОСЛЕ предыдущей смены, не нужно вычитать расход снова
-					levelAfterPrevShift = sortedEntries[index - 1].calculated_fuel_level || 0;
-					
-					console.log(`Предыдущая запись использует calculated_fuel_level (уже после смены):`, levelAfterPrevShift);
-				}
-				
-				// Текущий уровень = уровень после предыдущей смены - текущий расход + текущая заправка
-				const currentFuelUsed = shiftMileage > 0 && fuelConsumption > 0 
-					? (shiftMileage * fuelConsumption / 100) 
-					: 0;
-				const currentFuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
-				fuelLevel = levelAfterPrevShift - currentFuelUsed + currentFuelRefill;
-				
-				console.log(`Расчет уровня топлива для записи ${index} (${date}):`, {
-					levelAfterPrevShift: levelAfterPrevShift.toFixed(2),
-					currentShiftMileage: shiftMileage,
-					currentFuelUsed: currentFuelUsed.toFixed(2),
-					currentFuelRefill,
-					fuelLevel: fuelLevel.toFixed(2)
-				});
-			}
-			
-			// Сохраняем рассчитанный уровень в объекте записи для использования в следующей итерации
-			// Важно: сохраняем даже если null, чтобы следующая итерация знала, что расчет был выполнен
-			entry.calculated_fuel_level = fuelLevel;
-			
-			// Если fuelLevel все еще null после расчета для второй и последующих записей, значит что-то пошло не так
-			if (fuelLevel === null && index > 0) {
-				console.error(`ОШИБКА: fuelLevel остался null для записи ${index}!`, {
-					entry,
-					prevEntry: sortedEntries[index - 1],
-					shiftMileage,
-					shiftMileages
-				});
+				// Для первой записи: используем предыдущий пробег из карточки или 0
+				mileageOut = previousVehicleMileage !== null ? previousVehicleMileage : 0;
+			} else {
+				// Для последующих записей: километраж при возвращении предыдущей записи
+				mileageOut = sortedEntries[index - 1].mileage || 0;
 			}
 
-			// Получаем данные о топливе для отображения
-			const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill).toFixed(2) : '—';
-			// Отображаем уровень топлива (даже если отрицательный, чтобы видеть проблему)
-			const fuelLevelDisplay = fuelLevel !== null && fuelLevel !== undefined ? fuelLevel.toFixed(2) : '—';
-			
-			console.log(`Запись ${index}:`, {
-				date,
-				mileage,
-				shiftMileage,
-				fuelLevel,
-				fuelLevelDisplay,
-				entry_fuel_level: entry.fuel_level
-			});
+			// 3. Километраж при возвращении (то, что вводит водитель)
+			const mileageReturn = entry.mileage || 0;
 
-			const notes = entry.notes || '—';
+			// 4. Пробег за сегодня (автоматически)
+			const shiftMileage = mileageReturn - mileageOut;
+
+			// 5. Остаток топлива при выезде
+			let fuelLevelOut = null;
+			if (index === 0) {
+				// Для первой записи: используем введенное значение (fuel_level_out или старое поле fuel_level)
+				fuelLevelOut = entry.fuel_level_out ? parseFloat(entry.fuel_level_out) : 
+				              (entry.fuel_level ? parseFloat(entry.fuel_level) : null);
+			} else {
+				// Для последующих записей: остаток при возвращении предыдущей записи
+				fuelLevelOut = sortedEntries[index - 1].calculated_fuel_level_return || null;
+			}
+
+			// 6. Заправка литров (вводит водитель)
+			const fuelRefill = entry.fuel_refill ? parseFloat(entry.fuel_refill) : 0;
+
+			// 7. Остаток топлива при возвращении (автоматически)
+			// Сначала рассчитываем остаток при возвращении по нормативному расходу
+			let fuelLevelReturn = null;
+			if (fuelLevelOut !== null && shiftMileage > 0) {
+				// Используем нормативный расход для расчета ожидаемого расхода
+				const fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
+				if (fuelConsumption > 0) {
+					// Рассчитываем ожидаемый расход по нормативу
+					const expectedConsumption = (shiftMileage * fuelConsumption / 100);
+					// Остаток при возвращении = остаток при выезде - нормативный расход + заправка
+					fuelLevelReturn = fuelLevelOut - expectedConsumption + fuelRefill;
+				} else {
+					// Если нет нормативного расхода, остаток при возвращении = остаток при выезде + заправка
+					fuelLevelReturn = fuelLevelOut + fuelRefill;
+				}
+			} else if (entry.fuel_level_return !== null && entry.fuel_level_return !== undefined) {
+				// Если есть сохраненное значение в БД, используем его
+				fuelLevelReturn = parseFloat(entry.fuel_level_return);
+			}
+
+			// 8. Фактический расход топлива за смену (автоматически)
+			// Фактический расход = остаток при выезде - остаток при возвращении + заправка
+			let actualFuelConsumption = null;
+			if (fuelLevelOut !== null && fuelLevelReturn !== null) {
+				actualFuelConsumption = fuelLevelOut - fuelLevelReturn + fuelRefill;
+			} else if (entry.actual_fuel_consumption !== null && entry.actual_fuel_consumption !== undefined) {
+				// Если есть сохраненное значение в БД, используем его
+				actualFuelConsumption = parseFloat(entry.actual_fuel_consumption);
+			}
+
+			// Сохраняем рассчитанные значения для использования в следующей итерации
+			entry.calculated_mileage_out = mileageOut;
+			entry.calculated_fuel_level_out = fuelLevelOut;
+			entry.calculated_fuel_level_return = fuelLevelReturn;
+			entry.calculated_actual_fuel_consumption = actualFuelConsumption;
+
+			// Форматируем значения для отображения
+			const shiftNumberDisplay = shiftNumber;
+			const mileageOutDisplay = mileageOut > 0 ? mileageOut.toLocaleString() : '—';
+			const mileageReturnDisplay = mileageReturn.toLocaleString();
+			const shiftMileageDisplay = shiftMileage > 0 ? shiftMileage.toLocaleString() : '—';
+			const fuelLevelOutDisplay = fuelLevelOut !== null ? fuelLevelOut.toFixed(2) : '—';
+			const fuelLevelReturnDisplay = fuelLevelReturn !== null ? fuelLevelReturn.toFixed(2) : '—';
+			const fuelRefillDisplay = fuelRefill > 0 ? fuelRefill.toFixed(2) : '—';
+			const actualFuelConsumptionDisplay = actualFuelConsumption !== null ? actualFuelConsumption.toFixed(2) : '—';
 
 			row.innerHTML = `
-				<td class="date-cell">${date}</td>
-				<td class="driver-cell">${driverName}</td>
-				<td class="mileage-cell">${mileage.toLocaleString()}</td>
-				<td class="shift-mileage-cell">${shiftMileage > 0 ? shiftMileage.toLocaleString() : '—'}</td>
-				<td class="fuel-cell">${fuelUsed}</td>
-				<td class="fuel-refill-cell">${fuelRefill}</td>
-				<td class="fuel-level-cell">${fuelLevelDisplay}</td>
-				<td class="notes-cell" title="${notes}">${notes}</td>
+				<td class="shift-number-cell">${shiftNumberDisplay}</td>
+				<td class="mileage-out-cell">${mileageOutDisplay}</td>
+				<td class="mileage-return-cell">${mileageReturnDisplay}</td>
+				<td class="shift-mileage-cell">${shiftMileageDisplay}</td>
+				<td class="fuel-level-out-cell">${fuelLevelOutDisplay}</td>
+				<td class="fuel-level-return-cell">${fuelLevelReturnDisplay}</td>
+				<td class="fuel-refill-cell">${fuelRefillDisplay}</td>
+				<td class="actual-fuel-consumption-cell">${actualFuelConsumptionDisplay}</td>
 				<td class="actions-cell">
 					<button class="btn btn-outline btn-icon-only mileage-delete" data-id="${entry.id}" title="Удалить">
 						<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1257,13 +1182,20 @@
 			const existingEntries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
 			const hasEntries = existingEntries.length > 0;
 
+			// Получаем значения из формы
+			const mileageReturn = parseInt(formData.get("mileage"));
+			const fuelRefill = parseFloat(formData.get("fuel_refill")) || null;
+			
+			// Для первой записи получаем начальный уровень топлива при выезде
+			const fuelLevelOut = hasEntries ? null : (parseFloat(formData.get("fuel_level_out")) || null);
+
 			const entry = {
 				vehicle_id: currentMileageVehicleId,
 				driver_id: parseInt(formData.get("driver_id")),
-				mileage: parseInt(formData.get("mileage")),
+				mileage: mileageReturn, // Километраж при возвращении
 				log_date: formData.get("log_date"),
-				fuel_level: hasEntries ? null : (parseFloat(formData.get("fuel_level")) || null), // Только для первой записи
-				fuel_refill: parseFloat(formData.get("fuel_refill")) || null,
+				fuel_level_out: fuelLevelOut, // Только для первой записи
+				fuel_refill: fuelRefill,
 				notes: formData.get("notes")?.trim() || null
 			};
 
@@ -1282,9 +1214,9 @@
 				return false;
 			}
 
-			// Если это первая запись, fuel_level обязателен
-			if (!hasEntries && (!entry.fuel_level || entry.fuel_level <= 0)) {
-				alert("Для первой записи необходимо указать начальный уровень топлива");
+			// Если это первая запись, fuel_level_out обязателен
+			if (!hasEntries && (!entry.fuel_level_out || entry.fuel_level_out <= 0)) {
+				alert("Для первой записи необходимо указать начальный уровень топлива при выезде");
 				return false;
 			}
 
