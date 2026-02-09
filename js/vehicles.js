@@ -1222,6 +1222,12 @@
 
 		form.reset();
 
+		// Устанавливаем дату по умолчанию — сегодня
+		const dateInput = document.getElementById("driverEntryDate");
+		if (dateInput) {
+			dateInput.value = new Date().toISOString().split('T')[0];
+		}
+
 		// Проверяем, нужен ли начальный уровень топлива (первая запись)
 		try {
 			const entries = await window.VehiclesDB.getMileageLog(vehicle.id);
@@ -1265,7 +1271,13 @@
 			return;
 		}
 
-		const today = new Date().toISOString().split('T')[0];
+		const dateInput = document.getElementById("driverEntryDate");
+		const logDate = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
+
+		if (!logDate) {
+			alert("Укажите дату");
+			return;
+		}
 
 		try {
 			// Проверяем существующие записи
@@ -1311,7 +1323,7 @@
 				vehicle_id: driverEntryVehicle.id,
 				driver_id: currentDriverData.id,
 				mileage: mileageReturn,
-				log_date: today,
+				log_date: logDate,
 				fuel_level_out: fuelLevelOut,
 				fuel_refill: fuelRefill,
 				mileage_out: mileageOut,
