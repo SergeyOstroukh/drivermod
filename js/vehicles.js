@@ -302,11 +302,8 @@
 		// Обновляем панель пользователя
 		updateUserBar();
 
-		// Фильтруем автомобили для водителя
+		// Водитель видит все машины (могут меняться машинами)
 		let displayVehicles = vehicles;
-		if (currentRole === "driver" && currentDriverData) {
-			displayVehicles = vehicles.filter(v => v.driver_id === currentDriverData.id);
-		}
 
 		// Скрываем кнопку добавления для водителей
 		if (addVehicleBtn) {
@@ -316,9 +313,7 @@
 		if (displayVehicles.length === 0) {
 			const empty = document.createElement("li");
 			empty.className = "card";
-			empty.textContent = currentRole === "driver"
-				? "За вами не закреплён автомобиль. Обратитесь к логисту."
-				: "Автомобили не добавлены";
+			empty.textContent = "Автомобили не добавлены";
 			vehiclesListEl.appendChild(empty);
 			return;
 		}
@@ -1431,7 +1426,7 @@
 
 			if (mileageLogEntries.length === 0) {
 			const row = document.createElement("tr");
-			row.innerHTML = '<td colspan="10" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
+			row.innerHTML = '<td colspan="11" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
 			mileageTableBody.appendChild(row);
 			return;
 		}
@@ -1439,7 +1434,7 @@
 		// Обновляем colspan для пустой таблицы
 		const emptyRow = mileageTableBody.querySelector('tr');
 		if (emptyRow && emptyRow.innerHTML.includes('colspan')) {
-			emptyRow.innerHTML = '<td colspan="10" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
+			emptyRow.innerHTML = '<td colspan="11" style="text-align: center; color: var(--muted);">Записи отсутствуют</td>';
 		}
 
 		// Получаем текущий пробег из карточки автомобиля (для расчета первой записи)
@@ -1698,9 +1693,19 @@
 			fuelLevelReturnCell.className = "fuel-level-return-cell";
 			fuelLevelReturnCell.appendChild(fuelLevelReturnInput);
 
+			// Фамилия водителя за эту смену
+			const driverObj = entry.driver || entry.drivers || null;
+			let driverDisplay = '—';
+			if (driverObj && driverObj.name) {
+				// Берём фамилию (первое слово)
+				const parts = driverObj.name.trim().split(/\s+/);
+				driverDisplay = parts[0] || driverObj.name;
+			}
+
 			row.innerHTML = `
 				<td class="shift-number-cell">${shiftNumberDisplay}</td>
 				<td class="date-cell">${date}</td>
+				<td class="driver-cell">${driverDisplay}</td>
 				<td class="mileage-out-cell">${mileageOutDisplay}</td>
 				<td class="mileage-return-cell">${mileageReturnDisplay}</td>
 				<td class="shift-mileage-cell">${shiftMileageDisplay}</td>
