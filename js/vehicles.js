@@ -766,7 +766,10 @@
 
 		// Переключаем секции
 		vehiclesSection.style.display = "none";
+		vehiclesSection.classList.remove("active");
 		historySection.style.display = "block";
+		historySection.classList.add("active");
+		window.scrollTo(0, 0);
 		loadHistory(vehicle.id);
 	}
 
@@ -776,10 +779,13 @@
 		
 		if (historySection) {
 			historySection.style.display = "none";
+			historySection.classList.remove("active");
 		}
 		if (vehiclesSection) {
 			vehiclesSection.style.display = "block";
+			vehiclesSection.classList.add("active");
 		}
+		window.scrollTo(0, 0);
 		currentHistoryVehicleId = null;
 		historyEntries = [];
 	}
@@ -1360,11 +1366,15 @@
 
 		// Переключаем секции
 		vehiclesSection.style.display = "none";
+		vehiclesSection.classList.remove("active");
 		mileageSection.style.display = "block";
+		mileageSection.classList.add("active");
+
+		// Прокручиваем наверх (важно для мобильных)
+		window.scrollTo(0, 0);
 
 		// Для водителя: скрываем форму, показываем только таблицу
 		const mileageContent = mileageSection.querySelector('.mileage-content');
-		const formSection = mileageSection.querySelector('.mileage-form-section');
 		if (mileageContent) {
 			if (currentRole === "driver") {
 				mileageContent.classList.add("driver-view");
@@ -1384,10 +1394,13 @@
 		
 		if (mileageSection) {
 			mileageSection.style.display = "none";
+			mileageSection.classList.remove("active");
 		}
 		if (vehiclesSection) {
 			vehiclesSection.style.display = "block";
+			vehiclesSection.classList.add("active");
 		}
+		window.scrollTo(0, 0);
 		currentMileageVehicleId = null;
 		mileageLogEntries = [];
 		currentVehicle = null;
