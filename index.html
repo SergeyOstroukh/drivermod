@@ -20,8 +20,18 @@
 			<label class="search">
 				<input id="searchInput" class="search-input" type="search" placeholder="Поиск по названию" autocomplete="off" />
 			</label>
-			<div class="header-actions">
-			<button id="addSupplierBtn" class="btn btn-primary" type="button">
+		<div class="header-actions">
+		<button id="viewToggleBtn" class="btn btn-secondary btn-icon-only" type="button" title="Переключить вид">
+			<svg id="viewToggleIcon" class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<line x1="8" y1="6" x2="21" y2="6"></line>
+				<line x1="8" y1="12" x2="21" y2="12"></line>
+				<line x1="8" y1="18" x2="21" y2="18"></line>
+				<line x1="3" y1="6" x2="3.01" y2="6"></line>
+				<line x1="3" y1="12" x2="3.01" y2="12"></line>
+				<line x1="3" y1="18" x2="3.01" y2="18"></line>
+			</svg>
+		</button>
+		<button id="addSupplierBtn" class="btn btn-primary" type="button">
 				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<line x1="12" y1="5" x2="12" y2="19"></line>
 					<line x1="5" y1="12" x2="19" y2="12"></line>
@@ -63,10 +73,13 @@
 				</button>
 			</section>
 
-			<section>
-				<ul id="suppliersList" class="cards"></ul>
-			</section>
-		</div>
+		<section id="suppliersCardsView">
+			<ul id="suppliersList" class="cards"></ul>
+		</section>
+		<section id="suppliersListView" style="display: none;">
+			<div id="suppliersAlphaList" class="alpha-list"></div>
+		</section>
+	</div>
 
 		<!-- Раздел Водители -->
 		<div id="driversSection" class="content-section">

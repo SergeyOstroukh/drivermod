@@ -1427,6 +1427,168 @@ body {
 	}
 }
 
+/* ============================================
+   ALPHABETICAL LIST VIEW (список по алфавиту)
+   ============================================ */
+.alpha-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.alpha-empty {
+	text-align: center;
+	color: var(--muted);
+	font-size: 14px;
+	padding: 32px 0;
+}
+
+.alpha-group {
+	margin-bottom: 8px;
+}
+
+.alpha-letter {
+	font-size: 13px;
+	font-weight: 700;
+	color: var(--accent);
+	text-transform: uppercase;
+	padding: 6px 12px;
+	position: sticky;
+	top: 0;
+	background: var(--bg);
+	z-index: 2;
+	border-bottom: 1px solid var(--border);
+	letter-spacing: 1px;
+}
+
+.alpha-item {
+	border-radius: 10px;
+	overflow: hidden;
+	transition: background 0.15s;
+}
+
+.alpha-item:hover {
+	background: rgba(255, 255, 255, 0.03);
+}
+
+.alpha-item.is-expanded {
+	background: var(--card);
+	border: 1px solid var(--border);
+}
+
+.alpha-item-row {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 12px;
+	cursor: pointer;
+	-webkit-tap-highlight-color: transparent;
+	user-select: none;
+}
+
+.alpha-checkbox {
+	flex-shrink: 0;
+}
+
+.alpha-item-name {
+	font-size: 14px;
+	font-weight: 500;
+	color: var(--fg);
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.alpha-item-address {
+	font-size: 12px;
+	color: var(--muted);
+	flex-shrink: 0;
+	max-width: 40%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.alpha-chevron {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	color: var(--muted);
+	transition: transform 0.2s;
+}
+
+.alpha-chevron.is-open {
+	transform: rotate(180deg);
+}
+
+.alpha-item-details {
+	padding: 0 12px 12px 12px;
+	animation: fadeIn 0.15s ease;
+}
+
+.alpha-detail-info {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 12px;
+	padding: 10px 12px;
+	background: #0e1729;
+	border-radius: 8px;
+}
+
+.alpha-detail-row {
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.alpha-detail-label {
+	color: var(--muted);
+	font-weight: 500;
+}
+
+.alpha-detail-value {
+	color: var(--fg);
+}
+
+.coords-mono {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 12px;
+}
+
+.alpha-detail-actions {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.alpha-detail-actions .btn {
+	flex: 0 0 auto;
+	font-size: 13px;
+	padding: 8px 12px;
+}
+
+@media (max-width: 600px) {
+	.alpha-item-row {
+		padding: 10px 8px;
+		gap: 8px;
+	}
+	.alpha-item-address {
+		display: none;
+	}
+	.alpha-detail-actions {
+		flex-direction: column;
+	}
+	.alpha-detail-actions .btn {
+		width: 100%;
+	}
+	.alpha-letter {
+		font-size: 12px;
+		padding: 5px 8px;
+	}
+}
+
 /* Режим водителя - таблица на полную ширину */
 .mileage-content.driver-view {
 	grid-template-columns: 1fr;

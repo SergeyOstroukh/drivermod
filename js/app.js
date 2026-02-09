@@ -24,6 +24,8 @@
 	let selectedSuppliers = new Set(); // Set of supplier names (unique identifier)
 	let pendingRoute = null; // { type: 'single' | 'multi', data: {...} }
 	let editingSupplierId = null; // ID поставщика, который редактируется
+	let viewMode = localStorage.getItem("suppliersViewMode") || "cards"; // 'cards' | 'list'
+	let expandedListItem = null; // ID раскрытого элемента в списочном виде
 
 	function setYear() {
 		if (yearEl) yearEl.textContent = String(new Date().getFullYear());
@@ -603,7 +605,291 @@
 				return name.includes(q);
 			});
 		}
-		renderSuppliers(filteredSuppliers);
+		if (viewMode === "list") {
+			renderSuppliersListView(filteredSuppliers);
+		} else {
+			renderSuppliers(filteredSuppliers);
+		}
+	}
+
+	// ============================================
+	// ПЕРЕКЛЮЧЕНИЕ ВИДА (карточки / список)
+	// ============================================
+
+	function toggleViewMode() {
+		viewMode = viewMode === "cards" ? "list" : "cards";
+		localStorage.setItem("suppliersViewMode", viewMode);
+		updateViewToggleIcon();
+		applyCurrentView();
+	}
+
+	function updateViewToggleIcon() {
+		const icon = document.getElementById("viewToggleIcon");
+		const btn = document.getElementById("viewToggleBtn");
+		if (!icon || !btn) return;
+
+		if (viewMode === "list") {
+			// Показываем иконку «сетка» (чтобы вернуться к карточкам)
+			btn.title = "Карточки";
+			icon.innerHTML = `
+				<rect x="3" y="3" width="7" height="7" rx="1"></rect>
+				<rect x="14" y="3" width="7" height="7" rx="1"></rect>
+				<rect x="3" y="14" width="7" height="7" rx="1"></rect>
+				<rect x="14" y="14" width="7" height="7" rx="1"></rect>
+			`;
+		} else {
+			// Показываем иконку «список»
+			btn.title = "Списком";
+			icon.innerHTML = `
+				<line x1="8" y1="6" x2="21" y2="6"></line>
+				<line x1="8" y1="12" x2="21" y2="12"></line>
+				<line x1="8" y1="18" x2="21" y2="18"></line>
+				<line x1="3" y1="6" x2="3.01" y2="6"></line>
+				<line x1="3" y1="12" x2="3.01" y2="12"></line>
+				<line x1="3" y1="18" x2="3.01" y2="18"></line>
+			`;
+		}
+	}
+
+	function applyCurrentView() {
+		const cardsView = document.getElementById("suppliersCardsView");
+		const listView = document.getElementById("suppliersListView");
+		if (!cardsView || !listView) return;
+
+		if (viewMode === "list") {
+			cardsView.style.display = "none";
+			listView.style.display = "block";
+			renderSuppliersListView(filteredSuppliers);
+		} else {
+			cardsView.style.display = "block";
+			listView.style.display = "none";
+			renderSuppliers(filteredSuppliers);
+		}
+	}
+
+	function renderSuppliersListView(list = filteredSuppliers) {
+		const container = document.getElementById("suppliersAlphaList");
+		if (!container) return;
+		container.innerHTML = "";
+		expandedListItem = null;
+
+		if (!list.length) {
+			container.innerHTML = '<div class="alpha-empty">Поставщики не найдены</div>';
+			return;
+		}
+
+		// Сортируем по алфавиту
+		const sorted = [...list].sort((a, b) => {
+			const nameA = (a.name || "").toLowerCase();
+			const nameB = (b.name || "").toLowerCase();
+			return nameA.localeCompare(nameB, "ru");
+		});
+
+		// Группируем по первой букве
+		const groups = {};
+		for (const supplier of sorted) {
+			const name = (supplier.name || "").trim();
+			const letter = name.charAt(0).toUpperCase() || "#";
+			if (!groups[letter]) groups[letter] = [];
+			groups[letter].push(supplier);
+		}
+
+		// Рендерим группы
+		for (const letter of Object.keys(groups)) {
+			const groupEl = document.createElement("div");
+			groupEl.className = "alpha-group";
+
+			const letterEl = document.createElement("div");
+			letterEl.className = "alpha-letter";
+			letterEl.textContent = letter;
+			groupEl.appendChild(letterEl);
+
+			for (const supplier of groups[letter]) {
+				const itemEl = document.createElement("div");
+				itemEl.className = "alpha-item";
+				const supplierKey = `${supplier.name || ""}_${supplier.lat}_${supplier.lon}`;
+				itemEl.dataset.key = supplierKey;
+
+				// Основная строка
+				const row = document.createElement("div");
+				row.className = "alpha-item-row";
+
+				const checkbox = document.createElement("input");
+				checkbox.type = "checkbox";
+				checkbox.className = "supplier-checkbox alpha-checkbox";
+				checkbox.checked = selectedSuppliers.has(supplierKey);
+				checkbox.addEventListener("change", (e) => {
+					e.stopPropagation();
+					if (e.target.checked) {
+						selectedSuppliers.add(supplierKey);
+					} else {
+						selectedSuppliers.delete(supplierKey);
+					}
+					updateRouteButton();
+				});
+				checkbox.addEventListener("click", (e) => e.stopPropagation());
+
+				const nameEl = document.createElement("span");
+				nameEl.className = "alpha-item-name";
+				nameEl.textContent = supplier.name || "Без названия";
+
+				const addressEl = document.createElement("span");
+				addressEl.className = "alpha-item-address";
+				addressEl.textContent = supplier.address || "";
+
+				const chevron = document.createElement("span");
+				chevron.className = "alpha-chevron";
+				chevron.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+
+				row.appendChild(checkbox);
+				row.appendChild(nameEl);
+				if (supplier.address) row.appendChild(addressEl);
+				row.appendChild(chevron);
+
+				row.addEventListener("click", (e) => {
+					e.stopPropagation();
+					toggleListItemExpand(itemEl, supplier);
+				});
+
+				// Раскрывающаяся панель (скрыта по умолчанию)
+				const details = document.createElement("div");
+				details.className = "alpha-item-details";
+				details.style.display = "none";
+
+				itemEl.appendChild(row);
+				itemEl.appendChild(details);
+				groupEl.appendChild(itemEl);
+			}
+
+			container.appendChild(groupEl);
+		}
+
+		updateRouteButton();
+	}
+
+	function toggleListItemExpand(itemEl, supplier) {
+		const details = itemEl.querySelector(".alpha-item-details");
+		const chevron = itemEl.querySelector(".alpha-chevron");
+		if (!details) return;
+
+		const isOpen = details.style.display !== "none";
+
+		// Закрываем предыдущий раскрытый
+		if (expandedListItem && expandedListItem !== itemEl) {
+			const prevDetails = expandedListItem.querySelector(".alpha-item-details");
+			const prevChevron = expandedListItem.querySelector(".alpha-chevron");
+			if (prevDetails) prevDetails.style.display = "none";
+			if (prevChevron) prevChevron.classList.remove("is-open");
+			expandedListItem.classList.remove("is-expanded");
+		}
+
+		if (isOpen) {
+			details.style.display = "none";
+			chevron.classList.remove("is-open");
+			itemEl.classList.remove("is-expanded");
+			expandedListItem = null;
+		} else {
+			// Заполняем панель деталями
+			renderListItemDetails(details, supplier);
+			details.style.display = "block";
+			chevron.classList.add("is-open");
+			itemEl.classList.add("is-expanded");
+			expandedListItem = itemEl;
+		}
+	}
+
+	function renderListItemDetails(container, supplier) {
+		container.innerHTML = "";
+
+		// Инфо
+		const infoBlock = document.createElement("div");
+		infoBlock.className = "alpha-detail-info";
+
+		if (supplier.working_hours) {
+			const wh = document.createElement("div");
+			wh.className = "alpha-detail-row";
+			wh.innerHTML = `<span class="alpha-detail-label">Время работы:</span> <span class="alpha-detail-value">${supplier.working_hours}</span>`;
+			infoBlock.appendChild(wh);
+		}
+
+		if (supplier.additional_info) {
+			const ai = document.createElement("div");
+			ai.className = "alpha-detail-row";
+			ai.innerHTML = `<span class="alpha-detail-label">Доп. инфо:</span> <span class="alpha-detail-value">${supplier.additional_info}</span>`;
+			infoBlock.appendChild(ai);
+		}
+
+		const coordsRow = document.createElement("div");
+		coordsRow.className = "alpha-detail-row";
+		coordsRow.innerHTML = `<span class="alpha-detail-label">Координаты:</span> <span class="alpha-detail-value coords-mono">${formatCoords(supplier.lat, supplier.lon)}</span>`;
+		infoBlock.appendChild(coordsRow);
+
+		if (supplier.address) {
+			const addrRow = document.createElement("div");
+			addrRow.className = "alpha-detail-row";
+			addrRow.innerHTML = `<span class="alpha-detail-label">Адрес:</span> <span class="alpha-detail-value">${supplier.address}</span>`;
+			infoBlock.appendChild(addrRow);
+		}
+
+		container.appendChild(infoBlock);
+
+		// Кнопки
+		const actions = document.createElement("div");
+		actions.className = "alpha-detail-actions";
+
+		const goBtn = document.createElement("button");
+		goBtn.className = "btn btn-primary";
+		goBtn.type = "button";
+		goBtn.textContent = "Поехали";
+		goBtn.setAttribute("data-role", "go");
+		goBtn.disabled = !currentPosition;
+		goBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			openRoute(supplier.lat, supplier.lon, supplier.name || "");
+		});
+
+		const openBtn = document.createElement("button");
+		openBtn.className = "btn btn-outline";
+		openBtn.type = "button";
+		openBtn.textContent = "Открыть точку";
+		openBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			const naviPlace = buildYandexNavigatorPlaceUrl(supplier.lat, supplier.lon, supplier.name || "");
+			const mapsPlace = buildYandexPlaceUrl(supplier.lat, supplier.lon);
+			openWithFallback(naviPlace, mapsPlace);
+		});
+
+		const editBtn = document.createElement("button");
+		editBtn.className = "btn btn-outline";
+		editBtn.type = "button";
+		editBtn.textContent = "Редактировать";
+		editBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			openSupplierModal(supplier);
+		});
+
+		actions.appendChild(goBtn);
+		actions.appendChild(openBtn);
+
+		// Дополнительные точки
+		const infoPoints = parseInfoPoints(supplier.info);
+		if (infoPoints.length) {
+			for (const point of infoPoints) {
+				const pointBtn = document.createElement("button");
+				pointBtn.className = "btn btn-outline";
+				pointBtn.type = "button";
+				pointBtn.textContent = point.label;
+				pointBtn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					const label = supplier.name ? `${supplier.name} — ${point.label}` : point.label;
+					openRoute(point.lat, point.lon, label.trim());
+				});
+				actions.appendChild(pointBtn);
+			}
+		}
+
+		actions.appendChild(editBtn);
+		container.appendChild(actions);
 	}
 
 	function detectLocation() {
@@ -729,7 +1015,7 @@
 			
 			// Перезагружаем список
 			await loadSuppliers();
-			renderSuppliers(filteredSuppliers);
+			applyCurrentView();
 			closeSupplierModal();
 			return true;
 		} catch (err) {
@@ -749,7 +1035,7 @@
 		try {
 			await window.SuppliersDB.delete(editingSupplierId);
 			await loadSuppliers();
-			renderSuppliers(filteredSuppliers);
+			applyCurrentView();
 			closeSupplierModal();
 		} catch (err) {
 			console.error("Ошибка удаления поставщика:", err);
@@ -758,6 +1044,11 @@
 	}
 
 	function attachEvents() {
+		// Кнопка переключения вида
+		const viewToggleBtn = document.getElementById("viewToggleBtn");
+		if (viewToggleBtn) {
+			viewToggleBtn.addEventListener("click", toggleViewMode);
+		}
 		if (detectBtn) detectBtn.addEventListener("click", detectLocation);
 		if (officeBtn) {
 			officeBtn.addEventListener("click", () => {
@@ -836,8 +1127,9 @@
 	async function init() {
 		setYear();
 		attachEvents();
+		updateViewToggleIcon();
 		await loadSuppliers();
-		renderSuppliers(filteredSuppliers);
+		applyCurrentView();
 		detectLocation();
 	}
 

@@ -88,7 +88,7 @@
 			if (headerActions) {
 				headerActions.style.display = "flex";
 				// Восстанавливаем видимость кнопок поставщиков
-				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn"].forEach(id => {
+				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn", "viewToggleBtn"].forEach(id => {
 					const btn = document.getElementById(id);
 					if (btn) btn.style.display = "";
 				});
@@ -97,7 +97,7 @@
 			if (searchInput) searchInput.style.display = "none";
 			if (headerActions) {
 				// Скрываем кнопки поставщиков
-				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn"].forEach(id => {
+				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn", "viewToggleBtn"].forEach(id => {
 					const btn = document.getElementById(id);
 					if (btn) btn.style.display = "none";
 				});
