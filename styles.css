@@ -1432,9 +1432,12 @@ body {
    ============================================ */
 .alpha-list {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 12px;
-	align-items: flex-start;
+	flex-direction: column;
+	gap: 0;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	overflow: hidden;
 }
 
 .alpha-empty {
@@ -1442,39 +1445,41 @@ body {
 	color: var(--muted);
 	font-size: 14px;
 	padding: 32px 0;
-	width: 100%;
 }
 
 .alpha-group {
-	flex: 0 0 auto;
-	width: 240px;
-	background: var(--card);
-	border: 1px solid var(--border);
-	border-radius: 10px;
-	overflow: hidden;
+	/* Без отступов — сплошной список */
 }
 
 .alpha-letter {
-	font-size: 14px;
+	font-size: 12px;
 	font-weight: 700;
 	color: var(--accent);
 	text-transform: uppercase;
-	padding: 8px 12px;
+	padding: 5px 14px;
 	background: #0e1729;
 	border-bottom: 1px solid var(--border);
+	border-top: 1px solid var(--border);
 	letter-spacing: 1px;
+	position: sticky;
+	top: 0;
+	z-index: 2;
+}
+
+.alpha-group:first-child .alpha-letter {
+	border-top: none;
 }
 
 .alpha-item {
-	transition: background 0.15s;
+	transition: background 0.12s;
 }
 
 .alpha-item:not(:last-child) {
-	border-bottom: 1px solid var(--border);
+	border-bottom: 1px solid rgba(31, 41, 55, 0.5);
 }
 
 .alpha-item:hover {
-	background: rgba(255, 255, 255, 0.03);
+	background: rgba(255, 255, 255, 0.02);
 }
 
 .alpha-item.is-expanded {
@@ -1484,8 +1489,8 @@ body {
 .alpha-item-row {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	padding: 8px 10px;
+	gap: 10px;
+	padding: 7px 14px;
 	cursor: pointer;
 	-webkit-tap-highlight-color: transparent;
 	user-select: none;
@@ -1496,7 +1501,7 @@ body {
 }
 
 .alpha-item-name {
-	font-size: 13px;
+	font-size: 14px;
 	font-weight: 500;
 	color: var(--fg);
 	flex: 1;
@@ -1519,7 +1524,7 @@ body {
 }
 
 .alpha-item-details {
-	padding: 0 10px 10px 10px;
+	padding: 0 14px 10px 14px;
 	animation: fadeIn 0.15s ease;
 }
 
@@ -1528,13 +1533,13 @@ body {
 	flex-direction: column;
 	gap: 4px;
 	margin-bottom: 10px;
-	padding: 8px 10px;
+	padding: 8px 12px;
 	background: #0e1729;
-	border-radius: 6px;
+	border-radius: 8px;
 }
 
 .alpha-detail-row {
-	font-size: 12px;
+	font-size: 13px;
 	line-height: 1.4;
 }
 
@@ -1549,49 +1554,37 @@ body {
 
 .coords-mono {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-	font-size: 11px;
+	font-size: 12px;
 }
 
 .alpha-detail-actions {
 	display: flex;
-	flex-direction: column;
-	gap: 6px;
+	gap: 8px;
+	flex-wrap: wrap;
 }
 
 .alpha-detail-actions .btn {
-	width: 100%;
-	font-size: 12px;
-	padding: 7px 10px;
+	flex: 0 0 auto;
+	font-size: 13px;
+	padding: 8px 14px;
 }
 
-/* Адаптация колонок под экран */
-@media (min-width: 560px) {
-	.alpha-group { width: calc(50% - 6px); }
-}
-@media (min-width: 800px) {
-	.alpha-group { width: calc(33.333% - 8px); }
-}
-@media (min-width: 1100px) {
-	.alpha-group { width: calc(25% - 9px); }
-}
-@media (min-width: 1400px) {
-	.alpha-group { width: calc(20% - 10px); }
-}
-@media (min-width: 1700px) {
-	.alpha-group { width: calc(16.666% - 10px); }
-}
-
-@media (max-width: 559px) {
-	.alpha-group {
-		width: 100%;
+@media (max-width: 600px) {
+	.alpha-item-row {
+		padding: 8px 10px;
+		gap: 8px;
+	}
+	.alpha-item-details {
+		padding: 0 10px 10px 10px;
+	}
+	.alpha-detail-actions {
+		flex-direction: column;
 	}
 	.alpha-detail-actions .btn {
-		font-size: 13px;
-		padding: 10px 12px;
+		width: 100%;
 	}
 	.alpha-letter {
-		font-size: 13px;
-		padding: 6px 10px;
+		padding: 5px 10px;
 	}
 }
 
