@@ -1451,12 +1451,24 @@ body {
 	/* Без отступов — сплошной список */
 }
 
-.alpha-letter {
+.alpha-toggle-all-bar {
+	display: flex;
+	justify-content: flex-end;
+	padding: 8px 14px;
+	background: #0e1729;
+	border-bottom: 1px solid var(--border);
+}
+
+.alpha-toggle-all-btn {
 	font-size: 12px;
+}
+
+.alpha-letter {
+	font-size: 13px;
 	font-weight: 700;
 	color: var(--accent);
 	text-transform: uppercase;
-	padding: 5px 14px;
+	padding: 8px 14px;
 	background: #0e1729;
 	border-bottom: 1px solid var(--border);
 	border-top: 1px solid var(--border);
@@ -1464,10 +1476,51 @@ body {
 	position: sticky;
 	top: 0;
 	z-index: 2;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	user-select: none;
+	-webkit-tap-highlight-color: transparent;
+	transition: background 0.15s;
+}
+
+.alpha-letter:hover {
+	background: #131d33;
+}
+
+.alpha-letter.is-open {
+	background: rgba(16, 185, 129, 0.08);
+}
+
+.alpha-letter-count {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--muted);
+	background: rgba(255,255,255,0.06);
+	padding: 1px 7px;
+	border-radius: 10px;
+	line-height: 1.4;
+}
+
+.alpha-letter-chevron {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	color: var(--muted);
+	transition: transform 0.2s;
+}
+
+.alpha-letter.is-open .alpha-letter-chevron {
+	transform: rotate(180deg);
 }
 
 .alpha-group:first-child .alpha-letter {
 	border-top: none;
+}
+
+.alpha-group-items {
+	/* анимация не нужна, просто display toggle */
 }
 
 .alpha-item {

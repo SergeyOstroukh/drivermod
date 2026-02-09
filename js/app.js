@@ -694,6 +694,17 @@
 			groups[letter].push(supplier);
 		}
 
+		// Кнопка "Раскрыть все / Свернуть все"
+		const toggleAllBar = document.createElement("div");
+		toggleAllBar.className = "alpha-toggle-all-bar";
+		const toggleAllBtn = document.createElement("button");
+		toggleAllBtn.className = "btn btn-outline btn-sm alpha-toggle-all-btn";
+		toggleAllBtn.type = "button";
+		toggleAllBtn.textContent = "Раскрыть все";
+		toggleAllBtn.addEventListener("click", () => toggleAllGroups(container, toggleAllBtn));
+		toggleAllBar.appendChild(toggleAllBtn);
+		container.appendChild(toggleAllBar);
+
 		// Рендерим группы
 		for (const letter of Object.keys(groups)) {
 			const groupEl = document.createElement("div");
@@ -701,7 +712,31 @@
 
 			const letterEl = document.createElement("div");
 			letterEl.className = "alpha-letter";
-			letterEl.textContent = letter;
+
+			const letterText = document.createElement("span");
+			letterText.textContent = letter;
+
+			const countBadge = document.createElement("span");
+			countBadge.className = "alpha-letter-count";
+			countBadge.textContent = groups[letter].length;
+
+			const letterChevron = document.createElement("span");
+			letterChevron.className = "alpha-letter-chevron";
+			letterChevron.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+
+			letterEl.appendChild(letterText);
+			letterEl.appendChild(countBadge);
+			letterEl.appendChild(letterChevron);
+
+			// Контейнер элементов (скрыт по умолчанию)
+			const itemsContainer = document.createElement("div");
+			itemsContainer.className = "alpha-group-items";
+			itemsContainer.style.display = "none";
+
+			letterEl.addEventListener("click", () => {
+				toggleGroupExpand(groupEl, itemsContainer, letterEl);
+			});
+
 			groupEl.appendChild(letterEl);
 
 			for (const supplier of groups[letter]) {
@@ -753,13 +788,54 @@
 
 				itemEl.appendChild(row);
 				itemEl.appendChild(details);
-				groupEl.appendChild(itemEl);
+				itemsContainer.appendChild(itemEl);
 			}
 
+			groupEl.appendChild(itemsContainer);
 			container.appendChild(groupEl);
 		}
 
 		updateRouteButton();
+	}
+
+	function toggleGroupExpand(groupEl, itemsContainer, letterEl) {
+		const isOpen = itemsContainer.style.display !== "none";
+		if (isOpen) {
+			itemsContainer.style.display = "none";
+			groupEl.classList.remove("is-open");
+			letterEl.classList.remove("is-open");
+		} else {
+			itemsContainer.style.display = "block";
+			groupEl.classList.add("is-open");
+			letterEl.classList.add("is-open");
+		}
+	}
+
+	function toggleAllGroups(container, btn) {
+		const groups = container.querySelectorAll(".alpha-group");
+		// Проверяем — все ли раскрыты
+		let allOpen = true;
+		groups.forEach(g => {
+			const items = g.querySelector(".alpha-group-items");
+			if (items && items.style.display === "none") allOpen = false;
+		});
+
+		groups.forEach(g => {
+			const items = g.querySelector(".alpha-group-items");
+			const letter = g.querySelector(".alpha-letter");
+			if (!items) return;
+			if (allOpen) {
+				items.style.display = "none";
+				g.classList.remove("is-open");
+				if (letter) letter.classList.remove("is-open");
+			} else {
+				items.style.display = "block";
+				g.classList.add("is-open");
+				if (letter) letter.classList.add("is-open");
+			}
+		});
+
+		btn.textContent = allOpen ? "Раскрыть все" : "Свернуть все";
 	}
 
 	function toggleListItemExpand(itemEl, supplier) {
