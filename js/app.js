@@ -733,17 +733,12 @@
 				nameEl.className = "alpha-item-name";
 				nameEl.textContent = supplier.name || "Без названия";
 
-				const addressEl = document.createElement("span");
-				addressEl.className = "alpha-item-address";
-				addressEl.textContent = supplier.address || "";
-
 				const chevron = document.createElement("span");
 				chevron.className = "alpha-chevron";
 				chevron.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
 
 				row.appendChild(checkbox);
 				row.appendChild(nameEl);
-				if (supplier.address) row.appendChild(addressEl);
 				row.appendChild(chevron);
 
 				row.addEventListener("click", (e) => {
