@@ -5,6 +5,9 @@
 	let vehicles = [];
 	let editingDriverId = null;
 	let editingVehicleId = null;
+	let currentRole = null; // 'driver' or 'logist'
+	let currentDriverData = null; // объект водителя при роли 'driver'
+	let driverEntryVehicle = null; // автомобиль для упрощённого ввода
 
 	const driversListEl = document.getElementById("driversList");
 	const vehiclesListEl = document.getElementById("vehiclesList");
@@ -27,6 +30,11 @@
 	}
 
 	function switchSection(section) {
+		// Для раздела автомобилей требуется выбор роли
+		if (section === "vehicles" && !currentRole) {
+			loadDriversForRoleSelection();
+			return;
+		}
 		console.log("switchSection вызвана, section:", section);
 		
 		// Обновляем активную вкладку
@@ -291,15 +299,31 @@
 		if (!vehiclesListEl) return;
 		vehiclesListEl.innerHTML = "";
 
-		if (vehicles.length === 0) {
+		// Обновляем панель пользователя
+		updateUserBar();
+
+		// Фильтруем автомобили для водителя
+		let displayVehicles = vehicles;
+		if (currentRole === "driver" && currentDriverData) {
+			displayVehicles = vehicles.filter(v => v.driver_id === currentDriverData.id);
+		}
+
+		// Скрываем кнопку добавления для водителей
+		if (addVehicleBtn) {
+			addVehicleBtn.style.display = currentRole === "driver" ? "none" : "";
+		}
+
+		if (displayVehicles.length === 0) {
 			const empty = document.createElement("li");
 			empty.className = "card";
-			empty.textContent = "Автомобили не добавлены";
+			empty.textContent = currentRole === "driver"
+				? "За вами не закреплён автомобиль. Обратитесь к логисту."
+				: "Автомобили не добавлены";
 			vehiclesListEl.appendChild(empty);
 			return;
 		}
 
-		vehicles.forEach((vehicle) => {
+		displayVehicles.forEach((vehicle) => {
 			const li = document.createElement("li");
 			li.className = "card";
 
@@ -434,44 +458,74 @@
 
 			header.appendChild(titleWrap);
 
-			const actions = document.createElement("div");
-			actions.className = "actions";
+			if (currentRole === "driver") {
+				// Для водителя: большая кнопка ввода данных + история
+				const driverActions = document.createElement("div");
+				driverActions.className = "driver-actions";
 
-			const mileageBtn = document.createElement("button");
-			mileageBtn.className = "btn btn-outline btn-icon-only";
-			mileageBtn.title = "Ввести пробег";
-			mileageBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
-			</svg>`;
-			mileageBtn.addEventListener("click", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				console.log("Кнопка ввести пробег нажата, автомобиль:", vehicle);
-				openMileageModal(vehicle);
-			});
+				const entryBtn = document.createElement("button");
+				entryBtn.className = "btn btn-primary btn-driver-entry";
+				entryBtn.innerHTML = `<svg class="btn-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+				</svg> Ввести данные за смену`;
+				entryBtn.addEventListener("click", (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					openDriverEntry(vehicle);
+				});
 
-			const historyBtn = document.createElement("button");
-			historyBtn.className = "btn btn-outline btn-icon-only";
-			historyBtn.title = "История использования";
-			historyBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M3 3h18v18H3zM7 3v18M3 7h18M3 12h18M3 17h18"></path>
-			</svg>`;
-			historyBtn.addEventListener("click", () => openHistoryTable(vehicle));
+				const viewHistoryBtn = document.createElement("button");
+				viewHistoryBtn.className = "btn btn-outline";
+				viewHistoryBtn.style.width = "100%";
+				viewHistoryBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M3 3h18v18H3zM7 3v18M3 7h18M3 12h18M3 17h18"></path>
+				</svg> Посмотреть историю`;
+				viewHistoryBtn.addEventListener("click", () => openMileageModal(vehicle));
 
-			const editBtn = document.createElement("button");
-			editBtn.className = "btn btn-outline btn-icon-only";
-			editBtn.title = "Редактировать";
-			editBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-				<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-			</svg>`;
-			editBtn.addEventListener("click", () => openVehicleModal(vehicle));
+				driverActions.appendChild(entryBtn);
+				driverActions.appendChild(viewHistoryBtn);
+				li.appendChild(header);
+				li.appendChild(driverActions);
+			} else {
+				// Для логиста: стандартные кнопки
+				const actions = document.createElement("div");
+				actions.className = "actions";
 
-			actions.appendChild(mileageBtn);
-			actions.appendChild(historyBtn);
-			actions.appendChild(editBtn);
-			li.appendChild(header);
-			li.appendChild(actions);
+				const mileageBtn = document.createElement("button");
+				mileageBtn.className = "btn btn-outline btn-icon-only";
+				mileageBtn.title = "Ввести пробег";
+				mileageBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+				</svg>`;
+				mileageBtn.addEventListener("click", (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					openMileageModal(vehicle);
+				});
+
+				const historyBtn = document.createElement("button");
+				historyBtn.className = "btn btn-outline btn-icon-only";
+				historyBtn.title = "История использования";
+				historyBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M3 3h18v18H3zM7 3v18M3 7h18M3 12h18M3 17h18"></path>
+				</svg>`;
+				historyBtn.addEventListener("click", () => openHistoryTable(vehicle));
+
+				const editBtn = document.createElement("button");
+				editBtn.className = "btn btn-outline btn-icon-only";
+				editBtn.title = "Редактировать";
+				editBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+					<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+				</svg>`;
+				editBtn.addEventListener("click", () => openVehicleModal(vehicle));
+
+				actions.appendChild(mileageBtn);
+				actions.appendChild(historyBtn);
+				actions.appendChild(editBtn);
+				li.appendChild(header);
+				li.appendChild(actions);
+			}
 			vehiclesListEl.appendChild(li);
 		});
 	}
@@ -776,6 +830,279 @@
 		}
 	}
 
+	// ============================================
+	// СИСТЕМА РОЛЕЙ (Водитель / Логист)
+	// ============================================
+
+	async function loadDriversForRoleSelection() {
+		try {
+			drivers = await window.VehiclesDB.getAllDrivers();
+		} catch (e) {
+			console.error("Ошибка загрузки водителей для выбора роли:", e);
+		}
+		showRoleModal();
+	}
+
+	function showRoleModal() {
+		const modal = document.getElementById("roleModal");
+		if (!modal) return;
+
+		// Сбрасываем на первый шаг
+		document.getElementById("roleStep1").style.display = "block";
+		document.getElementById("roleStep2Driver").style.display = "none";
+		document.getElementById("roleStep2Logist").style.display = "none";
+
+		modal.classList.add("is-open");
+	}
+
+	function closeRoleModal() {
+		const modal = document.getElementById("roleModal");
+		if (modal) modal.classList.remove("is-open");
+	}
+
+	function showDriverSelection() {
+		document.getElementById("roleStep1").style.display = "none";
+		const step = document.getElementById("roleStep2Driver");
+		step.style.display = "block";
+
+		const list = document.getElementById("driverSelectList");
+		list.innerHTML = "";
+
+		if (drivers.length === 0) {
+			list.innerHTML = '<p style="text-align:center; color:var(--muted); padding:20px 0;">Нет зарегистрированных водителей</p>';
+			return;
+		}
+
+		drivers.forEach(driver => {
+			const btn = document.createElement("button");
+			btn.className = "btn btn-outline driver-select-item";
+			btn.type = "button";
+			btn.textContent = driver.name;
+			btn.addEventListener("click", () => loginAsDriver(driver));
+			list.appendChild(btn);
+		});
+	}
+
+	function showLogistPassword() {
+		document.getElementById("roleStep1").style.display = "none";
+		document.getElementById("roleStep2Logist").style.display = "block";
+		document.getElementById("logistPassword").value = "";
+		document.getElementById("logistPasswordError").style.display = "none";
+		setTimeout(() => document.getElementById("logistPassword").focus(), 100);
+	}
+
+	function backToRoleStep1() {
+		document.getElementById("roleStep2Driver").style.display = "none";
+		document.getElementById("roleStep2Logist").style.display = "none";
+		document.getElementById("roleStep1").style.display = "block";
+	}
+
+	function loginAsDriver(driver) {
+		currentRole = "driver";
+		currentDriverData = driver;
+		closeRoleModal();
+		switchSection("vehicles");
+	}
+
+	function loginAsLogist(e) {
+		if (e) e.preventDefault();
+		const password = document.getElementById("logistPassword").value;
+		if (password !== "kosmo123") {
+			document.getElementById("logistPasswordError").style.display = "block";
+			document.getElementById("logistPassword").classList.add("shake");
+			setTimeout(() => document.getElementById("logistPassword").classList.remove("shake"), 500);
+			return;
+		}
+		currentRole = "logist";
+		currentDriverData = null;
+		closeRoleModal();
+		switchSection("vehicles");
+	}
+
+	function logoutFromVehicles() {
+		currentRole = null;
+		currentDriverData = null;
+		driverEntryVehicle = null;
+		// Переключаемся на раздел поставщиков
+		switchSection("suppliers");
+	}
+
+	function updateUserBar() {
+		const bar = document.getElementById("vehiclesUserBar");
+		const info = document.getElementById("vehiclesUserInfo");
+		const icon = document.getElementById("vehiclesUserIcon");
+
+		if (!bar || !info) return;
+
+		if (currentRole === "driver" && currentDriverData) {
+			bar.style.display = "flex";
+			icon.textContent = "🚗";
+			info.textContent = `Водитель: ${currentDriverData.name}`;
+		} else if (currentRole === "logist") {
+			bar.style.display = "flex";
+			icon.textContent = "📋";
+			info.textContent = "Логист (полный доступ)";
+		} else {
+			bar.style.display = "none";
+		}
+	}
+
+	// ============================================
+	// УПРОЩЁННЫЙ ВВОД ДАННЫХ (для водителей)
+	// ============================================
+
+	async function openDriverEntry(vehicle) {
+		driverEntryVehicle = vehicle;
+		const modal = document.getElementById("driverEntryModal");
+		const form = document.getElementById("driverEntryForm");
+		const title = document.getElementById("driverEntryTitle");
+		const infoDiv = document.getElementById("driverEntryInfo");
+
+		if (!modal || !form) return;
+
+		title.textContent = `Данные за смену`;
+
+		// Показываем инфо об автомобиле
+		const currentMileage = vehicle.mileage ? vehicle.mileage.toLocaleString() : "0";
+		infoDiv.innerHTML = `
+			<div><strong>${vehicle.plate_number}</strong></div>
+			<div>Текущий пробег: ${currentMileage} км</div>
+		`;
+
+		form.reset();
+
+		// Проверяем, нужен ли начальный уровень топлива (первая запись)
+		try {
+			const entries = await window.VehiclesDB.getMileageLog(vehicle.id);
+			const fuelGroup = document.getElementById("driverEntryFuelLevelGroup");
+			const fuelInput = document.getElementById("driverEntryFuelLevel");
+
+			if (entries.length === 0) {
+				fuelGroup.style.display = "block";
+				fuelInput.required = true;
+			} else {
+				fuelGroup.style.display = "none";
+				fuelInput.required = false;
+			}
+		} catch (e) {
+			console.error("Ошибка проверки записей:", e);
+		}
+
+		modal.classList.add("is-open");
+		setTimeout(() => document.getElementById("driverEntryMileage").focus(), 150);
+	}
+
+	function closeDriverEntry() {
+		const modal = document.getElementById("driverEntryModal");
+		if (modal) modal.classList.remove("is-open");
+		driverEntryVehicle = null;
+	}
+
+	async function saveDriverEntry(e) {
+		e.preventDefault();
+		if (!driverEntryVehicle || !currentDriverData) return;
+
+		const mileageInput = document.getElementById("driverEntryMileage");
+		const fuelInput = document.getElementById("driverEntryFuel");
+		const fuelLevelInput = document.getElementById("driverEntryFuelLevel");
+
+		const mileageReturn = parseInt(mileageInput.value);
+		const fuelRefill = parseFloat(fuelInput.value) || null;
+
+		if (!mileageReturn || isNaN(mileageReturn)) {
+			alert("Укажите показания одометра");
+			return;
+		}
+
+		const today = new Date().toISOString().split('T')[0];
+
+		try {
+			// Проверяем существующие записи
+			const existingEntries = await window.VehiclesDB.getMileageLog(driverEntryVehicle.id);
+			const hasEntries = existingEntries.length > 0;
+
+			// Определяем fuel_level_out
+			let fuelLevelOut = null;
+			if (!hasEntries) {
+				fuelLevelOut = parseFloat(fuelLevelInput.value) || null;
+				if (!fuelLevelOut || fuelLevelOut <= 0) {
+					alert("Укажите начальный уровень топлива при выезде");
+					return;
+				}
+			} else {
+				const sorted = [...existingEntries].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+				const lastEntry = sorted[sorted.length - 1];
+				fuelLevelOut = lastEntry.fuel_level_return !== null && lastEntry.fuel_level_return !== undefined
+					? parseFloat(lastEntry.fuel_level_return)
+					: null;
+			}
+
+			// Определяем mileage_out
+			let mileageOut = 0;
+			if (!hasEntries) {
+				mileageOut = driverEntryVehicle.mileage || 0;
+			} else {
+				const sorted = [...existingEntries].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+				const lastEntry = sorted[sorted.length - 1];
+				mileageOut = lastEntry.mileage || 0;
+			}
+
+			// Проверяем корректность пробега
+			if (mileageReturn <= mileageOut) {
+				alert(`Показания одометра (${mileageReturn}) должны быть больше предыдущего значения (${mileageOut})`);
+				return;
+			}
+
+			const shiftMileage = mileageReturn - mileageOut;
+
+			// Формируем запись
+			const entry = {
+				vehicle_id: driverEntryVehicle.id,
+				driver_id: currentDriverData.id,
+				mileage: mileageReturn,
+				log_date: today,
+				fuel_level_out: fuelLevelOut,
+				fuel_refill: fuelRefill,
+				mileage_out: mileageOut,
+				notes: null
+			};
+
+			// Рассчитываем остаток топлива при возвращении
+			if (fuelLevelOut !== null && shiftMileage > 0) {
+				const fuelConsumption = driverEntryVehicle.fuel_consumption || 0;
+				if (fuelConsumption > 0) {
+					const expectedConsumption = (shiftMileage * fuelConsumption / 100);
+					entry.fuel_level_return = fuelLevelOut - expectedConsumption + (fuelRefill || 0);
+					entry.actual_fuel_consumption = fuelLevelOut - entry.fuel_level_return + (fuelRefill || 0);
+				} else {
+					entry.fuel_level_return = fuelLevelOut + (fuelRefill || 0);
+					entry.actual_fuel_consumption = 0;
+				}
+			} else if (fuelLevelOut !== null) {
+				entry.fuel_level_return = fuelLevelOut + (fuelRefill || 0);
+				entry.actual_fuel_consumption = 0;
+			}
+
+			await window.VehiclesDB.addMileageLog(entry);
+
+			// Обновляем данные автомобилей
+			vehicles = await window.VehiclesDB.getAllVehicles();
+			const updated = vehicles.find(v => v.id === driverEntryVehicle.id);
+			if (updated) driverEntryVehicle = updated;
+
+			renderVehicles();
+			closeDriverEntry();
+
+			// Показываем подтверждение
+			const msg = `Сохранено!\nПробег за смену: ${shiftMileage} км` +
+				(fuelRefill ? `\nЗаправка: ${fuelRefill} л` : '');
+			alert(msg);
+		} catch (err) {
+			console.error("Ошибка сохранения:", err);
+			alert("Ошибка сохранения: " + err.message);
+		}
+	}
+
 	// Инициализация
 	function init() {
 		initNavigation();
@@ -893,6 +1220,69 @@
 		if (printMileageBtn) {
 			printMileageBtn.addEventListener("click", printMileageTable);
 		}
+
+		// ---- Обработчики для системы ролей ----
+
+		const roleDriverBtn = document.getElementById("roleDriverBtn");
+		if (roleDriverBtn) {
+			roleDriverBtn.addEventListener("click", showDriverSelection);
+		}
+
+		const roleLogistBtn = document.getElementById("roleLogistBtn");
+		if (roleLogistBtn) {
+			roleLogistBtn.addEventListener("click", showLogistPassword);
+		}
+
+		const backToRolesBtn = document.getElementById("backToRolesBtn");
+		if (backToRolesBtn) {
+			backToRolesBtn.addEventListener("click", backToRoleStep1);
+		}
+
+		const backToRolesFromLogistBtn = document.getElementById("backToRolesFromLogistBtn");
+		if (backToRolesFromLogistBtn) {
+			backToRolesFromLogistBtn.addEventListener("click", backToRoleStep1);
+		}
+
+		const logistForm = document.getElementById("logistForm");
+		if (logistForm) {
+			logistForm.addEventListener("submit", loginAsLogist);
+		}
+
+		const vehiclesLogoutBtn = document.getElementById("vehiclesLogoutBtn");
+		if (vehiclesLogoutBtn) {
+			vehiclesLogoutBtn.addEventListener("click", logoutFromVehicles);
+		}
+
+		// Закрытие модального окна роли по клику вне
+		const roleModal = document.getElementById("roleModal");
+		if (roleModal) {
+			roleModal.addEventListener("click", (e) => {
+				if (e.target === roleModal) {
+					closeRoleModal();
+				}
+			});
+		}
+
+		// ---- Обработчики для упрощённого ввода данных (водитель) ----
+
+		const driverEntryForm = document.getElementById("driverEntryForm");
+		if (driverEntryForm) {
+			driverEntryForm.addEventListener("submit", saveDriverEntry);
+		}
+
+		const cancelDriverEntryBtn = document.getElementById("cancelDriverEntryBtn");
+		if (cancelDriverEntryBtn) {
+			cancelDriverEntryBtn.addEventListener("click", closeDriverEntry);
+		}
+
+		const driverEntryModal = document.getElementById("driverEntryModal");
+		if (driverEntryModal) {
+			driverEntryModal.addEventListener("click", (e) => {
+				if (e.target === driverEntryModal) {
+					closeDriverEntry();
+				}
+			});
+		}
 	}
 
 	// ============================================
@@ -976,6 +1366,17 @@
 		// Переключаем секции
 		vehiclesSection.style.display = "none";
 		mileageSection.style.display = "block";
+
+		// Для водителя: скрываем форму, показываем только таблицу
+		const mileageContent = mileageSection.querySelector('.mileage-content');
+		const formSection = mileageSection.querySelector('.mileage-form-section');
+		if (mileageContent) {
+			if (currentRole === "driver") {
+				mileageContent.classList.add("driver-view");
+			} else {
+				mileageContent.classList.remove("driver-view");
+			}
+		}
 		
 		// Загружаем записи и проверяем, нужно ли показывать поле начального уровня топлива
 		await loadMileageLog(vehicle.id);

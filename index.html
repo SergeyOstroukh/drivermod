@@ -86,6 +86,13 @@
 
 		<!-- Раздел Автомобили -->
 		<div id="vehiclesSection" class="content-section">
+			<div id="vehiclesUserBar" class="user-bar" style="display:none;">
+				<div class="user-bar-info">
+					<span id="vehiclesUserIcon">👤</span>
+					<span id="vehiclesUserInfo">—</span>
+				</div>
+				<button id="vehiclesLogoutBtn" class="btn btn-outline btn-sm" type="button">Выйти</button>
+			</div>
 			<section class="section-header">
 				<button id="addVehicleBtn" class="btn btn-primary" type="button">
 					<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -457,7 +464,76 @@
 		</div>
 	</div>
 
-	<!-- Модальное окно для истории использования автомобиля -->
+	<!-- Модальное окно выбора роли -->
+	<div id="roleModal" class="modal">
+		<div class="modal-content">
+			<div id="roleStep1" class="role-step">
+				<h3 class="modal-title">Автомобили</h3>
+				<p class="role-subtitle">Выберите вашу роль</p>
+				<div class="role-buttons">
+					<button id="roleDriverBtn" class="role-btn-card" type="button">
+						<div class="role-btn-icon">🚗</div>
+						<div class="role-btn-label">Водитель</div>
+						<div class="role-btn-desc">Ввод данных по своей машине</div>
+					</button>
+					<button id="roleLogistBtn" class="role-btn-card" type="button">
+						<div class="role-btn-icon">📋</div>
+						<div class="role-btn-label">Логист</div>
+						<div class="role-btn-desc">Полный доступ ко всем данным</div>
+					</button>
+				</div>
+			</div>
+			<div id="roleStep2Driver" class="role-step" style="display:none;">
+				<h3 class="modal-title">Выберите себя</h3>
+				<div id="driverSelectList" class="driver-select-list"></div>
+				<button id="backToRolesBtn" class="btn btn-outline" type="button" style="width:100%; margin-top:16px;">Назад</button>
+			</div>
+			<div id="roleStep2Logist" class="role-step" style="display:none;">
+				<h3 class="modal-title">Вход для логиста</h3>
+				<form id="logistForm">
+					<div class="form-group">
+						<label class="form-label">Пароль</label>
+						<input type="password" id="logistPassword" class="form-input" placeholder="Введите пароль" autocomplete="off" />
+						<div id="logistPasswordError" class="form-error" style="display:none; color:var(--danger); font-size:13px; margin-top:4px;">Неверный пароль</div>
+					</div>
+					<div style="display:flex; gap:8px; margin-top:16px;">
+						<button type="submit" class="btn btn-primary" style="flex:1;">Войти</button>
+						<button type="button" id="backToRolesFromLogistBtn" class="btn btn-outline" style="flex:1;">Назад</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	</div>
+
+	<!-- Упрощенная форма ввода данных за смену (водитель) -->
+	<div id="driverEntryModal" class="modal">
+		<div class="modal-content">
+			<h3 class="modal-title" id="driverEntryTitle">Данные за смену</h3>
+			<div id="driverEntryInfo" class="driver-entry-info"></div>
+			<form id="driverEntryForm" class="supplier-form">
+				<div class="form-group" id="driverEntryFuelLevelGroup" style="display:none;">
+					<label class="form-label">Остаток топлива при выезде (л) *</label>
+					<input type="number" id="driverEntryFuelLevel" class="form-input form-input-lg" min="0" step="0.1" placeholder="0" inputmode="decimal" />
+					<small class="form-hint">Укажите для первой записи</small>
+				</div>
+				<div class="form-group">
+					<label class="form-label">Показания одометра (км) *</label>
+					<input type="number" id="driverEntryMileage" class="form-input form-input-lg" min="0" required placeholder="Текущий километраж" inputmode="numeric" />
+					<small class="form-hint">Введите текущие показания спидометра</small>
+				</div>
+				<div class="form-group">
+					<label class="form-label">Заправка (литры)</label>
+					<input type="number" id="driverEntryFuel" class="form-input form-input-lg" min="0" step="0.1" placeholder="0" inputmode="decimal" />
+					<small class="form-hint">Если заправки не было — оставьте пустым</small>
+				</div>
+				<div style="display:flex; gap:8px; margin-top:8px;">
+					<button type="submit" class="btn btn-primary btn-lg" style="flex:1;">Сохранить</button>
+					<button type="button" id="cancelDriverEntryBtn" class="btn btn-outline btn-lg" style="flex:1;">Отмена</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
 	<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
 	<script src="js/config.js"></script>
 	<script src="js/db.js"></script>
