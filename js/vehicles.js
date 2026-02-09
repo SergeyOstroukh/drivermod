@@ -515,8 +515,17 @@
 				</svg>`;
 				editBtn.addEventListener("click", () => openVehicleModal(vehicle));
 
+				const maintenanceBtn = document.createElement("button");
+				maintenanceBtn.className = "btn btn-outline btn-icon-only";
+				maintenanceBtn.title = "Журнал ТО";
+				maintenanceBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+				</svg>`;
+				maintenanceBtn.addEventListener("click", () => openMaintenanceSection(vehicle));
+
 				actions.appendChild(mileageBtn);
 				actions.appendChild(historyBtn);
+				actions.appendChild(maintenanceBtn);
 				actions.appendChild(editBtn);
 				li.appendChild(header);
 				li.appendChild(actions);
@@ -828,6 +837,239 @@
 			console.error("Ошибка сохранения записи истории:", err);
 			alert("Не удалось сохранить: " + err.message);
 			return false;
+		}
+	}
+
+	// ============================================
+	// ЖУРНАЛ ТО
+	// ============================================
+
+	let currentMaintenanceVehicleId = null;
+	let maintenanceEntries = [];
+	let editingMaintenanceId = null;
+
+	function openMaintenanceSection(vehicle) {
+		const maintenanceSection = document.getElementById("maintenanceSection");
+		const vehiclesSection = document.getElementById("vehiclesSection");
+		const title = document.getElementById("maintenanceSectionTitle");
+
+		if (!maintenanceSection || !vehiclesSection) return;
+
+		currentMaintenanceVehicleId = vehicle.id;
+		editingMaintenanceId = null;
+
+		if (title) {
+			title.textContent = `Журнал ТО: ${vehicle.plate_number}`;
+		}
+
+		// Устанавливаем текущую дату
+		const dateInput = document.getElementById("maintenanceDate");
+		if (dateInput) {
+			dateInput.value = new Date().toISOString().split('T')[0];
+		}
+
+		// Устанавливаем текущий пробег как подсказку
+		const mileageInput = document.getElementById("maintenanceMileage");
+		if (mileageInput && vehicle.mileage) {
+			mileageInput.placeholder = `Текущий: ${vehicle.mileage.toLocaleString()} км`;
+		}
+
+		// Очищаем форму
+		const form = document.getElementById("maintenanceForm");
+		if (form) form.reset();
+		if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+
+		// Сбрасываем кнопку на "Добавить"
+		const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+		if (submitBtn) submitBtn.textContent = "Добавить";
+
+		// Переключаем секции
+		vehiclesSection.style.display = "none";
+		vehiclesSection.classList.remove("active");
+		maintenanceSection.style.display = "block";
+		maintenanceSection.classList.add("active");
+		window.scrollTo(0, 0);
+
+		loadMaintenanceLog(vehicle.id);
+	}
+
+	function closeMaintenanceSection() {
+		const maintenanceSection = document.getElementById("maintenanceSection");
+		const vehiclesSection = document.getElementById("vehiclesSection");
+
+		if (maintenanceSection) {
+			maintenanceSection.style.display = "none";
+			maintenanceSection.classList.remove("active");
+		}
+		if (vehiclesSection) {
+			vehiclesSection.style.display = "block";
+			vehiclesSection.classList.add("active");
+		}
+		window.scrollTo(0, 0);
+		currentMaintenanceVehicleId = null;
+		maintenanceEntries = [];
+		editingMaintenanceId = null;
+	}
+
+	async function loadMaintenanceLog(vehicleId) {
+		try {
+			maintenanceEntries = await window.VehiclesDB.getMaintenanceLog(vehicleId);
+			renderMaintenanceLog();
+		} catch (err) {
+			console.error("Ошибка загрузки журнала ТО:", err);
+			maintenanceEntries = [];
+			renderMaintenanceLog();
+		}
+	}
+
+	function renderMaintenanceLog() {
+		const tbody = document.getElementById("maintenanceTableBody");
+		if (!tbody) return;
+
+		tbody.innerHTML = "";
+
+		if (maintenanceEntries.length === 0) {
+			const row = document.createElement("tr");
+			row.innerHTML = '<td colspan="7" style="text-align: center; color: var(--muted);">Записи ТО отсутствуют</td>';
+			tbody.appendChild(row);
+			return;
+		}
+
+		maintenanceEntries.forEach((entry) => {
+			const row = document.createElement("tr");
+
+			const date = entry.service_date
+				? new Date(entry.service_date).toLocaleDateString('ru-RU')
+				: '—';
+			const mileage = entry.mileage ? entry.mileage.toLocaleString() : '—';
+			const workTypes = entry.work_types || '—';
+			const parts = entry.parts_replaced || '—';
+			const cost = entry.total_cost
+				? parseFloat(entry.total_cost).toLocaleString('ru-RU', { minimumFractionDigits: 2 })
+				: '—';
+			const notes = entry.notes || '—';
+
+			row.innerHTML = `
+				<td class="date-cell">${date}</td>
+				<td class="mileage-cell">${mileage}</td>
+				<td class="work-types-cell" title="${workTypes}">${workTypes}</td>
+				<td class="parts-cell" title="${parts}">${parts}</td>
+				<td class="cost-cell">${cost}</td>
+				<td class="notes-cell" title="${notes}">${notes}</td>
+				<td class="actions-cell">
+					<button class="btn btn-outline btn-icon-only maintenance-edit" data-id="${entry.id}" title="Редактировать">
+						<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+							<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+						</svg>
+					</button>
+					<button class="btn btn-outline btn-icon-only maintenance-delete" data-id="${entry.id}" title="Удалить">
+						<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+						</svg>
+					</button>
+				</td>
+			`;
+
+			// Обработчик редактирования
+			const editBtn = row.querySelector(".maintenance-edit");
+			if (editBtn) {
+				editBtn.addEventListener("click", () => editMaintenanceEntry(entry));
+			}
+
+			// Обработчик удаления
+			const deleteBtn = row.querySelector(".maintenance-delete");
+			if (deleteBtn) {
+				deleteBtn.addEventListener("click", async () => {
+					if (confirm("Удалить эту запись ТО?")) {
+						try {
+							await window.VehiclesDB.deleteMaintenanceEntry(entry.id);
+							await loadMaintenanceLog(currentMaintenanceVehicleId);
+						} catch (err) {
+							alert("Ошибка удаления: " + err.message);
+						}
+					}
+				});
+			}
+
+			tbody.appendChild(row);
+		});
+	}
+
+	function editMaintenanceEntry(entry) {
+		editingMaintenanceId = entry.id;
+
+		document.getElementById("maintenanceMileage").value = entry.mileage || "";
+		document.getElementById("maintenanceDate").value = entry.service_date || "";
+		document.getElementById("maintenanceWorkTypes").value = entry.work_types || "";
+		document.getElementById("maintenanceParts").value = entry.parts_replaced || "";
+		document.getElementById("maintenanceCost").value = entry.total_cost || "";
+		document.getElementById("maintenanceNotes").value = entry.notes || "";
+
+		// Меняем кнопку на "Сохранить"
+		const form = document.getElementById("maintenanceForm");
+		const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+		if (submitBtn) submitBtn.textContent = "Сохранить изменения";
+
+		// Прокручиваем к форме
+		const formSection = document.querySelector(".maintenance-form-section");
+		if (formSection) formSection.scrollIntoView({ behavior: "smooth" });
+	}
+
+	async function saveMaintenanceEntry(e) {
+		e.preventDefault();
+
+		if (!currentMaintenanceVehicleId) {
+			alert("Ошибка: не выбран автомобиль");
+			return;
+		}
+
+		const formData = new FormData(e.target);
+
+		const entry = {
+			vehicle_id: currentMaintenanceVehicleId,
+			mileage: parseInt(formData.get("mileage")),
+			service_date: formData.get("service_date"),
+			work_types: formData.get("work_types")?.trim(),
+			parts_replaced: formData.get("parts_replaced")?.trim() || null,
+			total_cost: parseFloat(formData.get("total_cost")) || null,
+			notes: formData.get("notes")?.trim() || null
+		};
+
+		if (!entry.mileage || isNaN(entry.mileage)) {
+			alert("Укажите пробег при ТО");
+			return;
+		}
+		if (!entry.service_date) {
+			alert("Укажите дату ТО");
+			return;
+		}
+		if (!entry.work_types) {
+			alert("Укажите виды работ");
+			return;
+		}
+
+		try {
+			if (editingMaintenanceId) {
+				await window.VehiclesDB.updateMaintenanceEntry(editingMaintenanceId, entry);
+				editingMaintenanceId = null;
+			} else {
+				await window.VehiclesDB.addMaintenanceEntry(entry);
+			}
+
+			await loadMaintenanceLog(currentMaintenanceVehicleId);
+
+			// Очищаем форму
+			e.target.reset();
+			const dateInput = document.getElementById("maintenanceDate");
+			if (dateInput) dateInput.value = new Date().toISOString().split('T')[0];
+
+			// Сбрасываем кнопку
+			const submitBtn = e.target.querySelector('button[type="submit"]');
+			if (submitBtn) submitBtn.textContent = "Добавить";
+		} catch (err) {
+			console.error("Ошибка сохранения ТО:", err);
+			alert("Ошибка сохранения: " + err.message);
 		}
 	}
 
@@ -1220,6 +1462,18 @@
 		const printMileageBtn = document.getElementById("printMileageBtn");
 		if (printMileageBtn) {
 			printMileageBtn.addEventListener("click", printMileageTable);
+		}
+
+		// ---- Обработчики для журнала ТО ----
+
+		const maintenanceForm = document.getElementById("maintenanceForm");
+		if (maintenanceForm) {
+			maintenanceForm.addEventListener("submit", saveMaintenanceEntry);
+		}
+
+		const backToVehiclesFromMaintenanceBtn = document.getElementById("backToVehiclesFromMaintenanceBtn");
+		if (backToVehiclesFromMaintenanceBtn) {
+			backToVehiclesFromMaintenanceBtn.addEventListener("click", closeMaintenanceSection);
 		}
 
 		// ---- Обработчики для системы ролей ----

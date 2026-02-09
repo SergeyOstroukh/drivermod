@@ -595,6 +595,77 @@
 		}
 	}
 
+	// ============================================
+	// ЖУРНАЛ ТО
+	// ============================================
+
+	async function getMaintenanceLog(vehicleId) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_maintenance_log')
+				.select('*')
+				.eq('vehicle_id', vehicleId)
+				.order('service_date', { ascending: false });
+
+			if (error) throw error;
+			return data || [];
+		} catch (err) {
+			console.error('Ошибка получения журнала ТО:', err);
+			throw err;
+		}
+	}
+
+	async function addMaintenanceEntry(entry) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_maintenance_log')
+				.insert([entry])
+				.select('*')
+				.single();
+
+			if (error) throw error;
+			return data;
+		} catch (err) {
+			console.error('Ошибка добавления записи ТО:', err);
+			throw err;
+		}
+	}
+
+	async function updateMaintenanceEntry(id, entry) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('vehicle_maintenance_log')
+				.update(entry)
+				.eq('id', id)
+				.select('*')
+				.single();
+
+			if (error) throw error;
+			return data;
+		} catch (err) {
+			console.error('Ошибка обновления записи ТО:', err);
+			throw err;
+		}
+	}
+
+	async function deleteMaintenanceEntry(id) {
+		try {
+			const client = initSupabase();
+			const { error } = await client
+				.from('vehicle_maintenance_log')
+				.delete()
+				.eq('id', id);
+
+			if (error) throw error;
+		} catch (err) {
+			console.error('Ошибка удаления записи ТО:', err);
+			throw err;
+		}
+	}
+
 	window.VehiclesDB = {
 		// Водители
 		getAllDrivers,
@@ -615,7 +686,12 @@
 		getMileageLog,
 		addMileageLog,
 		updateMileageLog,
-		deleteMileageLog
+		deleteMileageLog,
+		// Журнал ТО
+		getMaintenanceLog,
+		addMaintenanceEntry,
+		updateMaintenanceEntry,
+		deleteMaintenanceEntry
 	};
 })();
 

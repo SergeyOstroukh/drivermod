@@ -1294,6 +1294,139 @@ body {
 	}
 }
 
+/* ============================================
+   ЖУРНАЛ ТО
+   ============================================ */
+.maintenance-content {
+	display: grid;
+	grid-template-columns: 1fr 2fr;
+	gap: 24px;
+	margin-top: 24px;
+}
+
+.maintenance-form-section {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 20px;
+}
+
+.maintenance-form-title {
+	margin: 0 0 20px 0;
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.maintenance-table-section {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 20px;
+}
+
+.maintenance-table-title {
+	margin: 0 0 20px 0;
+	font-size: 18px;
+	font-weight: 600;
+	color: var(--fg);
+}
+
+.maintenance-table {
+	width: 100%;
+	border-collapse: collapse;
+}
+
+.maintenance-table thead {
+	background: #0e1729;
+}
+
+.maintenance-table th {
+	padding: 12px;
+	text-align: left;
+	font-weight: 600;
+	font-size: 13px;
+	color: var(--muted);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	border-bottom: 2px solid var(--border);
+}
+
+.maintenance-table td {
+	padding: 12px;
+	border-bottom: 1px solid var(--border);
+	font-size: 14px;
+	color: var(--fg);
+	vertical-align: top;
+}
+
+.maintenance-table tbody tr:hover {
+	background: #0e1729;
+}
+
+.maintenance-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.maintenance-table .date-cell {
+	white-space: nowrap;
+}
+
+.maintenance-table .mileage-cell {
+	white-space: nowrap;
+	font-weight: 500;
+}
+
+.maintenance-table .work-types-cell {
+	max-width: 250px;
+	white-space: pre-line;
+	line-height: 1.4;
+}
+
+.maintenance-table .parts-cell {
+	max-width: 200px;
+	white-space: pre-line;
+	line-height: 1.4;
+	color: var(--muted);
+	font-size: 13px;
+}
+
+.maintenance-table .cost-cell {
+	white-space: nowrap;
+	font-weight: 600;
+	color: var(--accent);
+}
+
+.maintenance-table .notes-cell {
+	color: var(--muted);
+	font-size: 13px;
+	max-width: 150px;
+}
+
+.maintenance-table .actions-cell {
+	white-space: nowrap;
+}
+
+.maintenance-table .actions-cell .btn {
+	margin-right: 4px;
+}
+
+@media (max-width: 900px) {
+	.maintenance-content {
+		grid-template-columns: 1fr;
+	}
+}
+
+@media (max-width: 768px) {
+	.maintenance-table {
+		min-width: 600px;
+	}
+	.maintenance-form-section,
+	.maintenance-table-section {
+		padding: 12px;
+	}
+}
+
 /* Режим водителя - таблица на полную ширину */
 .mileage-content.driver-view {
 	grid-template-columns: 1fr;

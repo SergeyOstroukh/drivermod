@@ -211,6 +211,76 @@
 			</section>
 		</div>
 
+		<!-- Раздел Журнал ТО -->
+		<div id="maintenanceSection" class="content-section" style="display: none;">
+			<section class="section-header">
+				<button id="backToVehiclesFromMaintenanceBtn" class="btn btn-outline" type="button">
+					<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M19 12H5M12 19l-7-7 7-7"></path>
+					</svg>
+					Назад к автомобилям
+				</button>
+				<h2 id="maintenanceSectionTitle" class="section-title">Журнал ТО</h2>
+			</section>
+			<section class="maintenance-content">
+				<div class="maintenance-form-section">
+					<h3 class="maintenance-form-title">Добавить запись ТО</h3>
+					<form id="maintenanceForm" class="supplier-form">
+						<div class="form-group">
+							<label for="maintenanceMileage" class="form-label">Пробег при ТО (км) *</label>
+							<input type="number" id="maintenanceMileage" name="mileage" class="form-input" min="0" required placeholder="Пробег на момент ТО" />
+						</div>
+						<div class="form-group">
+							<label for="maintenanceDate" class="form-label">Дата ТО *</label>
+							<input type="date" id="maintenanceDate" name="service_date" class="form-input" required />
+						</div>
+						<div class="form-group">
+							<label for="maintenanceWorkTypes" class="form-label">Виды работ *</label>
+							<textarea id="maintenanceWorkTypes" name="work_types" class="form-textarea" rows="3" required placeholder="Например: замена масла, замена фильтров, диагностика ходовой..."></textarea>
+						</div>
+						<div class="form-group">
+							<label for="maintenanceParts" class="form-label">Замененные запчасти</label>
+							<textarea id="maintenanceParts" name="parts_replaced" class="form-textarea" rows="3" placeholder="Например: масло Castrol 5W-30 (4л), фильтр масляный, фильтр воздушный..."></textarea>
+						</div>
+						<div class="form-group">
+							<label for="maintenanceCost" class="form-label">Общая сумма (работа + запчасти)</label>
+							<input type="number" id="maintenanceCost" name="total_cost" class="form-input" min="0" step="0.01" placeholder="0.00" />
+						</div>
+						<div class="form-group">
+							<label for="maintenanceNotes" class="form-label">Примечания</label>
+							<textarea id="maintenanceNotes" name="notes" class="form-textarea" rows="2" placeholder="Дополнительная информация..."></textarea>
+						</div>
+						<div class="form-actions">
+							<button type="submit" class="btn btn-primary">Добавить</button>
+						</div>
+					</form>
+				</div>
+				<div class="maintenance-table-section">
+					<h3 class="maintenance-table-title">История ТО</h3>
+					<div class="table-wrapper">
+						<table class="maintenance-table">
+							<thead>
+								<tr>
+									<th>Дата</th>
+									<th>Пробег (км)</th>
+									<th>Виды работ</th>
+									<th>Запчасти</th>
+									<th>Сумма</th>
+									<th>Примечания</th>
+									<th>Действия</th>
+								</tr>
+							</thead>
+							<tbody id="maintenanceTableBody">
+								<tr>
+									<td colspan="7" style="text-align: center; color: var(--muted);">Загрузка...</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+			</section>
+		</div>
+
 		<!-- Раздел История использования -->
 		<div id="historySection" class="content-section" style="display: none;">
 			<section class="section-header">
