@@ -42,9 +42,12 @@
 			tab.classList.toggle("active", tab.dataset.section === section);
 		});
 
-		// Скрываем только основные разделы (не historySection и mileageSection)
-		const mainSections = ["suppliersSection", "driversSection", "vehiclesSection"];
-		mainSections.forEach(sectionId => {
+		// Скрываем все разделы (основные + подсекции)
+		const allSections = [
+			"suppliersSection", "driversSection", "vehiclesSection",
+			"historySection", "mileageSection", "maintenanceSection"
+		];
+		allSections.forEach(sectionId => {
 			const sec = document.getElementById(sectionId);
 			if (sec) {
 				sec.style.display = "none";
@@ -82,16 +85,21 @@
 		
 		if (section === "suppliers") {
 			if (searchInput) searchInput.style.display = "block";
-			if (headerActions) headerActions.style.display = "flex";
+			if (headerActions) {
+				headerActions.style.display = "flex";
+				// Восстанавливаем видимость кнопок поставщиков
+				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn"].forEach(id => {
+					const btn = document.getElementById(id);
+					if (btn) btn.style.display = "";
+				});
+			}
 		} else {
 			if (searchInput) searchInput.style.display = "none";
 			if (headerActions) {
-				// Показываем только кнопку добавления для текущего раздела
-				headerActions.querySelectorAll(".btn").forEach(btn => {
-					if (btn.id === "addSupplierBtn" || btn.id === "officeBtn" || 
-					    btn.id === "warehouseBtn" || btn.id === "detectLocationBtn") {
-						btn.style.display = "none";
-					}
+				// Скрываем кнопки поставщиков
+				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn"].forEach(id => {
+					const btn = document.getElementById(id);
+					if (btn) btn.style.display = "none";
 				});
 			}
 		}
