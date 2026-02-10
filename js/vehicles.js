@@ -667,88 +667,188 @@
 
 	async function loadHistory(vehicleId) {
 		try {
+			// Загружаем ручные записи истории
 			historyEntries = await window.VehiclesDB.getVehicleHistory(vehicleId);
-			console.log("Загруженная история:", historyEntries);
-			renderHistory();
+
+			// Подтягиваем автоматическую историю из лога пробега
+			const mileageEntries = await window.VehiclesDB.getMileageLog(vehicleId);
+			const autoHistory = buildAutoHistoryFromMileage(mileageEntries);
+
+			renderHistory(autoHistory);
 		} catch (err) {
 			console.error("Ошибка загрузки истории:", err);
 			historyEntries = [];
-			renderHistory();
+			renderHistory([]);
 		}
 	}
 
-	function renderHistory() {
+	/**
+	 * Строит автоматическую историю водителей из лога пробега.
+	 * Группирует последовательные записи одного водителя в периоды.
+	 */
+	function buildAutoHistoryFromMileage(mileageEntries) {
+		if (!mileageEntries || mileageEntries.length === 0) return [];
+
+		// Сортируем по дате
+		const sorted = [...mileageEntries].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
+
+		const periods = [];
+		let currentPeriod = null;
+
+		for (const entry of sorted) {
+			const driverId = entry.driver_id;
+			const driverObj = entry.driver || entry.drivers || null;
+			const date = entry.log_date;
+
+			if (!driverId) continue;
+
+			if (currentPeriod && currentPeriod.driver_id === driverId) {
+				// Тот же водитель — расширяем период
+				currentPeriod.end_date = date;
+				currentPeriod.shifts++;
+				currentPeriod.totalMileage += (entry.mileage || 0) - (entry.mileage_out || 0);
+			} else {
+				// Новый водитель — закрываем предыдущий и открываем новый
+				if (currentPeriod) {
+					periods.push(currentPeriod);
+				}
+				currentPeriod = {
+					driver_id: driverId,
+					driver: driverObj,
+					start_date: date,
+					end_date: date,
+					shifts: 1,
+					totalMileage: (entry.mileage || 0) - (entry.mileage_out || 0)
+				};
+			}
+		}
+		if (currentPeriod) {
+			periods.push(currentPeriod);
+		}
+
+		return periods;
+	}
+
+	function renderHistory(autoHistory = []) {
 		const historyTableBody = document.getElementById("historyTableBody");
 		if (!historyTableBody) return;
 
 		historyTableBody.innerHTML = "";
 
-		if (historyEntries.length === 0) {
+		const hasManual = historyEntries.length > 0;
+		const hasAuto = autoHistory.length > 0;
+
+		if (!hasManual && !hasAuto) {
 			const row = document.createElement("tr");
 			row.innerHTML = '<td colspan="5" style="text-align: center; color: var(--muted);">История пуста</td>';
 			historyTableBody.appendChild(row);
 			return;
 		}
 
-		historyEntries.forEach((entry) => {
-			const row = document.createElement("tr");
+		// --- Автоматическая история из лога пробега ---
+		if (hasAuto) {
+			// Заголовок секции
+			const headerRow = document.createElement("tr");
+			headerRow.innerHTML = `<td colspan="5" class="history-section-divider">
+				<span class="history-section-label">Автоматически (из лога пробега)</span>
+			</td>`;
+			historyTableBody.appendChild(headerRow);
 
-			// Отладочный вывод
-			console.log("Обработка записи истории:", entry);
-			console.log("entry.driver:", entry.driver);
-			console.log("entry.drivers:", entry.drivers);
-			
-			// Проверяем разные варианты структуры данных
-			let driver = null;
-			if (entry.driver) {
-				driver = entry.driver;
-			} else if (entry.drivers) {
-				if (Array.isArray(entry.drivers)) {
-					driver = entry.drivers.length > 0 ? entry.drivers[0] : null;
-				} else if (typeof entry.drivers === 'object') {
-					driver = entry.drivers;
-				}
+			autoHistory.forEach((period) => {
+				const row = document.createElement("tr");
+				row.className = "auto-history-row";
+
+				let driver = period.driver;
+				if (driver && Array.isArray(driver)) driver = driver[0];
+				if (driver && typeof driver === 'object' && driver.id) { /* ok */ }
+				else driver = null;
+
+				const driverName = driver && driver.name ? driver.name : "Водитель ID:" + period.driver_id;
+				const driverPhone = driver && driver.phone ? driver.phone : "";
+				const startDate = period.start_date ? new Date(period.start_date).toLocaleDateString('ru-RU') : '?';
+				const endDate = period.end_date ? new Date(period.end_date).toLocaleDateString('ru-RU') : '?';
+				const isSameDay = period.start_date === period.end_date;
+				const endDisplay = isSameDay ? startDate : endDate;
+				const mileageNote = period.totalMileage > 0 ? `${period.shifts} смен, ${period.totalMileage.toLocaleString()} км` : `${period.shifts} смен`;
+
+				row.innerHTML = `
+					<td>
+						<div class="driver-name">👤 ${driverName}</div>
+						${driverPhone ? `<div class="driver-phone">${driverPhone}</div>` : ''}
+					</td>
+					<td class="date-cell">${startDate}</td>
+					<td class="date-cell">${isSameDay ? '—' : endDisplay}</td>
+					<td class="notes-cell">${mileageNote}</td>
+					<td class="actions-cell"></td>
+				`;
+				historyTableBody.appendChild(row);
+			});
+		}
+
+		// --- Ручные записи ---
+		if (hasManual) {
+			if (hasAuto) {
+				const headerRow = document.createElement("tr");
+				headerRow.innerHTML = `<td colspan="5" class="history-section-divider">
+					<span class="history-section-label">Добавлено вручную</span>
+				</td>`;
+				historyTableBody.appendChild(headerRow);
 			}
-			
-			const driverName = driver && driver.name ? driver.name : "Неизвестный водитель";
-			const driverPhone = driver && driver.phone ? driver.phone : "";
-			const startDate = entry.start_date ? new Date(entry.start_date).toLocaleDateString('ru-RU') : '?';
-			const endDate = entry.end_date ? new Date(entry.end_date).toLocaleDateString('ru-RU') : 'по настоящее время';
-			const notes = entry.notes || '—';
 
-			row.innerHTML = `
-				<td>
-					<div class="driver-name">👤 ${driverName}</div>
-					${driverPhone ? `<div class="driver-phone">${driverPhone}</div>` : ''}
-				</td>
-				<td class="date-cell">${startDate}</td>
-				<td class="date-cell">${endDate}</td>
-				<td class="notes-cell" title="${notes}">${notes}</td>
-				<td class="actions-cell">
-					<button class="btn btn-outline btn-icon-only history-delete" data-id="${entry.id}" title="Удалить">
-						<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-						</svg>
-					</button>
-				</td>
-			`;
+			historyEntries.forEach((entry) => {
+				const row = document.createElement("tr");
 
-			const deleteBtn = row.querySelector(".history-delete");
-			if (deleteBtn) {
-				deleteBtn.addEventListener("click", async () => {
-					if (confirm("Удалить эту запись из истории?")) {
-						try {
-							await window.VehiclesDB.deleteHistoryEntry(entry.id);
-							await loadHistory(currentHistoryVehicleId);
-						} catch (err) {
-							alert("Ошибка удаления: " + err.message);
-						}
+				let driver = null;
+				if (entry.driver) {
+					driver = entry.driver;
+				} else if (entry.drivers) {
+					if (Array.isArray(entry.drivers)) {
+						driver = entry.drivers.length > 0 ? entry.drivers[0] : null;
+					} else if (typeof entry.drivers === 'object') {
+						driver = entry.drivers;
 					}
-				});
-			}
+				}
+				
+				const driverName = driver && driver.name ? driver.name : "Неизвестный водитель";
+				const driverPhone = driver && driver.phone ? driver.phone : "";
+				const startDate = entry.start_date ? new Date(entry.start_date).toLocaleDateString('ru-RU') : '?';
+				const endDate = entry.end_date ? new Date(entry.end_date).toLocaleDateString('ru-RU') : 'по настоящее время';
+				const notes = entry.notes || '—';
 
-			historyTableBody.appendChild(row);
-		});
+				row.innerHTML = `
+					<td>
+						<div class="driver-name">👤 ${driverName}</div>
+						${driverPhone ? `<div class="driver-phone">${driverPhone}</div>` : ''}
+					</td>
+					<td class="date-cell">${startDate}</td>
+					<td class="date-cell">${endDate}</td>
+					<td class="notes-cell" title="${notes}">${notes}</td>
+					<td class="actions-cell">
+						<button class="btn btn-outline btn-icon-only history-delete" data-id="${entry.id}" title="Удалить">
+							<svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+							</svg>
+						</button>
+					</td>
+				`;
+
+				const deleteBtn = row.querySelector(".history-delete");
+				if (deleteBtn) {
+					deleteBtn.addEventListener("click", async () => {
+						if (confirm("Удалить эту запись из истории?")) {
+							try {
+								await window.VehiclesDB.deleteHistoryEntry(entry.id);
+								await loadHistory(currentHistoryVehicleId);
+							} catch (err) {
+								alert("Ошибка удаления: " + err.message);
+							}
+						}
+					});
+				}
+
+				historyTableBody.appendChild(row);
+			});
+		}
 	}
 
 	function openHistoryTable(vehicle) {
