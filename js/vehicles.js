@@ -1620,12 +1620,10 @@
 			mileageDate.value = today;
 		}
 
-		// Устанавливаем текущий месяц в фильтре
+		// Сбрасываем фильтр месяца — при открытии показываем ВСЕ записи
 		const monthFilter = document.getElementById("mileageMonthFilter");
 		if (monthFilter) {
-			const today = new Date();
-			const month = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-			monthFilter.value = month;
+			monthFilter.value = "";
 		}
 
 		// Очищаем форму
