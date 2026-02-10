@@ -824,6 +824,34 @@ body {
 	white-space: nowrap;
 }
 
+.mileage-table .date-editable {
+	cursor: pointer;
+	transition: color 0.15s;
+}
+
+.mileage-table .date-editable:hover {
+	color: var(--accent);
+	text-decoration: underline;
+	text-decoration-style: dashed;
+	text-underline-offset: 3px;
+}
+
+.date-edit-input {
+	background: #0e1729;
+	color: var(--fg);
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	padding: 4px 6px;
+	font-size: 13px;
+	font-family: inherit;
+	width: 130px;
+}
+
+.date-edit-input:focus {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+
 .mileage-table .driver-cell {
 	font-weight: 600;
 	color: var(--accent);

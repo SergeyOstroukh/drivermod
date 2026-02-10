@@ -1980,6 +1980,49 @@
 			fuelLevelReturnCell.className = "fuel-level-return-cell";
 			fuelLevelReturnCell.appendChild(fuelLevelReturnInput);
 
+			// Создаём редактируемую ячейку даты
+			const dateCell = document.createElement("td");
+			dateCell.className = "date-cell date-editable";
+			dateCell.textContent = date;
+			dateCell.title = "Нажмите для изменения даты";
+			dateCell.addEventListener("click", () => {
+				// Заменяем текст на input[type=date]
+				if (dateCell.querySelector("input")) return; // уже открыт
+				const dateInput = document.createElement("input");
+				dateInput.type = "date";
+				dateInput.className = "date-edit-input";
+				dateInput.value = entry.log_date || "";
+				dateCell.textContent = "";
+				dateCell.appendChild(dateInput);
+				dateInput.focus();
+
+				const finishEdit = async () => {
+					const newDate = dateInput.value;
+					if (!newDate || newDate === entry.log_date) {
+						// Не изменилось — вернуть текст
+						dateCell.textContent = date;
+						return;
+					}
+					try {
+						dateInput.disabled = true;
+						await window.VehiclesDB.updateMileageLog(entry.id, { log_date: newDate });
+						await loadMileageLog(currentMileageVehicleId);
+					} catch (err) {
+						console.error("Ошибка обновления даты:", err);
+						alert("Ошибка обновления даты: " + err.message);
+						dateCell.textContent = date;
+					}
+				};
+
+				dateInput.addEventListener("blur", finishEdit);
+				dateInput.addEventListener("keydown", (e) => {
+					if (e.key === "Enter") dateInput.blur();
+					if (e.key === "Escape") {
+						dateCell.textContent = date;
+					}
+				});
+			});
+
 			// Фамилия водителя за эту смену
 			const driverObj = entry.driver || entry.drivers || null;
 			let driverDisplay = '—';
@@ -1991,7 +2034,6 @@
 
 			row.innerHTML = `
 				<td class="shift-number-cell">${shiftNumberDisplay}</td>
-				<td class="date-cell">${date}</td>
 				<td class="driver-cell">${driverDisplay}</td>
 				<td class="mileage-out-cell">${mileageOutDisplay}</td>
 				<td class="mileage-return-cell">${mileageReturnDisplay}</td>
@@ -2007,6 +2049,12 @@
 					</button>
 				</td>
 			`;
+
+			// Вставляем ячейку даты после первого td (номер смены)
+			const firstCell = row.querySelector(".shift-number-cell");
+			if (firstCell) {
+				firstCell.after(dateCell);
+			}
 
 			// Вставляем ячейку с редактируемым полем перед ячейкой с заправкой
 			const fuelRefillCell = row.querySelector(".fuel-refill-cell");
