@@ -498,7 +498,11 @@
 				mileageBtn.className = "btn btn-outline btn-icon-only";
 				mileageBtn.title = "Ввести пробег";
 				mileageBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+					<path d="M5 17h2m10 0h2M2 9h1m18 0h1"></path>
+					<rect x="3" y="7" width="18" height="8" rx="2"></rect>
+					<circle cx="7" cy="17" r="2"></circle>
+					<circle cx="17" cy="17" r="2"></circle>
+					<path d="M6 7V5a1 1 0 0 1 1-1h4l3 3h4a1 1 0 0 1 1 1v0"></path>
 				</svg>`;
 				mileageBtn.addEventListener("click", (e) => {
 					e.preventDefault();
