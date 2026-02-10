@@ -121,24 +121,32 @@
 				throw error;
 			}
 			
-			// Преобразуем данные для удобства
-			return (data || []).map(vehicle => {
-				let driver = null;
-				
-				// Supabase может вернуть данные в разных форматах
-				if (vehicle.drivers) {
-					if (Array.isArray(vehicle.drivers)) {
-						driver = vehicle.drivers.length > 0 ? vehicle.drivers[0] : null;
-					} else if (typeof vehicle.drivers === 'object') {
-						driver = vehicle.drivers;
-					}
+		// Преобразуем данные для удобства
+		const result = (data || []).map(vehicle => {
+			let driver = null;
+			
+			// Supabase может вернуть данные в разных форматах
+			if (vehicle.drivers) {
+				if (Array.isArray(vehicle.drivers)) {
+					driver = vehicle.drivers.length > 0 ? vehicle.drivers[0] : null;
+				} else if (typeof vehicle.drivers === 'object') {
+					driver = vehicle.drivers;
 				}
-				
-				return {
-					...vehicle,
-					drivers: driver
-				};
-			});
+			}
+			
+			return {
+				...vehicle,
+				drivers: driver
+			};
+		});
+
+		// Дедупликация по ID (Supabase может вернуть дубли при сложных JOIN)
+		const seen = new Set();
+		return result.filter(v => {
+			if (seen.has(v.id)) return false;
+			seen.add(v.id);
+			return true;
+		});
 		} catch (err) {
 			console.error('Ошибка получения автомобилей:', err);
 			throw err;
