@@ -35,6 +35,11 @@
 			loadDriversForRoleSelection();
 			return;
 		}
+		// Распределение доступно только логисту
+		if (section === "distribution" && currentRole !== "logist") {
+			loadDriversForRoleSelection();
+			return;
+		}
 		console.log("switchSection вызвана, section:", section);
 		
 		// Обновляем активную вкладку
@@ -45,7 +50,8 @@
 		// Скрываем все разделы (основные + подсекции)
 		const allSections = [
 			"suppliersSection", "driversSection", "vehiclesSection",
-			"historySection", "mileageSection", "maintenanceSection"
+			"historySection", "mileageSection", "maintenanceSection",
+			"distributionSection"
 		];
 		allSections.forEach(sectionId => {
 			const sec = document.getElementById(sectionId);
@@ -72,7 +78,8 @@
 		const titles = {
 			suppliers: "Поставщики",
 			drivers: "Водители",
-			vehicles: "Автомобили"
+			vehicles: "Автомобили",
+			distribution: "Распределение маршрутов"
 		};
 		const pageTitle = document.getElementById("pageTitle");
 		if (pageTitle) {
@@ -82,8 +89,16 @@
 		// Скрываем/показываем элементы поиска и действий
 		const searchInput = document.getElementById("searchInput");
 		const headerActions = document.querySelector(".header-actions");
+		const headerTop = document.querySelector(".header-top");
+		const appContainer = document.getElementById("app");
 		
-		if (section === "suppliers") {
+		if (section === "distribution") {
+			// Для распределения скрываем header-top и даём full-width
+			if (headerTop) headerTop.style.display = "none";
+			if (appContainer) appContainer.classList.add("dc-fullwidth");
+		} else if (section === "suppliers") {
+			if (headerTop) headerTop.style.display = "";
+			if (appContainer) appContainer.classList.remove("dc-fullwidth");
 			if (searchInput) searchInput.style.display = "block";
 			if (headerActions) {
 				headerActions.style.display = "flex";
@@ -94,6 +109,8 @@
 				});
 			}
 		} else {
+			if (headerTop) headerTop.style.display = "";
+			if (appContainer) appContainer.classList.remove("dc-fullwidth");
 			if (searchInput) searchInput.style.display = "none";
 			if (headerActions) {
 				// Скрываем кнопки поставщиков
@@ -109,6 +126,8 @@
 			loadDrivers();
 		} else if (section === "vehicles") {
 			loadVehicles();
+		} else if (section === "distribution") {
+			if (window.DistributionUI) window.DistributionUI.onSectionActivated();
 		}
 	}
 
@@ -1271,6 +1290,9 @@
 		currentRole = "logist";
 		currentDriverData = null;
 		closeRoleModal();
+		// Показываем вкладку «Распределение» для логиста
+		const distTab = document.getElementById("distributionTab");
+		if (distTab) distTab.style.display = "";
 		switchSection("vehicles");
 	}
 
@@ -1278,6 +1300,9 @@
 		currentRole = null;
 		currentDriverData = null;
 		driverEntryVehicle = null;
+		// Скрываем вкладку «Распределение» при выходе
+		const distTab = document.getElementById("distributionTab");
+		if (distTab) distTab.style.display = "none";
 		// Переключаемся на раздел поставщиков
 		switchSection("suppliers");
 	}
