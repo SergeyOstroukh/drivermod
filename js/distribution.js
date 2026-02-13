@@ -168,8 +168,14 @@
     if (mapInstance) mapInstance.balloon.close();
   };
   window.__dc_delete = function (orderId) {
-    orders = orders.filter(function (o) { return o.id !== orderId; });
-    assignments = null; variants = []; activeVariant = -1;
+    const idx = orders.findIndex(function (o) { return o.id === orderId; });
+    if (idx === -1) return;
+    orders.splice(idx, 1);
+    // Удаляем назначение этой точки, сохраняя остальные
+    if (assignments) {
+      assignments.splice(idx, 1);
+    }
+    variants = []; activeVariant = -1;
     renderAll();
     if (mapInstance) mapInstance.balloon.close();
     showToast('Точка удалена');
@@ -183,8 +189,10 @@
     const parsed = window.DistributionParser.parseOrders(text);
     if (parsed.length === 0) { showToast('Не найдено адресов', 'error'); return; }
 
-    if (!append) { orders = []; }
-    assignments = null; variants = []; activeVariant = -1;
+    if (!append) { orders = []; assignments = null; variants = []; activeVariant = -1; }
+    // При добавлении сохраняем существующие назначения
+    const prevAssignments = append ? assignments : null;
+    const prevOrderCount = orders.length;
     isGeocoding = true;
     renderAll();
 
@@ -193,7 +201,16 @@
       const geocoded = await window.DistributionGeocoder.geocodeOrders(parsed, function (cur, tot) {
         if (progressEl) progressEl.textContent = cur + '/' + tot;
       });
-      if (append) { orders = orders.concat(geocoded); }
+      if (append) {
+        orders = orders.concat(geocoded);
+        // Расширяем массив назначений: старые сохраняем, новым ставим -1 (не назначен)
+        if (prevAssignments) {
+          assignments = prevAssignments.slice();
+          for (let i = 0; i < geocoded.length; i++) {
+            assignments.push(-1);
+          }
+        }
+      }
       else { orders = geocoded; }
       const ok = geocoded.filter(function (o) { return o.geocoded; }).length;
       const fail = geocoded.length - ok;
@@ -413,8 +430,13 @@
     // Delete buttons
     sidebar.querySelectorAll('.dc-del-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        orders = orders.filter(function (o) { return o.id !== btn.dataset.id; });
-        assignments = null; variants = []; activeVariant = -1;
+        const idx = orders.findIndex(function (o) { return o.id === btn.dataset.id; });
+        if (idx === -1) return;
+        orders.splice(idx, 1);
+        if (assignments) {
+          assignments.splice(idx, 1);
+        }
+        variants = []; activeVariant = -1;
         renderAll();
       });
     });
