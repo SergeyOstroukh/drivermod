@@ -369,25 +369,60 @@
 		currentRouteDriverId = null;
 	}
 
+	let currentRouteData = null; // текущий объект маршрута из БД
+	let showCompletedPoints = false;
+
 	function renderDriverRoute(route) {
 		const listEl = document.getElementById("driverRouteList");
 		const mapEl = document.getElementById("driverRouteMap");
 		if (!listEl) return;
+
+		currentRouteData = route;
 
 		if (!route || !route.points || route.points.length === 0) {
 			listEl.innerHTML = '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg><p>На сегодня маршрут не назначен</p></div>';
 			return;
 		}
 
-		const points = route.points;
-		let html = '';
-		points.sort(function(a, b) { return (a.orderNum || 0) - (b.orderNum || 0); });
+		const allPoints = route.points.slice();
+		allPoints.sort(function(a, b) { return (a.orderNum || 0) - (b.orderNum || 0); });
 
-		points.forEach(function (pt, idx) {
-			html += '<div class="route-point">';
-			html += '<div class="route-point-num">' + (idx + 1) + '</div>';
+		const activePoints = allPoints.filter(function(pt) { return pt.status !== 'completed'; });
+		const completedPoints = allPoints.filter(function(pt) { return pt.status === 'completed'; });
+		const displayPoints = showCompletedPoints ? allPoints : activePoints;
+
+		let html = '';
+
+		// Header with stats and actions
+		html += '<div class="route-header">';
+		html += '<div class="route-header-stats">';
+		html += '<span class="route-stat active-stat">' + activePoints.length + ' активных</span>';
+		if (completedPoints.length > 0) {
+			html += '<span class="route-stat completed-stat">' + completedPoints.length + ' завершённых</span>';
+		}
+		html += '</div>';
+		html += '<div class="route-header-actions">';
+		// Build full route button
+		if (activePoints.length > 0) {
+			html += '<button class="btn btn-primary btn-sm route-build-btn" id="routeBuildAllBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg> Построить маршрут</button>';
+		}
+		if (completedPoints.length > 0) {
+			html += '<button class="btn btn-outline btn-sm route-toggle-completed" id="routeToggleCompleted">' + (showCompletedPoints ? 'Скрыть завершённые' : 'Показать завершённые') + '</button>';
+		}
+		html += '</div>';
+		html += '</div>';
+
+		// Points list
+		let num = 0;
+		displayPoints.forEach(function (pt, idx) {
+			const isCompleted = pt.status === 'completed';
+			const ptIndex = allPoints.indexOf(pt);
+			if (!isCompleted) num++;
+
+			html += '<div class="route-point' + (isCompleted ? ' route-point-completed' : '') + '">';
+			html += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
 			html += '<div class="route-point-info">';
-			html += '<div class="route-point-addr">' + pt.address + '</div>';
+			html += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + pt.address + '</div>';
 			if (pt.formattedAddress) {
 				html += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
 			}
@@ -399,23 +434,147 @@
 			}
 			html += '</div>';
 			html += '<div class="route-point-actions">';
-			// Navigate button (Yandex Navigator)
-			if (pt.lat && pt.lng) {
-				const navUrl = 'yandexnavi://build_route_on_map?lat_to=' + pt.lat + '&lon_to=' + pt.lng;
-				const webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
-				html += '<a href="' + navUrl + '" class="btn btn-primary btn-sm route-nav-btn" onclick="if(!navigator.userAgent.match(/Android|iPhone/i)){event.preventDefault();window.open(\'' + webNavUrl + '\',\'_blank\');}">Ехать</a>';
+			if (!isCompleted) {
+				// Navigate to single point
+				if (pt.lat && pt.lng) {
+					const navUrl = 'yandexnavi://build_route_on_map?lat_to=' + pt.lat + '&lon_to=' + pt.lng;
+					const webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
+					html += '<a href="' + navUrl + '" class="btn btn-outline btn-sm route-nav-btn" onclick="if(!navigator.userAgent.match(/Android|iPhone/i)){event.preventDefault();window.open(\'' + webNavUrl + '\',\'_blank\');}">Ехать</a>';
+				}
+				// Complete button
+				html += '<button class="btn btn-primary btn-sm route-complete-btn" data-pt-index="' + ptIndex + '" title="Завершить">✓</button>';
 			}
 			html += '</div>';
 			html += '</div>';
-			if (idx < points.length - 1) {
+			if (idx < displayPoints.length - 1) {
 				html += '<div class="route-connector"></div>';
 			}
 		});
 
+		if (activePoints.length === 0 && completedPoints.length > 0 && !showCompletedPoints) {
+			html += '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg><p>Все точки завершены!</p></div>';
+		}
+
 		listEl.innerHTML = html;
 
-		// Init or update route map
-		initDriverRouteMap(points, mapEl);
+		// Bind events
+		bindRouteEvents(allPoints);
+
+		// Init or update route map (show only active points)
+		initDriverRouteMap(activePoints, mapEl);
+	}
+
+	function bindRouteEvents(allPoints) {
+		// Complete point buttons
+		document.querySelectorAll('.route-complete-btn').forEach(function(btn) {
+			btn.addEventListener('click', async function() {
+				const ptIndex = parseInt(btn.dataset.ptIndex);
+				await completeRoutePoint(ptIndex);
+			});
+		});
+
+		// Build full route
+		const buildBtn = document.getElementById('routeBuildAllBtn');
+		if (buildBtn) {
+			buildBtn.addEventListener('click', function() {
+				buildOptimizedRoute();
+			});
+		}
+
+		// Toggle completed visibility
+		const toggleBtn = document.getElementById('routeToggleCompleted');
+		if (toggleBtn) {
+			toggleBtn.addEventListener('click', function() {
+				showCompletedPoints = !showCompletedPoints;
+				renderDriverRoute(currentRouteData);
+			});
+		}
+	}
+
+	async function completeRoutePoint(pointIndex) {
+		if (!currentRouteData || !currentRouteData.points) return;
+
+		// Update point status in the array
+		const updatedPoints = currentRouteData.points.map(function(pt, idx) {
+			if (idx === pointIndex) {
+				return Object.assign({}, pt, { status: 'completed' });
+			}
+			return pt;
+		});
+
+		try {
+			const updated = await window.VehiclesDB.updateRoutePoints(currentRouteData.id, updatedPoints);
+			currentRouteData = updated;
+			renderDriverRoute(updated);
+		} catch (err) {
+			console.error("Ошибка обновления статуса точки:", err);
+			alert("Не удалось обновить статус: " + err.message);
+		}
+	}
+
+	function buildOptimizedRoute() {
+		if (!currentRouteData || !currentRouteData.points) return;
+
+		const activePoints = currentRouteData.points
+			.filter(function(pt) { return pt.status !== 'completed' && pt.lat && pt.lng; });
+
+		if (activePoints.length === 0) return;
+
+		// Оптимизация порядка (nearest neighbor от ближайшей к центру Минска)
+		const optimized = optimizePointsOrder(activePoints);
+
+		// Строим URL для Яндекс Карт с маршрутом через все точки
+		// Формат: rtext=lat1,lng1~lat2,lng2~lat3,lng3&rtt=auto
+		const rtextParts = optimized.map(function(pt) { return pt.lat + ',' + pt.lng; });
+		const webUrl = 'https://yandex.by/maps/?rtext=' + rtextParts.join('~') + '&rtt=auto';
+
+		// На мобильном пробуем открыть Яндекс Навигатор с несколькими точками
+		// Навигатор поддерживает только одну точку, поэтому открываем Карты
+		const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+		if (isMobile) {
+			// Яндекс Карты мобильное приложение
+			const mobileUrl = 'yandexmaps://maps.yandex.ru/?rtext=' + rtextParts.join('~') + '&rtt=auto';
+			window.location.href = mobileUrl;
+			// Fallback на веб-версию
+			setTimeout(function() { window.open(webUrl, '_blank'); }, 1500);
+		} else {
+			window.open(webUrl, '_blank');
+		}
+	}
+
+	function optimizePointsOrder(points) {
+		if (points.length <= 2) return points.slice();
+		// Nearest neighbor: начинаем с ближайшей к центру Минска
+		const center = MINSK_CENTER_ROUTE;
+		let remaining = points.slice();
+		let startIdx = 0;
+		let minDist = Infinity;
+		for (let i = 0; i < remaining.length; i++) {
+			const d = haversineSimple(remaining[i].lat, remaining[i].lng, center[0], center[1]);
+			if (d < minDist) { minDist = d; startIdx = i; }
+		}
+		const ordered = [remaining.splice(startIdx, 1)[0]];
+		while (remaining.length > 0) {
+			const last = ordered[ordered.length - 1];
+			let nearIdx = 0;
+			let nearDist = Infinity;
+			for (let i = 0; i < remaining.length; i++) {
+				const d = haversineSimple(last.lat, last.lng, remaining[i].lat, remaining[i].lng);
+				if (d < nearDist) { nearDist = d; nearIdx = i; }
+			}
+			ordered.push(remaining.splice(nearIdx, 1)[0]);
+		}
+		return ordered;
+	}
+
+	function haversineSimple(lat1, lng1, lat2, lng2) {
+		const R = 6371;
+		const dLat = ((lat2 - lat1) * Math.PI) / 180;
+		const dLng = ((lng2 - lng1) * Math.PI) / 180;
+		const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+			Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
+			Math.sin(dLng/2) * Math.sin(dLng/2);
+		return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 	}
 
 	async function initDriverRouteMap(points, mapEl) {

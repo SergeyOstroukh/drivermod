@@ -812,6 +812,27 @@
 		}
 	}
 
+	/**
+	 * Обновляет массив точек маршрута (для смены статуса точки)
+	 */
+	async function updateRoutePoints(routeId, points) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.update({ points: points })
+				.eq('id', routeId)
+				.select('*')
+				.single();
+
+			if (error) throw error;
+			return data;
+		} catch (err) {
+			console.error('Ошибка обновления точек маршрута:', err);
+			throw err;
+		}
+	}
+
 	window.VehiclesDB = {
 		// Водители
 		getAllDrivers,
@@ -843,7 +864,8 @@
 		getDriverRoute,
 		getActiveRoutes,
 		deleteDriverRoute,
-		completeDriverRoute
+		completeDriverRoute,
+		updateRoutePoints
 	};
 })();
 
