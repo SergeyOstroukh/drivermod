@@ -96,9 +96,34 @@
 			<section>
 				<ul id="driversList" class="cards"></ul>
 			</section>
-		</div>
+	</div>
 
-		<!-- Раздел Автомобили -->
+	<!-- Раздел Маршрут водителя -->
+	<div id="driverRouteSection" class="content-section" style="display:none;">
+		<section class="section-header" style="display:flex;align-items:center;gap:12px;">
+			<button class="btn btn-outline btn-sm" onclick="closeDriverRoute()">
+				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polyline points="15 18 9 12 15 6"></polyline>
+				</svg>
+				Назад
+			</button>
+			<h2 id="driverRouteTitle" style="margin:0;font-size:1.1rem;">Маршрут</h2>
+		</section>
+		<div class="driver-route-layout">
+			<div id="driverRouteMap" class="driver-route-map"></div>
+			<div id="driverRouteList" class="driver-route-list">
+				<div class="route-empty">
+					<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5">
+						<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+						<circle cx="12" cy="10" r="3"></circle>
+					</svg>
+					<p>Загрузка маршрута...</p>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Раздел Автомобили -->
 		<div id="vehiclesSection" class="content-section">
 			<div id="vehiclesUserBar" class="user-bar" style="display:none;">
 				<div class="user-bar-info">

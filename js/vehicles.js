@@ -51,7 +51,7 @@
 		const allSections = [
 			"suppliersSection", "driversSection", "vehiclesSection",
 			"historySection", "mileageSection", "maintenanceSection",
-			"distributionSection"
+			"distributionSection", "driverRouteSection"
 		];
 		allSections.forEach(sectionId => {
 			const sec = document.getElementById(sectionId);
@@ -207,6 +207,16 @@
 			const actions = document.createElement("div");
 			actions.className = "actions";
 
+			// Кнопка маршрутов
+			const routeBtn = document.createElement("button");
+			routeBtn.className = "btn btn-outline btn-icon-only driver-route-btn";
+			routeBtn.title = "Маршруты";
+			routeBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+				<circle cx="12" cy="10" r="3"></circle>
+			</svg>`;
+			routeBtn.addEventListener("click", () => openDriverRoute(driver));
+
 			const editBtn = document.createElement("button");
 			editBtn.className = "btn btn-outline btn-icon-only";
 			editBtn.title = "Редактировать";
@@ -216,6 +226,7 @@
 			</svg>`;
 			editBtn.addEventListener("click", () => openDriverModal(driver));
 
+			actions.appendChild(routeBtn);
 			actions.appendChild(editBtn);
 			li.appendChild(header);
 			li.appendChild(actions);
@@ -303,6 +314,150 @@
 		} catch (err) {
 			console.error("Ошибка удаления водителя:", err);
 			alert("Не удалось удалить водителя: " + err.message);
+		}
+	}
+
+	// ============================================
+	// МАРШРУТЫ ВОДИТЕЛЕЙ
+	// ============================================
+
+	const MINSK_CENTER_ROUTE = [53.9006, 27.559];
+	let driverRouteMapInstance = null;
+	let driverRoutePlacemarks = [];
+	let currentRouteDriverId = null;
+
+	async function openDriverRoute(driver) {
+		currentRouteDriverId = driver.id;
+		const section = document.getElementById("driverRouteSection");
+		if (!section) return;
+
+		// Hide drivers list, show route section
+		const driversSection = document.getElementById("driversSection");
+		if (driversSection) driversSection.style.display = "none";
+
+		section.style.display = "block";
+		section.classList.add("active");
+		window.scrollTo(0, 0);
+
+		// Set title
+		const titleEl = document.getElementById("driverRouteTitle");
+		if (titleEl) titleEl.textContent = "Маршрут: " + (driver.name || "Водитель");
+
+		// Load route
+		const today = new Date().toISOString().split("T")[0];
+		try {
+			const route = await window.VehiclesDB.getDriverRoute(driver.id, today);
+			renderDriverRoute(route);
+		} catch (err) {
+			console.error("Ошибка загрузки маршрута:", err);
+			renderDriverRoute(null);
+		}
+	}
+
+	function closeDriverRoute() {
+		const section = document.getElementById("driverRouteSection");
+		if (section) {
+			section.style.display = "none";
+			section.classList.remove("active");
+		}
+		const driversSection = document.getElementById("driversSection");
+		if (driversSection) {
+			driversSection.style.display = "block";
+			driversSection.classList.add("active");
+		}
+		window.scrollTo(0, 0);
+		currentRouteDriverId = null;
+	}
+
+	function renderDriverRoute(route) {
+		const listEl = document.getElementById("driverRouteList");
+		const mapEl = document.getElementById("driverRouteMap");
+		if (!listEl) return;
+
+		if (!route || !route.points || route.points.length === 0) {
+			listEl.innerHTML = '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg><p>На сегодня маршрут не назначен</p></div>';
+			return;
+		}
+
+		const points = route.points;
+		let html = '';
+		points.sort(function(a, b) { return (a.orderNum || 0) - (b.orderNum || 0); });
+
+		points.forEach(function (pt, idx) {
+			html += '<div class="route-point">';
+			html += '<div class="route-point-num">' + (idx + 1) + '</div>';
+			html += '<div class="route-point-info">';
+			html += '<div class="route-point-addr">' + pt.address + '</div>';
+			if (pt.formattedAddress) {
+				html += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
+			}
+			if (pt.timeSlot) {
+				html += '<div class="route-point-meta">⏰ ' + pt.timeSlot + '</div>';
+			}
+			if (pt.phone) {
+				html += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">📞 ' + pt.phone + '</a></div>';
+			}
+			html += '</div>';
+			html += '<div class="route-point-actions">';
+			// Navigate button (Yandex Navigator)
+			if (pt.lat && pt.lng) {
+				const navUrl = 'yandexnavi://build_route_on_map?lat_to=' + pt.lat + '&lon_to=' + pt.lng;
+				const webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
+				html += '<a href="' + navUrl + '" class="btn btn-primary btn-sm route-nav-btn" onclick="if(!navigator.userAgent.match(/Android|iPhone/i)){event.preventDefault();window.open(\'' + webNavUrl + '\',\'_blank\');}">Ехать</a>';
+			}
+			html += '</div>';
+			html += '</div>';
+			if (idx < points.length - 1) {
+				html += '<div class="route-connector"></div>';
+			}
+		});
+
+		listEl.innerHTML = html;
+
+		// Init or update route map
+		initDriverRouteMap(points, mapEl);
+	}
+
+	async function initDriverRouteMap(points, mapEl) {
+		if (!mapEl) return;
+		try {
+			const ymaps = await window.DistributionGeocoder.loadYmaps();
+
+			// Remove old placemarks if map exists
+			if (driverRouteMapInstance) {
+				driverRoutePlacemarks.forEach(function(pm) { driverRouteMapInstance.geoObjects.remove(pm); });
+				driverRoutePlacemarks = [];
+			} else {
+				driverRouteMapInstance = new ymaps.Map(mapEl, {
+					center: MINSK_CENTER_ROUTE,
+					zoom: 12,
+					controls: ['zoomControl']
+				}, { suppressMapOpenBlock: true });
+			}
+
+			const bounds = [];
+			points.forEach(function (pt, idx) {
+				if (!pt.lat || !pt.lng) return;
+				const pm = new ymaps.Placemark([pt.lat, pt.lng], {
+					iconContent: String(idx + 1),
+					balloonContentBody: '<div style="font-family:system-ui;"><strong>' + pt.address + '</strong>' +
+						(pt.phone ? '<br>📞 ' + pt.phone : '') +
+						(pt.timeSlot ? '<br>⏰ ' + pt.timeSlot : '') + '</div>'
+				}, {
+					preset: 'islands#darkBlueCircleIcon'
+				});
+				driverRouteMapInstance.geoObjects.add(pm);
+				driverRoutePlacemarks.push(pm);
+				bounds.push([pt.lat, pt.lng]);
+			});
+
+			if (bounds.length > 1) {
+				driverRouteMapInstance.setBounds(ymaps.util.bounds.fromPoints(bounds), { checkZoomRange: true, zoomMargin: 40 });
+			} else if (bounds.length === 1) {
+				driverRouteMapInstance.setCenter(bounds[0], 15);
+			}
+		} catch (err) {
+			console.error("Ошибка инициализации карты маршрута:", err);
 		}
 	}
 
@@ -2454,6 +2609,9 @@
 			fuelLevelInput.required = true;
 		}
 	}
+
+	// Expose functions needed by inline HTML handlers
+	window.closeDriverRoute = closeDriverRoute;
 
 	document.addEventListener("DOMContentLoaded", init);
 })();

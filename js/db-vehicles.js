@@ -674,6 +674,134 @@
 		}
 	}
 
+	// ============================================
+	// МАРШРУТЫ ВОДИТЕЛЕЙ
+	// ============================================
+
+	/**
+	 * Сохраняет маршруты водителей (upsert по driver_id + route_date)
+	 * @param {Array} routes - [{driver_id, route_date, points: [{address, lat, lng, phone, timeSlot, formattedAddress, orderNum}]}]
+	 */
+	async function saveDriverRoutes(routes) {
+		try {
+			const client = initSupabase();
+			// Используем upsert: если маршрут на эту дату уже есть — перезаписываем
+			const { data, error } = await client
+				.from('driver_routes')
+				.upsert(
+					routes.map(r => ({
+						driver_id: r.driver_id,
+						route_date: r.route_date,
+						points: r.points,
+						status: 'active'
+					})),
+					{ onConflict: 'driver_id,route_date' }
+				)
+				.select('*');
+
+			if (error) throw error;
+			return data || [];
+		} catch (err) {
+			console.error('Ошибка сохранения маршрутов:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Получает активный маршрут водителя на дату
+	 */
+	async function getDriverRoute(driverId, routeDate) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.select('*')
+				.eq('driver_id', driverId)
+				.eq('route_date', routeDate)
+				.eq('status', 'active')
+				.maybeSingle();
+
+			if (error) throw error;
+			return data;
+		} catch (err) {
+			console.error('Ошибка получения маршрута:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Получает все активные маршруты на дату (с именем водителя)
+	 */
+	async function getActiveRoutes(routeDate) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.select(`
+					*,
+					drivers (
+						id,
+						name,
+						phone
+					)
+				`)
+				.eq('route_date', routeDate)
+				.eq('status', 'active')
+				.order('created_at', { ascending: false });
+
+			if (error) throw error;
+			return (data || []).map(item => {
+				let driver = null;
+				if (item.drivers) {
+					driver = Array.isArray(item.drivers) ? item.drivers[0] : item.drivers;
+				}
+				return { ...item, driver };
+			});
+		} catch (err) {
+			console.error('Ошибка получения активных маршрутов:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Удаляет маршрут
+	 */
+	async function deleteDriverRoute(id) {
+		try {
+			const client = initSupabase();
+			const { error } = await client
+				.from('driver_routes')
+				.delete()
+				.eq('id', id);
+
+			if (error) throw error;
+		} catch (err) {
+			console.error('Ошибка удаления маршрута:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Отмечает маршрут как завершённый
+	 */
+	async function completeDriverRoute(id) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.update({ status: 'completed' })
+				.eq('id', id)
+				.select('*')
+				.single();
+
+			if (error) throw error;
+			return data;
+		} catch (err) {
+			console.error('Ошибка завершения маршрута:', err);
+			throw err;
+		}
+	}
+
 	window.VehiclesDB = {
 		// Водители
 		getAllDrivers,
@@ -699,7 +827,13 @@
 		getMaintenanceLog,
 		addMaintenanceEntry,
 		updateMaintenanceEntry,
-		deleteMaintenanceEntry
+		deleteMaintenanceEntry,
+		// Маршруты водителей
+		saveDriverRoutes,
+		getDriverRoute,
+		getActiveRoutes,
+		deleteDriverRoute,
+		completeDriverRoute
 	};
 })();
 

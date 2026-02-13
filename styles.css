@@ -2058,3 +2058,212 @@ body {
 	padding: 4px 10px !important;
 	font-size: 12px !important;
 }
+
+/* ─── Distribution: driver slots (color → driver select) ─── */
+.dc-driver-slots {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.dc-driver-slot {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 0;
+}
+.dc-dot-lg {
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+.dc-driver-select {
+	flex: 1;
+	padding: 6px 8px;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	color: var(--fg);
+	font-size: 13px;
+	outline: none;
+	cursor: pointer;
+}
+.dc-driver-select:focus {
+	border-color: var(--accent);
+}
+.dc-slot-count {
+	font-size: 11px;
+	color: var(--muted);
+	white-space: nowrap;
+}
+.dc-order-driver {
+	font-size: 11px;
+	margin-top: 2px;
+	font-weight: 600;
+}
+
+/* ─── Distribution: finish button ─── */
+.dc-finish-section {
+	padding: 8px 0;
+}
+.dc-btn-finish {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 12px 16px;
+	border-radius: 10px;
+	border: 2px dashed var(--border);
+	background: transparent;
+	color: var(--muted);
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+.dc-btn-finish:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+.dc-btn-finish.ready {
+	border-style: solid;
+	border-color: var(--accent);
+	background: rgba(16, 185, 129, 0.1);
+	color: var(--accent);
+}
+.dc-btn-finish.ready:hover {
+	background: rgba(16, 185, 129, 0.2);
+}
+
+/* ─── Driver route button on driver card ─── */
+.driver-route-btn {
+	border-color: var(--accent) !important;
+	color: var(--accent) !important;
+}
+.driver-route-btn:hover {
+	background: rgba(16, 185, 129, 0.1) !important;
+}
+
+/* ─── Driver route section ─── */
+.driver-route-layout {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 0;
+}
+.driver-route-map {
+	width: 100%;
+	height: 300px;
+	border-radius: 12px;
+	overflow: hidden;
+	border: 1px solid var(--border);
+}
+.driver-route-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+/* Route points */
+.route-point {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 12px 16px;
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	transition: border-color 0.2s;
+}
+.route-point:hover {
+	border-color: var(--accent);
+}
+.route-point-num {
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 700;
+	font-size: 14px;
+	flex-shrink: 0;
+}
+.route-point-info {
+	flex: 1;
+	min-width: 0;
+}
+.route-point-addr {
+	font-weight: 600;
+	font-size: 14px;
+	margin-bottom: 2px;
+}
+.route-point-faddr {
+	font-size: 11px;
+	color: var(--muted);
+	margin-bottom: 2px;
+}
+.route-point-meta {
+	font-size: 12px;
+	color: var(--muted);
+}
+.route-point-meta a {
+	color: var(--accent);
+	text-decoration: none;
+}
+.route-point-meta a:hover {
+	text-decoration: underline;
+}
+.route-point-actions {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+}
+.route-nav-btn {
+	white-space: nowrap;
+	font-size: 13px !important;
+	padding: 8px 16px !important;
+	border-radius: 8px !important;
+}
+
+/* Connector between points */
+.route-connector {
+	width: 2px;
+	height: 16px;
+	background: var(--border);
+	margin-left: 31px;
+}
+
+/* Empty state for route */
+.route-empty {
+	text-align: center;
+	padding: 48px 24px;
+	color: var(--muted);
+}
+.route-empty p {
+	margin-top: 12px;
+	font-size: 15px;
+}
+
+/* Mobile responsiveness for routes */
+@media (max-width: 600px) {
+	.driver-route-map {
+		height: 220px;
+	}
+	.route-point {
+		padding: 10px 12px;
+		gap: 10px;
+	}
+	.route-point-num {
+		width: 28px;
+		height: 28px;
+		font-size: 12px;
+	}
+	.route-nav-btn {
+		padding: 6px 12px !important;
+		font-size: 12px !important;
+	}
+}

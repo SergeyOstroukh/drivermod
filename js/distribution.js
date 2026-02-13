@@ -1,7 +1,7 @@
 /**
  * DriveControl — Distribution UI module
  * Renders the "Распределение маршрутов" tab with Yandex Map.
- * Persists data to localStorage.
+ * Persists data to localStorage. Publishes routes to Supabase.
  */
 (() => {
   "use strict";
@@ -23,6 +23,11 @@
   let placingOrderId = null;
   let editingOrderId = null;
 
+  // Водители из БД
+  let dbDrivers = [];
+  // Привязка цвет-индекс → driver_id (driverSlots[0] = driver_id для цвета 0)
+  let driverSlots = [];
+
   // ─── DOM helpers ──────────────────────────────────────────
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
 
@@ -35,6 +40,32 @@
     setTimeout(() => { el.remove(); }, 3500);
   }
 
+  // ─── Load drivers from DB ──────────────────────────────────
+  async function loadDbDrivers() {
+    try {
+      if (window.VehiclesDB && window.VehiclesDB.getAllDrivers) {
+        dbDrivers = await window.VehiclesDB.getAllDrivers();
+      }
+    } catch (e) {
+      console.warn('Failed to load drivers:', e);
+      dbDrivers = [];
+    }
+  }
+
+  function getDriverName(slotIdx) {
+    const driverId = driverSlots[slotIdx];
+    if (!driverId) return 'В' + (slotIdx + 1);
+    const d = dbDrivers.find(function (dr) { return dr.id === driverId; });
+    return d ? d.name.split(' ')[0] : 'В' + (slotIdx + 1);
+  }
+
+  function getDriverFullName(slotIdx) {
+    const driverId = driverSlots[slotIdx];
+    if (!driverId) return 'Водитель ' + (slotIdx + 1);
+    const d = dbDrivers.find(function (dr) { return dr.id === driverId; });
+    return d ? d.name : 'Водитель ' + (slotIdx + 1);
+  }
+
   // ─── Persistence (localStorage) ───────────────────────────
   function saveState() {
     try {
@@ -43,6 +74,7 @@
         assignments: assignments,
         driverCount: driverCount,
         activeVariant: activeVariant,
+        driverSlots: driverSlots,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
@@ -60,6 +92,9 @@
         assignments = data.assignments || null;
         driverCount = data.driverCount || 3;
         activeVariant = data.activeVariant != null ? data.activeVariant : -1;
+        driverSlots = data.driverSlots || [];
+        // Ensure driverSlots has correct length
+        while (driverSlots.length < driverCount) driverSlots.push(null);
         // Regenerate variants if we had assignments
         if (assignments && orders.length > 0) {
           variants = window.DistributionAlgo.generateVariants(orders, driverCount);
@@ -143,10 +178,11 @@
     for (let d = 0; d < driverCount; d++) {
       const c = COLORS[d % COLORS.length];
       const active = d === driverIdx;
-      buttons += '<button onclick="window.__dc_assign(' + globalIdx + ',' + d + ')" style="width:28px;height:28px;border-radius:50%;border:3px solid ' + (active ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;margin:0 2px;box-shadow:' + (active ? '0 0 0 2px ' + c : 'none') + ';" title="В' + (d + 1) + '"></button>';
+      const name = getDriverName(d);
+      buttons += '<button onclick="window.__dc_assign(' + globalIdx + ',' + d + ')" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ' + (active ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;margin:2px;box-shadow:' + (active ? '0 0 0 2px ' + c : 'none') + ';color:#fff;font-size:11px;font-weight:600;" title="' + name + '"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + name + '</button>';
     }
     const eid = order.id.replace(/'/g, "\\'");
-    return '<div style="font-family:system-ui,sans-serif;min-width:200px;">' +
+    return '<div style="font-family:system-ui,sans-serif;min-width:220px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
       '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + order.address + '</div>' +
       '<button onclick="window.__dc_delete(\'' + eid + '\')" style="flex-shrink:0;width:26px;height:26px;border-radius:6px;border:1px solid #e5e5e5;background:#fff;color:#ef4444;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Удалить">✕</button></div>' +
@@ -155,7 +191,7 @@
       (order.phone ? '<div style="font-size:12px;margin-bottom:8px;">📞 ' + order.phone + '</div>' : '') +
       '<div style="border-top:1px solid #eee;padding-top:8px;margin-top:4px;">' +
       '<div style="font-size:11px;color:#888;margin-bottom:6px;">Назначить водителя:</div>' +
-      '<div style="display:flex;align-items:center;">' + buttons + '</div></div></div>';
+      '<div style="display:flex;flex-wrap:wrap;align-items:center;">' + buttons + '</div></div></div>';
   }
 
   // Global callbacks for balloon HTML
@@ -171,7 +207,6 @@
     const idx = orders.findIndex(function (o) { return o.id === orderId; });
     if (idx === -1) return;
     orders.splice(idx, 1);
-    // Удаляем назначение этой точки, сохраняя остальные
     if (assignments) {
       assignments.splice(idx, 1);
     }
@@ -190,9 +225,7 @@
     if (parsed.length === 0) { showToast('Не найдено адресов', 'error'); return; }
 
     if (!append) { orders = []; assignments = null; variants = []; activeVariant = -1; }
-    // При добавлении сохраняем существующие назначения
     const prevAssignments = append ? assignments : null;
-    const prevOrderCount = orders.length;
     isGeocoding = true;
     renderAll();
 
@@ -203,7 +236,6 @@
       });
       if (append) {
         orders = orders.concat(geocoded);
-        // Расширяем массив назначений: старые сохраняем, новым ставим -1 (не назначен)
         if (prevAssignments) {
           assignments = prevAssignments.slice();
           for (let i = 0; i < geocoded.length; i++) {
@@ -228,6 +260,9 @@
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     if (geocodedCount === 0) { showToast('Нет геокодированных адресов', 'error'); return; }
     driverCount = parseInt($('#dcDriverCount').value) || 3;
+    // Ensure driverSlots array matches driverCount
+    while (driverSlots.length < driverCount) driverSlots.push(null);
+    if (driverSlots.length > driverCount) driverSlots = driverSlots.slice(0, driverCount);
     variants = window.DistributionAlgo.generateVariants(orders, driverCount);
     activeVariant = 0;
     assignments = variants[0].assignments.slice();
@@ -266,16 +301,80 @@
 
   function clearAll() {
     orders = []; assignments = null; variants = []; activeVariant = -1; selectedDriver = null;
+    driverSlots = [];
     clearState();
     renderAll();
     showToast('Данные карты сброшены');
+  }
+
+  // ─── Finish distribution (publish routes) ──────────────────
+  async function finishDistribution() {
+    if (!assignments) { showToast('Сначала распределите точки', 'error'); return; }
+
+    // Check that all slots have drivers assigned
+    const usedSlots = new Set();
+    assignments.forEach(function (a) { if (a >= 0) usedSlots.add(a); });
+
+    let unassignedSlots = [];
+    usedSlots.forEach(function (slot) {
+      if (!driverSlots[slot]) unassignedSlots.push(slot);
+    });
+
+    if (unassignedSlots.length > 0) {
+      showToast('Назначьте водителей для всех цветов (' + unassignedSlots.map(function(s){ return 'В' + (s+1); }).join(', ') + ')', 'error');
+      return;
+    }
+
+    // Build routes per driver
+    const routeDate = new Date().toISOString().split('T')[0];
+    const routesByDriver = {};
+
+    orders.forEach(function (order, idx) {
+      const slot = assignments[idx];
+      if (slot < 0 || !order.geocoded) return;
+      const driverId = driverSlots[slot];
+      if (!driverId) return;
+
+      if (!routesByDriver[driverId]) {
+        routesByDriver[driverId] = [];
+      }
+      routesByDriver[driverId].push({
+        address: order.address,
+        lat: order.lat,
+        lng: order.lng,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        formattedAddress: order.formattedAddress || null,
+        orderNum: routesByDriver[driverId].length + 1,
+      });
+    });
+
+    const routes = Object.keys(routesByDriver).map(function (driverId) {
+      return {
+        driver_id: parseInt(driverId),
+        route_date: routeDate,
+        points: routesByDriver[driverId],
+      };
+    });
+
+    if (routes.length === 0) {
+      showToast('Нет точек для сохранения', 'error');
+      return;
+    }
+
+    try {
+      await window.VehiclesDB.saveDriverRoutes(routes);
+      showToast('Маршруты опубликованы! Водители увидят их в своём разделе');
+    } catch (err) {
+      showToast('Ошибка сохранения: ' + err.message, 'error');
+    }
   }
 
   // ─── Render ───────────────────────────────────────────────
   function renderAll() {
     renderSidebar();
     updatePlacemarks();
-    saveState(); // persist after every change
+    saveState();
     const mapContainer = $('#distributionMap');
     if (mapContainer) mapContainer.style.cursor = placingOrderId ? 'crosshair' : '';
   }
@@ -286,6 +385,33 @@
 
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     const failedCount = orders.filter(function (o) { return !o.geocoded && o.error; }).length;
+
+    // Build driver assignment panel (color → driver select)
+    let driverSlotsHtml = '';
+    if (assignments) {
+      driverSlotsHtml = '<div class="dc-section"><div class="dc-section-title">Водители</div><div class="dc-driver-slots">';
+      for (let d = 0; d < driverCount; d++) {
+        const c = COLORS[d % COLORS.length];
+        const currentDriverId = driverSlots[d] || '';
+        const count = assignments.filter(function (a) { return a === d; }).length;
+        if (count === 0) continue; // Skip empty slots
+
+        driverSlotsHtml += '<div class="dc-driver-slot">';
+        driverSlotsHtml += '<span class="dc-dot-lg" style="background:' + c + '"></span>';
+        driverSlotsHtml += '<select class="dc-driver-select" data-slot="' + d + '">';
+        driverSlotsHtml += '<option value="">-- Выберите водителя --</option>';
+        dbDrivers.forEach(function (dr) {
+          const sel = dr.id == currentDriverId ? ' selected' : '';
+          // Check if this driver is already assigned to another slot
+          const usedInOther = driverSlots.some(function (sid, si) { return si !== d && sid === dr.id; });
+          driverSlotsHtml += '<option value="' + dr.id + '"' + sel + (usedInOther ? ' disabled' : '') + '>' + dr.name + (usedInOther ? ' (занят)' : '') + '</option>';
+        });
+        driverSlotsHtml += '</select>';
+        driverSlotsHtml += '<span class="dc-slot-count">' + count + ' точек</span>';
+        driverSlotsHtml += '</div>';
+      }
+      driverSlotsHtml += '</div></div>';
+    }
 
     // Build stats
     let statsHtml = '';
@@ -298,6 +424,7 @@
       for (let d = 0; d < driverCount; d++) {
         const c = COLORS[d % COLORS.length];
         const count = driverRoutes[d].length;
+        if (count === 0) continue;
         let km = 0;
         for (let j = 0; j < driverRoutes[d].length - 1; j++) {
           const a = driverRoutes[d][j], b = driverRoutes[d][j + 1];
@@ -307,7 +434,8 @@
             km += R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
           }
         }
-        statsHtml += '<button class="dc-driver-tab' + (selectedDriver === d ? ' active' : '') + '" data-driver="' + d + '" style="' + (selectedDriver === d ? 'border-bottom-color:' + c : '') + '"><span class="dc-dot" style="background:' + c + '"></span> В' + (d + 1) + ' <span class="dc-tab-count">' + count + ' · ' + (Math.round(km * 10) / 10) + ' км</span></button>';
+        const name = getDriverName(d);
+        statsHtml += '<button class="dc-driver-tab' + (selectedDriver === d ? ' active' : '') + '" data-driver="' + d + '" style="' + (selectedDriver === d ? 'border-bottom-color:' + c : '') + '"><span class="dc-dot" style="background:' + c + '"></span> ' + name + ' <span class="dc-tab-count">' + count + ' · ' + (Math.round(km * 10) / 10) + ' км</span></button>';
       }
       statsHtml += '<button class="dc-driver-tab' + (selectedDriver === null ? ' active' : '') + '" data-driver="all">Все</button>';
       statsHtml += '</div>';
@@ -321,6 +449,21 @@
         variantsHtml += '<button class="dc-variant' + (i === activeVariant ? ' active' : '') + '" data-variant="' + i + '"><strong>' + v.label + '</strong><span class="dc-variant-desc">' + v.description + '</span></button>';
       });
       variantsHtml += '</div>';
+    }
+
+    // Finish button
+    let finishHtml = '';
+    if (assignments) {
+      // Check if all used slots have drivers
+      const usedSlots = new Set();
+      assignments.forEach(function (a) { if (a >= 0) usedSlots.add(a); });
+      let allAssigned = true;
+      usedSlots.forEach(function (s) { if (!driverSlots[s]) allAssigned = false; });
+
+      finishHtml = '<div class="dc-section dc-finish-section">' +
+        '<button class="btn dc-btn-finish' + (allAssigned ? ' ready' : '') + '">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> ' +
+        'Завершить распределение</button></div>';
     }
 
     // Orders list
@@ -347,6 +490,10 @@
           listHtml += '</div>';
         }
         if (order.formattedAddress) listHtml += '<div class="dc-order-faddr">📍 ' + order.formattedAddress + '</div>';
+        if (dIdx >= 0) {
+          const driverName = getDriverName(dIdx);
+          listHtml += '<div class="dc-order-driver" style="color:' + color + ';">👤 ' + driverName + '</div>';
+        }
         listHtml += '</div>';
 
         // Actions
@@ -392,6 +539,7 @@
       (orders.length > 0 ? '<button class="btn btn-outline btn-sm dc-btn-clear" style="color:var(--danger);border-color:var(--danger);">Сбросить данные</button>' : '') +
       '</div></div></div>' +
       variantsHtml + statsHtml +
+      driverSlotsHtml + finishHtml +
       '<div class="dc-orders-list">' + listHtml + '</div>';
 
     // Bind events
@@ -413,6 +561,20 @@
     if (distBtn) distBtn.addEventListener('click', distribute);
     const clearBtn = sidebar.querySelector('.dc-btn-clear');
     if (clearBtn) clearBtn.addEventListener('click', clearAll);
+
+    // Finish distribution
+    const finishBtn = sidebar.querySelector('.dc-btn-finish');
+    if (finishBtn) finishBtn.addEventListener('click', finishDistribution);
+
+    // Driver slot selects
+    sidebar.querySelectorAll('.dc-driver-select').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        const slot = parseInt(sel.dataset.slot);
+        const val = sel.value ? parseInt(sel.value) : null;
+        driverSlots[slot] = val;
+        renderAll();
+      });
+    });
 
     // Variants
     sidebar.querySelectorAll('.dc-variant').forEach(function (btn) {
@@ -481,7 +643,9 @@
   }
 
   // ─── Init on tab switch ───────────────────────────────────
-  function onSectionActivated() {
+  async function onSectionActivated() {
+    // Load drivers from DB
+    await loadDbDrivers();
     // Restore saved data on first activation
     if (orders.length === 0) {
       loadState();
