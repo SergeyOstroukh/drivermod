@@ -685,17 +685,27 @@
 	async function saveDriverRoutes(routes) {
 		try {
 			const client = initSupabase();
-			// Используем upsert: если маршрут на эту дату уже есть — перезаписываем
+			const routeDate = routes[0]?.route_date;
+			if (!routeDate) throw new Error('Не указана дата маршрута');
+
+			// 1. Удаляем ВСЕ маршруты за эту дату (чтобы убранные водители не сохранили старые маршруты)
+			const { error: delError } = await client
+				.from('driver_routes')
+				.delete()
+				.eq('route_date', routeDate);
+
+			if (delError) throw delError;
+
+			// 2. Вставляем новые маршруты
 			const { data, error } = await client
 				.from('driver_routes')
-				.upsert(
+				.insert(
 					routes.map(r => ({
 						driver_id: r.driver_id,
 						route_date: r.route_date,
 						points: r.points,
 						status: 'active'
-					})),
-					{ onConflict: 'driver_id,route_date' }
+					}))
 				)
 				.select('*');
 
