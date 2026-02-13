@@ -437,9 +437,8 @@
 			if (!isCompleted) {
 				// Navigate to single point
 				if (pt.lat && pt.lng) {
-					const navUrl = 'yandexnavi://build_route_on_map?lat_to=' + pt.lat + '&lon_to=' + pt.lng;
 					const webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
-					html += '<a href="' + navUrl + '" class="btn btn-outline btn-sm route-nav-btn" onclick="if(!navigator.userAgent.match(/Android|iPhone/i)){event.preventDefault();window.open(\'' + webNavUrl + '\',\'_blank\');}">Ехать</a>';
+					html += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
 				}
 				// Complete button
 				html += '<button class="btn btn-primary btn-sm route-complete-btn" data-pt-index="' + ptIndex + '" title="Завершить">✓</button>';
@@ -528,18 +527,8 @@
 		const rtextParts = optimized.map(function(pt) { return pt.lat + ',' + pt.lng; });
 		const webUrl = 'https://yandex.by/maps/?rtext=' + rtextParts.join('~') + '&rtt=auto';
 
-		// На мобильном пробуем открыть Яндекс Навигатор с несколькими точками
-		// Навигатор поддерживает только одну точку, поэтому открываем Карты
-		const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
-		if (isMobile) {
-			// Яндекс Карты мобильное приложение
-			const mobileUrl = 'yandexmaps://maps.yandex.ru/?rtext=' + rtextParts.join('~') + '&rtt=auto';
-			window.location.href = mobileUrl;
-			// Fallback на веб-версию
-			setTimeout(function() { window.open(webUrl, '_blank'); }, 1500);
-		} else {
-			window.open(webUrl, '_blank');
-		}
+		// Всегда открываем в новой вкладке, чтобы не уходить из приложения
+		window.open(webUrl, '_blank');
 	}
 
 	function optimizePointsOrder(points) {
