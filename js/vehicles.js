@@ -129,6 +129,14 @@
 		} else if (section === "distribution") {
 			if (window.DistributionUI) window.DistributionUI.onSectionActivated();
 		}
+
+		// Обновляем user bar
+		updateUserBar();
+
+		// Сохраняем текущую секцию в сессию (если залогинен)
+		if (currentRole) {
+			saveSession(section);
+		}
 	}
 
 	// ============================================
@@ -1508,6 +1516,66 @@
 	}
 
 	// ============================================
+	// СЕССИЯ (localStorage persistence)
+	// ============================================
+
+	const SESSION_KEY = 'dc_session';
+
+	function saveSession(section) {
+		try {
+			const data = {
+				role: currentRole,
+				driverData: currentDriverData,
+				section: section || null,
+			};
+			localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+		} catch (e) { /* ignore */ }
+	}
+
+	function clearSession() {
+		try { localStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+	}
+
+	function loadSession() {
+		try {
+			const raw = localStorage.getItem(SESSION_KEY);
+			if (!raw) return null;
+			return JSON.parse(raw);
+		} catch (e) { return null; }
+	}
+
+	async function restoreSession() {
+		const session = loadSession();
+		if (!session || !session.role) return false;
+
+		if (session.role === 'driver' && session.driverData) {
+			// Verify driver still exists in DB
+			try {
+				const allDrivers = await window.VehiclesDB.getAllDrivers();
+				drivers = allDrivers;
+				const found = allDrivers.find(function (d) { return d.id === session.driverData.id; });
+				if (!found) { clearSession(); return false; }
+				currentRole = 'driver';
+				currentDriverData = found; // use fresh data from DB
+			} catch (e) { clearSession(); return false; }
+		} else if (session.role === 'logist') {
+			currentRole = 'logist';
+			currentDriverData = null;
+			// Show distribution tab for logist
+			const distTab = document.getElementById("distributionTab");
+			if (distTab) distTab.style.display = "";
+		} else {
+			clearSession();
+			return false;
+		}
+
+		// Navigate to saved section
+		const section = session.section || 'vehicles';
+		switchSection(section);
+		return true;
+	}
+
+	// ============================================
 	// СИСТЕМА РОЛЕЙ (Водитель / Логист)
 	// ============================================
 
@@ -1578,6 +1646,7 @@
 		currentRole = "driver";
 		currentDriverData = driver;
 		closeRoleModal();
+		saveSession("vehicles");
 		switchSection("vehicles");
 	}
 
@@ -1596,6 +1665,7 @@
 		// Показываем вкладку «Распределение» для логиста
 		const distTab = document.getElementById("distributionTab");
 		if (distTab) distTab.style.display = "";
+		saveSession("vehicles");
 		switchSection("vehicles");
 	}
 
@@ -1603,6 +1673,7 @@
 		currentRole = null;
 		currentDriverData = null;
 		driverEntryVehicle = null;
+		clearSession();
 		// Скрываем вкладку «Распределение» при выходе
 		const distTab = document.getElementById("distributionTab");
 		if (distTab) distTab.style.display = "none";
@@ -1990,6 +2061,9 @@
 				}
 			});
 		}
+
+		// Восстановление сессии при загрузке страницы
+		restoreSession();
 	}
 
 	// ============================================
