@@ -6,7 +6,7 @@
 (() => {
   "use strict";
 
-  const YMAPS_SRC = 'https://api-maps.yandex.ru/2.1/?apikey=8c44c726-c732-45f2-94ac-af2cf0bb0181&lang=ru_RU&suggest_apikey=8c44c726-c732-45f2-94ac-af2cf0bb0181';
+  const YMAPS_SRC = 'https://api-maps.yandex.ru/2.1/?apikey=8c44c726-c732-45f2-94ac-af2cf0bb0181&lang=ru_RU&suggest_apikey=8b2a44b9-d35a-4aed-8e5a-4a1d71d30de8';
   const MINSK_BOUNDS = [[53.75, 27.25], [54.15, 27.90]];
 
   function loadYmaps() {
@@ -324,6 +324,21 @@
     return results;
   }
 
+  // ─── Yandex Suggest API (fast autocomplete) ─────────────────
+  async function suggestAddresses(query) {
+    const ymaps = await loadYmaps();
+    const items = await ymaps.suggest('Беларусь, ' + query, {
+      boundedBy: MINSK_BOUNDS,
+      results: 7,
+    });
+    return items.map(function (item) {
+      return {
+        displayName: item.displayName,
+        value: item.value,
+      };
+    });
+  }
+
   // ─── Multi-result search (geocode with multiple results) ────
   async function searchAddresses(query) {
     const ymaps = await loadYmaps();
@@ -356,5 +371,6 @@
     geocodeAddress: geocodeAddress,
     geocodeOrders: geocodeOrders,
     searchAddresses: searchAddresses,
+    suggestAddresses: suggestAddresses,
   };
 })();

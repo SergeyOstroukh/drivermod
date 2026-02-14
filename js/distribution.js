@@ -411,7 +411,7 @@
     input.addEventListener('input', function () {
       clearTimeout(suggestTimeout);
       var query = input.value.trim();
-      if (query.length < 3) {
+      if (query.length < 2) {
         dropdown.innerHTML = '';
         dropdown.style.display = 'none';
         return;
@@ -421,7 +421,7 @@
 
       suggestTimeout = setTimeout(function () {
         doGeoSearch(query, dropdown);
-      }, 400);
+      }, 300);
     });
 
     // Click on result
@@ -434,7 +434,13 @@
         input.value = '';
         dropdown.style.display = 'none';
         dropdown._items = null;
-        addDirectOrder(sel.displayName, sel.lat, sel.lng);
+        // If result has coordinates (from geocode fallback), add directly
+        if (sel.lat != null && sel.lng != null) {
+          addDirectOrder(sel.displayName, sel.lat, sel.lng);
+        } else {
+          // Suggest result — geocode the address to get coordinates
+          geocodeAndAddFromSuggest(sel.value || sel.displayName);
+        }
       }
     });
 
@@ -472,8 +478,29 @@
   async function doGeoSearch(query, dropdown) {
     console.log('Searching for:', query);
     try {
+      // Try Yandex Suggest API first (fast autocomplete)
+      var suggestItems = [];
+      try {
+        suggestItems = await window.DistributionGeocoder.suggestAddresses(query);
+        console.log('Suggest results:', suggestItems ? suggestItems.length : 0);
+      } catch (suggestErr) {
+        console.warn('Suggest API error, falling back to geocode:', suggestErr);
+      }
+
+      if (suggestItems && suggestItems.length > 0) {
+        dropdown._items = suggestItems;
+        dropdown.innerHTML = suggestItems.map(function (it, i) {
+          return '<div class="dc-suggest-item" data-idx="' + i + '">' +
+            '<span class="dc-suggest-icon">📍</span>' +
+            '<span class="dc-suggest-text">' + escapeHtml(it.displayName) + '</span></div>';
+        }).join('');
+        dropdown.style.display = 'block';
+        return;
+      }
+
+      // Fallback to geocode-based search
       var items = await window.DistributionGeocoder.searchAddresses(query);
-      console.log('Search results:', items ? items.length : 0);
+      console.log('Geocode search results:', items ? items.length : 0);
       if (!items || items.length === 0) {
         dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено. Попробуйте уточнить запрос.</div>';
         return;
@@ -489,6 +516,17 @@
     } catch (e) {
       console.error('Geocode search error:', e);
       dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска: ' + escapeHtml(e.message || 'неизвестная') + '</div>';
+    }
+  }
+
+  async function geocodeAndAddFromSuggest(addressValue) {
+    showToast('Определяем координаты...');
+    try {
+      var geo = await window.DistributionGeocoder.geocodeAddress(addressValue);
+      addDirectOrder(geo.formattedAddress || addressValue, geo.lat, geo.lng);
+    } catch (err) {
+      console.error('Geocode from suggest error:', err);
+      showToast('Не удалось определить координаты: ' + (err.message || 'неизвестная ошибка'), 'error');
     }
   }
 
