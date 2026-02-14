@@ -114,7 +114,7 @@
       var counts = clusters.map(function (c) { return c.length; });
       var maxC = 0, minC = 0;
       for (var c = 0; c < k; c++) { if (counts[c] > counts[maxC]) maxC = c; if (counts[c] < counts[minC]) minC = c; }
-      if (counts[maxC] - counts[minC] <= 2 || maxC === minC) break;
+      if (counts[maxC] - counts[minC] <= 1 || maxC === minC) break;
       var minCentroid = { lat: clusters[minC].reduce(function (s, p) { return s + p.lat; }, 0) / clusters[minC].length, lng: clusters[minC].reduce(function (s, p) { return s + p.lng; }, 0) / clusters[minC].length };
       var bestPt = null, bestScore = Infinity;
       for (var j = 0; j < clusters[maxC].length; j++) {

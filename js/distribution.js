@@ -138,11 +138,16 @@
     }
   }
 
+  let kbtLabels = []; // Separate array for KBT labels (not mixed with placemarks)
+
   function updatePlacemarks() {
     if (!mapInstance || !window.ymaps) return;
     const ymaps = window.ymaps;
+    // Remove old placemarks and KBT labels
     placemarks.forEach(function (pm) { mapInstance.geoObjects.remove(pm); });
+    kbtLabels.forEach(function (lb) { mapInstance.geoObjects.remove(lb); });
     placemarks = [];
+    kbtLabels = [];
 
     const geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
     if (geocoded.length === 0) return;
@@ -171,24 +176,6 @@
         iconOpacity: isVisible ? 1 : 0.25,
       });
 
-      // KBT label above the placemark
-      if (order.isKbt) {
-        var kbtLabel = new ymaps.Placemark([order.lat, order.lng], {
-          iconContent: '+1 КБТ',
-        }, {
-          iconLayout: 'default#imageWithContent',
-          iconImageHref: '',
-          iconImageSize: [0, 0],
-          iconImageOffset: [0, 0],
-          iconContentOffset: [-22, -42],
-          iconContentLayout: ymaps.templateLayoutFactory.createClass(
-            '<div style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:none;">+1 КБТ</div>'
-          ),
-        });
-        mapInstance.geoObjects.add(kbtLabel);
-        placemarks.push(kbtLabel);
-      }
-
       // Hover events: highlight order in sidebar
       (function (orderId) {
         pm.events.add('mouseenter', function () {
@@ -204,6 +191,22 @@
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
       bounds.push([order.lat, order.lng]);
+
+      // KBT label above the placemark (in separate array)
+      if (order.isKbt && isVisible) {
+        var kbtLabel = new ymaps.Placemark([order.lat, order.lng], {}, {
+          iconLayout: 'default#imageWithContent',
+          iconImageHref: '',
+          iconImageSize: [0, 0],
+          iconImageOffset: [0, 0],
+          iconContentOffset: [-22, -42],
+          iconContentLayout: ymaps.templateLayoutFactory.createClass(
+            '<div style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:none;">+1 КБТ</div>'
+          ),
+        });
+        mapInstance.geoObjects.add(kbtLabel);
+        kbtLabels.push(kbtLabel);
+      }
     });
 
     if (bounds.length > 0) {
@@ -256,7 +259,11 @@
 
   // Global callbacks for balloon HTML
   window.__dc_assign = function (globalIdx, driverIdx) {
-    if (!assignments) return;
+    // Auto-create assignments if not yet distributed
+    if (!assignments) {
+      assignments = [];
+      for (var i = 0; i < orders.length; i++) assignments.push(-1);
+    }
     assignments = assignments.slice();
     assignments[globalIdx] = driverIdx;
     activeVariant = -1;
@@ -282,22 +289,14 @@
     if (!order.isKbt) {
       order.helperDriverSlot = null;
     }
+    // renderAll rebuilds all placemarks; no need to manually update balloon
     renderAll();
-    // Re-open balloon with updated content
-    if (mapInstance && placemarks[globalIdx]) {
-      var driverIdx = assignments ? assignments[globalIdx] : -1;
-      placemarks[globalIdx].properties.set('balloonContentBody', buildBalloon(order, globalIdx, driverIdx));
-    }
   };
   window.__dc_setHelper = function (globalIdx, helperSlot) {
     var order = orders[globalIdx];
     if (!order) return;
     order.helperDriverSlot = helperSlot;
     renderAll();
-    if (mapInstance && placemarks[globalIdx]) {
-      var driverIdx = assignments ? assignments[globalIdx] : -1;
-      placemarks[globalIdx].properties.set('balloonContentBody', buildBalloon(order, globalIdx, driverIdx));
-    }
   };
 
   // ─── Actions ──────────────────────────────────────────────
