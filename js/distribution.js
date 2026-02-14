@@ -34,9 +34,7 @@
     { id: 'pvz2', label: 'ПВЗ 2', short: 'П2', address: 'Минск, Туровского 12', color: '#7c3aed' },
     { id: 'rbdodoma', label: 'РБ Додома', short: 'РБ', address: 'Минск, Железнодорожная 33к1', color: '#ea580c' },
   ];
-  var poiVisible = {};   // { pvz1: true, pvz2: false, ... }
   var poiCoords = {};    // { pvz1: { lat, lng, formatted }, ... } — cached after geocode
-  var poiPlacemarks = []; // map placemarks for POIs
 
   // ─── DOM helpers ──────────────────────────────────────────
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
@@ -85,7 +83,6 @@
         driverCount: driverCount,
         activeVariant: activeVariant,
         driverSlots: driverSlots,
-        poiVisible: poiVisible,
         poiCoords: poiCoords,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -105,7 +102,6 @@
         driverCount = data.driverCount || 3;
         activeVariant = data.activeVariant != null ? data.activeVariant : -1;
         driverSlots = data.driverSlots || [];
-        poiVisible = data.poiVisible || {};
         poiCoords = data.poiCoords || {};
         // Ensure driverSlots has correct length
         while (driverSlots.length < driverCount) driverSlots.push(null);
@@ -161,65 +157,62 @@
 
   var _fitBoundsNext = true;
 
-  // ─── POI: geocode and toggle ──────────────────────────────
-  async function togglePoi(poiId) {
-    poiVisible[poiId] = !poiVisible[poiId];
+  // ─── POI: add/remove as regular orders ──────────────────
+  function isPoiActive(poiId) {
+    return orders.some(function (o) { return o.poiId === poiId; });
+  }
 
-    // Geocode if not cached yet, or if address changed
-    var def0 = POI_DEFS.find(function (p) { return p.id === poiId; });
-    if (poiVisible[poiId] && poiCoords[poiId] && def0 && poiCoords[poiId]._addr !== def0.address) {
-      poiCoords[poiId] = null; // address changed, re-geocode
+  async function togglePoi(poiId) {
+    var existing = orders.findIndex(function (o) { return o.poiId === poiId; });
+
+    if (existing >= 0) {
+      // Remove POI from orders
+      orders.splice(existing, 1);
+      if (assignments) { assignments.splice(existing, 1); }
+      variants = []; activeVariant = -1;
+      renderAll();
+      return;
     }
-    if (poiVisible[poiId] && !poiCoords[poiId]) {
-      var def = POI_DEFS.find(function (p) { return p.id === poiId; });
-      if (!def) return;
+
+    // Add POI — geocode if not cached
+    var def = POI_DEFS.find(function (p) { return p.id === poiId; });
+    if (!def) return;
+
+    if (!poiCoords[poiId] || poiCoords[poiId]._addr !== def.address) {
       try {
         showToast('Ищу адрес: ' + def.address + '...');
         var geo = await window.DistributionGeocoder.geocodeAddress(def.address);
         poiCoords[poiId] = { lat: geo.lat, lng: geo.lng, formatted: geo.formattedAddress || def.address, _addr: def.address };
       } catch (e) {
         showToast('Не найден: ' + def.address, 'error');
-        poiVisible[poiId] = false;
+        return;
       }
     }
 
-    renderAll();
-  }
-
-  function _renderPoiMarkers() {
-    if (!mapInstance || !window.ymaps) return;
-    var ymaps = window.ymaps;
-
-    // Remove old POI placemarks
-    for (var i = poiPlacemarks.length - 1; i >= 0; i--) {
-      try { mapInstance.geoObjects.remove(poiPlacemarks[i]); } catch (e) {}
-    }
-    poiPlacemarks = [];
-
-    POI_DEFS.forEach(function (def) {
-      if (!poiVisible[def.id] || !poiCoords[def.id]) return;
-      var c = poiCoords[def.id];
-
-      // Filled square marker, same size as order circles (~24px), dark text
-      var sqHtml = '<div style="width:24px;height:24px;border-radius:4px;background:' + def.color + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.8);">' +
-        '<span style="color:#111;font-size:10px;font-weight:800;text-shadow:0 0 3px rgba(255,255,255,.9);">' + def.short + '</span></div>';
-      var layout = ymaps.templateLayoutFactory.createClass(sqHtml);
-
-      var pm = new ymaps.Placemark([c.lat, c.lng], {
-        hintContent: '<b>' + def.label + '</b><br>' + c.formatted,
-        balloonContentBody: '<div style="font-family:system-ui,sans-serif;padding:4px;">' +
-          '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + def.label + '</div>' +
-          '<div style="color:#666;font-size:12px;">' + c.formatted + '</div>' +
-          '</div>',
-      }, {
-        iconLayout: layout,
-        iconShape: { type: 'Rectangle', coordinates: [[0, 0], [24, 24]] },
-        iconOffset: [-12, -12],
-      });
-
-      mapInstance.geoObjects.add(pm);
-      poiPlacemarks.push(pm);
+    var c = poiCoords[poiId];
+    orders.push({
+      id: 'poi_' + poiId + '_' + Date.now(),
+      poiId: poiId,
+      isPoi: true,
+      poiLabel: def.label,
+      poiShort: def.short,
+      poiColor: def.color,
+      address: def.label + ' — ' + def.address,
+      lat: c.lat,
+      lng: c.lng,
+      geocoded: true,
+      formattedAddress: c.formatted,
+      error: null,
+      settlementOnly: false,
     });
+
+    if (assignments) {
+      assignments.push(-1); // unassigned by default
+    }
+
+    _fitBoundsNext = true;
+    renderAll();
+    showToast(def.label + ' добавлен на карту');
   }
 
   function updatePlacemarks() {
@@ -252,15 +245,34 @@
         (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
         (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ</span>' : '');
 
-      var pm = new ymaps.Placemark([order.lat, order.lng], {
-        balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
-        iconContent: String(globalIdx + 1),
-        hintContent: hintHtml,
-      }, {
-        preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
-        iconColor: color,
-        iconOpacity: isVisible ? 1 : 0.25,
-      });
+      var pm;
+      if (order.isPoi) {
+        // POI: filled square marker with short label
+        var sqColor = driverIdx >= 0 ? color : (order.poiColor || '#3b82f6');
+        var opacity = isVisible ? 1 : 0.25;
+        var sqHtml = '<div style="width:24px;height:24px;border-radius:4px;background:' + sqColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.8);opacity:' + opacity + ';">' +
+          '<span style="color:#111;font-size:10px;font-weight:800;text-shadow:0 0 3px rgba(255,255,255,.9);">' + (order.poiShort || 'П') + '</span></div>';
+        var sqLayout = ymaps.templateLayoutFactory.createClass(sqHtml);
+        pm = new ymaps.Placemark([order.lat, order.lng], {
+          balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
+          hintContent: hintHtml,
+        }, {
+          iconLayout: sqLayout,
+          iconShape: { type: 'Rectangle', coordinates: [[0, 0], [24, 24]] },
+          iconOffset: [-12, -12],
+        });
+      } else {
+        // Regular order: circle icon
+        pm = new ymaps.Placemark([order.lat, order.lng], {
+          balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
+          iconContent: String(globalIdx + 1),
+          hintContent: hintHtml,
+        }, {
+          preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
+          iconColor: color,
+          iconOpacity: isVisible ? 1 : 0.25,
+        });
+      }
 
       // Hover: highlight sidebar
       (function (orderId) {
@@ -524,6 +536,12 @@
         orderNum: routesByDriver[driverId].length + 1,
       };
 
+      // POI flag
+      if (order.isPoi) {
+        pointData.isPoi = true;
+        pointData.poiLabel = order.poiLabel || null;
+      }
+
       // KBT: add info for main driver
       if (order.isKbt) {
         pointData.isKbt = true;
@@ -592,7 +610,6 @@
   function renderAll() {
     renderSidebar();
     updatePlacemarks();
-    _renderPoiMarkers(); // always render POIs, even when no orders exist
     saveState();
     var mapContainer = $('#distributionMap');
     if (mapContainer) mapContainer.style.cursor = placingOrderId ? 'crosshair' : '';
@@ -707,8 +724,13 @@
         if (isPlacing) itemClass += ' placing';
 
         listHtml += '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (dIdx >= 0 ? 'border-left-color:' + color : '') + '">';
-        const numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
-        listHtml += '<div class="dc-order-num" style="' + numBg + '">' + (order.globalIndex + 1) + '</div>';
+        var numBg;
+        if (order.isPoi) {
+          numBg = 'background:' + (dIdx >= 0 ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
+        } else {
+          numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
+        }
+        listHtml += '<div class="dc-order-num" style="' + numBg + '">' + (order.isPoi ? (order.poiShort || 'П') : (order.globalIndex + 1)) + '</div>';
         listHtml += '<div class="dc-order-info"><div class="dc-order-addr">' + order.address + '</div>';
         if (order.timeSlot || order.phone) {
           listHtml += '<div class="dc-order-meta">';
@@ -793,7 +815,7 @@
       '<div class="dc-section-title" style="font-size:12px;color:#888;margin-bottom:6px;">Отображение на карте</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
       POI_DEFS.map(function (def) {
-        var active = !!poiVisible[def.id];
+        var active = isPoiActive(def.id);
         return '<button class="dc-poi-toggle" data-poi="' + def.id + '" style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:8px;border:2px solid ' + (active ? def.color : '#ddd') + ';background:' + (active ? def.color : '#fff') + ';color:' + (active ? '#fff' : '#666') + ';cursor:pointer;font-size:11px;font-weight:600;transition:all .15s;"><span style="width:14px;height:14px;border-radius:3px;background:' + def.color + ';display:inline-block;flex-shrink:0;"></span>' + def.label + '</button>';
       }).join('') +
       '</div></div>' +
