@@ -1754,6 +1754,7 @@ body {
 .dc-map-wrap {
 	flex: 1;
 	position: relative;
+	overflow: hidden;
 }
 
 .dc-map {
@@ -1761,6 +1762,17 @@ body {
 	height: 100%;
 	min-height: 400px;
 	border-radius: 0;
+}
+
+/* Hide Yandex Maps "open block" promo (Как добраться / Создать свою карту) */
+.ymaps-2-1-79-map-copyrights-promo,
+[class*="ymaps"][class*="-copyrights-promo"],
+[class*="ymaps"][class*="-map-copyrights-promo"] {
+	display: none !important;
+}
+[class*="ymaps"][class*="-gotoymaps"],
+[class*="ymaps"][class*="-gototech"] {
+	display: none !important;
 }
 
 /* Mobile */
