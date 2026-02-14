@@ -192,20 +192,17 @@
       placemarks.push(pm);
       bounds.push([order.lat, order.lng]);
 
-      // KBT label above the placemark (in separate array)
+      // KBT: add a second circle slightly offset to create "double circle" effect
       if (order.isKbt && isVisible) {
-        var kbtLabel = new ymaps.Placemark([order.lat, order.lng], {}, {
-          iconLayout: 'default#imageWithContent',
-          iconImageHref: '',
-          iconImageSize: [0, 0],
-          iconImageOffset: [0, 0],
-          iconContentOffset: [-22, -42],
-          iconContentLayout: ymaps.templateLayoutFactory.createClass(
-            '<div style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:none;">+1 КБТ</div>'
-          ),
+        var kbtPm = new ymaps.Placemark([order.lat, order.lng], {
+          iconContent: '+1',
+        }, {
+          preset: 'islands#circleIcon',
+          iconColor: color,
+          iconOffset: [14, -14],
         });
-        mapInstance.geoObjects.add(kbtLabel);
-        kbtLabels.push(kbtLabel);
+        mapInstance.geoObjects.add(kbtPm);
+        kbtLabels.push(kbtPm);
       }
     });
 
@@ -258,8 +255,9 @@
   }
 
   // Global callbacks for balloon HTML
+  // IMPORTANT: use setTimeout because renderAll() destroys the balloon DOM
+  // that the onclick originated from — without defer the browser breaks.
   window.__dc_assign = function (globalIdx, driverIdx) {
-    // Auto-create assignments if not yet distributed
     if (!assignments) {
       assignments = [];
       for (var i = 0; i < orders.length; i++) assignments.push(-1);
@@ -267,8 +265,8 @@
     assignments = assignments.slice();
     assignments[globalIdx] = driverIdx;
     activeVariant = -1;
-    renderAll();
     if (mapInstance) mapInstance.balloon.close();
+    setTimeout(function () { renderAll(); }, 10);
   };
   window.__dc_delete = function (orderId) {
     const idx = orders.findIndex(function (o) { return o.id === orderId; });
@@ -278,9 +276,8 @@
       assignments.splice(idx, 1);
     }
     variants = []; activeVariant = -1;
-    renderAll();
     if (mapInstance) mapInstance.balloon.close();
-    showToast('Точка удалена');
+    setTimeout(function () { renderAll(); showToast('Точка удалена'); }, 10);
   };
   window.__dc_toggleKbt = function (globalIdx) {
     var order = orders[globalIdx];
@@ -289,14 +286,15 @@
     if (!order.isKbt) {
       order.helperDriverSlot = null;
     }
-    // renderAll rebuilds all placemarks; no need to manually update balloon
-    renderAll();
+    if (mapInstance) mapInstance.balloon.close();
+    setTimeout(function () { renderAll(); }, 10);
   };
   window.__dc_setHelper = function (globalIdx, helperSlot) {
     var order = orders[globalIdx];
     if (!order) return;
     order.helperDriverSlot = helperSlot;
-    renderAll();
+    if (mapInstance) mapInstance.balloon.close();
+    setTimeout(function () { renderAll(); }, 10);
   };
 
   // ─── Actions ──────────────────────────────────────────────
