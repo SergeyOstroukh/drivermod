@@ -1,0 +1,4 @@
+[build]
+  # No build step needed — static HTML/JS/CSS served directly
+  command = ""
+  publish = "."
