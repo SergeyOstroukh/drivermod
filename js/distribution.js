@@ -159,7 +159,8 @@
       const balloonHtml = buildBalloon(order, globalIdx, driverIdx);
       const hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
         (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
-        (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '');
+        (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
+        (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ +1</span>' : '');
       const pm = new ymaps.Placemark([order.lat, order.lng], {
         balloonContentBody: balloonHtml,
         iconContent: String(globalIdx + 1),
@@ -169,6 +170,24 @@
         iconColor: color,
         iconOpacity: isVisible ? 1 : 0.25,
       });
+
+      // KBT label above the placemark
+      if (order.isKbt) {
+        var kbtLabel = new ymaps.Placemark([order.lat, order.lng], {
+          iconContent: '+1 КБТ',
+        }, {
+          iconLayout: 'default#imageWithContent',
+          iconImageHref: '',
+          iconImageSize: [0, 0],
+          iconImageOffset: [0, 0],
+          iconContentOffset: [-22, -42],
+          iconContentLayout: ymaps.templateLayoutFactory.createClass(
+            '<div style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3);pointer-events:none;">+1 КБТ</div>'
+          ),
+        });
+        mapInstance.geoObjects.add(kbtLabel);
+        placemarks.push(kbtLabel);
+      }
 
       // Hover events: highlight order in sidebar
       (function (orderId) {
@@ -201,7 +220,28 @@
       buttons += '<button onclick="window.__dc_assign(' + globalIdx + ',' + d + ')" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ' + (active ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;margin:2px;box-shadow:' + (active ? '0 0 0 2px ' + c : 'none') + ';color:#fff;font-size:11px;font-weight:600;" title="' + name + '"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + name + '</button>';
     }
     const eid = order.id.replace(/'/g, "\\'");
-    return '<div style="font-family:system-ui,sans-serif;min-width:220px;">' +
+
+    // KBT section
+    var kbtHtml = '<div style="border-top:1px solid #eee;padding-top:8px;margin-top:8px;">';
+    var kbtActive = order.isKbt;
+    kbtHtml += '<button onclick="window.__dc_toggleKbt(' + globalIdx + ')" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;border:2px solid ' + (kbtActive ? '#a855f7' : '#ddd') + ';background:' + (kbtActive ? '#a855f7' : '#fff') + ';color:' + (kbtActive ? '#fff' : '#666') + ';cursor:pointer;font-size:12px;font-weight:600;">📦 КБТ +1' + (kbtActive ? ' ✓' : '') + '</button>';
+
+    if (kbtActive) {
+      kbtHtml += '<div style="margin-top:8px;font-size:11px;color:#888;">Помощник (едет вместе):</div>';
+      kbtHtml += '<div style="display:flex;flex-wrap:wrap;margin-top:4px;">';
+      for (var h = 0; h < driverCount; h++) {
+        if (h === driverIdx) continue; // can't be helper and main driver
+        var hc = COLORS[h % COLORS.length];
+        var hActive = order.helperDriverSlot === h;
+        var hName = getDriverName(h);
+        kbtHtml += '<button onclick="window.__dc_setHelper(' + globalIdx + ',' + h + ')" style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;border:2px solid ' + (hActive ? '#a855f7' : 'transparent') + ';background:' + (hActive ? 'rgba(168,85,247,0.15)' : '#f5f5f5') + ';cursor:pointer;margin:2px;color:' + (hActive ? '#a855f7' : '#666') + ';font-size:11px;font-weight:' + (hActive ? '700' : '500') + ';">' +
+          '<span style="width:8px;height:8px;border-radius:50%;background:' + hc + ';"></span>' + hName + (hActive ? ' ✓' : '') + '</button>';
+      }
+      kbtHtml += '</div>';
+    }
+    kbtHtml += '</div>';
+
+    return '<div style="font-family:system-ui,sans-serif;min-width:240px;">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
       '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + order.address + '</div>' +
       '<button onclick="window.__dc_delete(\'' + eid + '\')" style="flex-shrink:0;width:26px;height:26px;border-radius:6px;border:1px solid #e5e5e5;background:#fff;color:#ef4444;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Удалить">✕</button></div>' +
@@ -210,7 +250,8 @@
       (order.phone ? '<div style="font-size:12px;margin-bottom:8px;">📞 ' + order.phone + '</div>' : '') +
       '<div style="border-top:1px solid #eee;padding-top:8px;margin-top:4px;">' +
       '<div style="font-size:11px;color:#888;margin-bottom:6px;">Назначить водителя:</div>' +
-      '<div style="display:flex;flex-wrap:wrap;align-items:center;">' + buttons + '</div></div></div>';
+      '<div style="display:flex;flex-wrap:wrap;align-items:center;">' + buttons + '</div></div>' +
+      kbtHtml + '</div>';
   }
 
   // Global callbacks for balloon HTML
@@ -233,6 +274,30 @@
     renderAll();
     if (mapInstance) mapInstance.balloon.close();
     showToast('Точка удалена');
+  };
+  window.__dc_toggleKbt = function (globalIdx) {
+    var order = orders[globalIdx];
+    if (!order) return;
+    order.isKbt = !order.isKbt;
+    if (!order.isKbt) {
+      order.helperDriverSlot = null;
+    }
+    renderAll();
+    // Re-open balloon with updated content
+    if (mapInstance && placemarks[globalIdx]) {
+      var driverIdx = assignments ? assignments[globalIdx] : -1;
+      placemarks[globalIdx].properties.set('balloonContentBody', buildBalloon(order, globalIdx, driverIdx));
+    }
+  };
+  window.__dc_setHelper = function (globalIdx, helperSlot) {
+    var order = orders[globalIdx];
+    if (!order) return;
+    order.helperDriverSlot = helperSlot;
+    renderAll();
+    if (mapInstance && placemarks[globalIdx]) {
+      var driverIdx = assignments ? assignments[globalIdx] : -1;
+      placemarks[globalIdx].properties.set('balloonContentBody', buildBalloon(order, globalIdx, driverIdx));
+    }
   };
 
   // ─── Actions ──────────────────────────────────────────────
@@ -361,7 +426,8 @@
       if (!routesByDriver[driverId]) {
         routesByDriver[driverId] = [];
       }
-      routesByDriver[driverId].push({
+
+      var pointData = {
         address: order.address,
         lat: order.lat,
         lng: order.lng,
@@ -369,7 +435,44 @@
         timeSlot: order.timeSlot || null,
         formattedAddress: order.formattedAddress || null,
         orderNum: routesByDriver[driverId].length + 1,
-      });
+      };
+
+      // KBT: add info for main driver
+      if (order.isKbt) {
+        pointData.isKbt = true;
+        if (order.helperDriverSlot != null) {
+          var helperId = driverSlots[order.helperDriverSlot];
+          var helperDriver = helperId ? dbDrivers.find(function (d) { return d.id === helperId; }) : null;
+          pointData.helperDriverName = helperDriver ? helperDriver.name : getDriverName(order.helperDriverSlot);
+          pointData.helperDriverId = helperId || null;
+        }
+      }
+
+      routesByDriver[driverId].push(pointData);
+
+      // KBT: also add this point to the helper driver's route
+      if (order.isKbt && order.helperDriverSlot != null) {
+        var helperDriverId = driverSlots[order.helperDriverSlot];
+        if (helperDriverId && helperDriverId !== driverId) {
+          if (!routesByDriver[helperDriverId]) {
+            routesByDriver[helperDriverId] = [];
+          }
+          var mainDriver = dbDrivers.find(function (d) { return d.id === driverId; });
+          routesByDriver[helperDriverId].push({
+            address: order.address,
+            lat: order.lat,
+            lng: order.lng,
+            phone: order.phone || null,
+            timeSlot: order.timeSlot || null,
+            formattedAddress: order.formattedAddress || null,
+            orderNum: routesByDriver[helperDriverId].length + 1,
+            isKbt: true,
+            isKbtHelper: true,
+            mainDriverName: mainDriver ? mainDriver.name : getDriverName(slot),
+            mainDriverId: driverId,
+          });
+        }
+      }
     });
 
     const routes = Object.keys(routesByDriver).map(function (driverId) {
@@ -532,6 +635,14 @@
         if (dIdx >= 0) {
           const driverName = getDriverName(dIdx);
           listHtml += '<div class="dc-order-driver" style="color:' + color + ';">👤 ' + driverName + '</div>';
+        }
+        if (order.isKbt) {
+          var helperName = order.helperDriverSlot != null ? getDriverName(order.helperDriverSlot) : '?';
+          var helperColor = order.helperDriverSlot != null ? COLORS[order.helperDriverSlot % COLORS.length] : '#a855f7';
+          listHtml += '<div class="dc-order-kbt" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
+          listHtml += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;">КБТ +1</span>';
+          listHtml += '<span style="font-size:11px;color:' + helperColor + ';">помощник: ' + helperName + '</span>';
+          listHtml += '</div>';
         }
         listHtml += '</div>';
 

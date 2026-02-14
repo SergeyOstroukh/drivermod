@@ -434,6 +434,16 @@
 			if (pt.formattedAddress) {
 				html += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
 			}
+			if (pt.isKbt) {
+				html += '<div class="route-point-kbt" style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
+				html += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:3px;">📦 КБТ</span>';
+				if (pt.isKbtHelper && pt.mainDriverName) {
+					html += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Вы помогаете: ' + pt.mainDriverName + '</span>';
+				} else if (pt.helperDriverName) {
+					html += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Помощник: ' + pt.helperDriverName + '</span>';
+				}
+				html += '</div>';
+			}
 			if (pt.timeSlot) {
 				html += '<div class="route-point-meta">⏰ ' + pt.timeSlot + '</div>';
 			}
