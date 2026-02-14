@@ -138,43 +138,64 @@
     }
   }
 
-  let kbtLabels = []; // Separate array for KBT labels (not mixed with placemarks)
-
   function updatePlacemarks() {
     if (!mapInstance || !window.ymaps) return;
-    const ymaps = window.ymaps;
-    // Remove old placemarks and KBT labels
-    placemarks.forEach(function (pm) { mapInstance.geoObjects.remove(pm); });
-    kbtLabels.forEach(function (lb) { mapInstance.geoObjects.remove(lb); });
-    placemarks = [];
-    kbtLabels = [];
+    var ymaps = window.ymaps;
 
-    const geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
+    // Remove ALL geo-objects at once (robust — avoids stale reference issues)
+    try { mapInstance.geoObjects.removeAll(); } catch (e) { console.warn('removeAll:', e); }
+    placemarks = [];
+
+    var geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
     if (geocoded.length === 0) return;
 
-    const bounds = [];
+    var bounds = [];
     geocoded.forEach(function (order) {
-      const globalIdx = orders.indexOf(order);
-      const driverIdx = assignments ? assignments[globalIdx] : -1;
-      const isVisible = selectedDriver === null || driverIdx === selectedDriver;
-      const isSettlementOnly = order.settlementOnly;
-      const defaultColor = isSettlementOnly ? '#f59e0b' : '#3b82f6';
-      const color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : defaultColor;
+      var globalIdx = orders.indexOf(order);
+      var driverIdx = assignments ? assignments[globalIdx] : -1;
+      var isVisible = selectedDriver === null || driverIdx === selectedDriver;
+      var isSettlementOnly = order.settlementOnly;
+      var defaultColor = isSettlementOnly ? '#f59e0b' : '#3b82f6';
+      var color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : defaultColor;
 
-      const balloonHtml = buildBalloon(order, globalIdx, driverIdx);
-      const hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
+      var balloonHtml = buildBalloon(order, globalIdx, driverIdx);
+      var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
         (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
         (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
-        (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ +1</span>' : '');
-      const pm = new ymaps.Placemark([order.lat, order.lng], {
-        balloonContentBody: balloonHtml,
-        iconContent: String(globalIdx + 1),
-        hintContent: hintHtml,
-      }, {
-        preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
-        iconColor: color,
-        iconOpacity: isVisible ? 1 : 0.25,
-      });
+        (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ</span>' : '');
+
+      var pm;
+
+      if (order.isKbt) {
+        // ── KBT: double concentric circle (circle inside circle) ──
+        var opacity = isVisible ? 1 : 0.25;
+        var num = String(globalIdx + 1);
+        var kbtLayout = ymaps.templateLayoutFactory.createClass(
+          '<div style="position:relative;width:44px;height:44px;opacity:' + opacity + ';">' +
+            '<div style="position:absolute;top:0;left:0;width:44px;height:44px;border-radius:50%;background:' + color + ';opacity:0.35;"></div>' +
+            '<div style="position:absolute;top:10px;left:10px;width:24px;height:24px;border-radius:50%;background:' + color + ';color:#fff;font-size:11px;font-weight:700;line-height:24px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.3);">' + num + '</div>' +
+          '</div>'
+        );
+        pm = new ymaps.Placemark([order.lat, order.lng], {
+          balloonContentBody: balloonHtml,
+          hintContent: hintHtml,
+        }, {
+          iconLayout: kbtLayout,
+          iconShape: { type: 'Circle', coordinates: [22, 22], radius: 22 },
+          iconOffset: [-22, -22],
+        });
+      } else {
+        // ── Normal order: standard circle icon ──
+        pm = new ymaps.Placemark([order.lat, order.lng], {
+          balloonContentBody: balloonHtml,
+          iconContent: String(globalIdx + 1),
+          hintContent: hintHtml,
+        }, {
+          preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
+          iconColor: color,
+          iconOpacity: isVisible ? 1 : 0.25,
+        });
+      }
 
       // Hover events: highlight order in sidebar
       (function (orderId) {
@@ -191,19 +212,6 @@
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
       bounds.push([order.lat, order.lng]);
-
-      // KBT: add a second circle slightly offset to create "double circle" effect
-      if (order.isKbt && isVisible) {
-        var kbtPm = new ymaps.Placemark([order.lat, order.lng], {
-          iconContent: '+1',
-        }, {
-          preset: 'islands#circleIcon',
-          iconColor: color,
-          iconOffset: [14, -14],
-        });
-        mapInstance.geoObjects.add(kbtPm);
-        kbtLabels.push(kbtPm);
-      }
     });
 
     if (bounds.length > 0) {
@@ -255,8 +263,12 @@
   }
 
   // Global callbacks for balloon HTML
-  // IMPORTANT: use setTimeout because renderAll() destroys the balloon DOM
-  // that the onclick originated from — without defer the browser breaks.
+  // IMPORTANT: balloon.close() + setTimeout — the DOM that triggers onclick
+  // gets destroyed by renderAll(), so we must defer the re-render.
+  function closeBalloonSafe() {
+    try { if (mapInstance && mapInstance.balloon) mapInstance.balloon.close(); } catch (e) { /* ignore */ }
+  }
+
   window.__dc_assign = function (globalIdx, driverIdx) {
     if (!assignments) {
       assignments = [];
@@ -265,19 +277,19 @@
     assignments = assignments.slice();
     assignments[globalIdx] = driverIdx;
     activeVariant = -1;
-    if (mapInstance) mapInstance.balloon.close();
-    setTimeout(function () { renderAll(); }, 10);
+    closeBalloonSafe();
+    setTimeout(renderAll, 100);
   };
   window.__dc_delete = function (orderId) {
-    const idx = orders.findIndex(function (o) { return o.id === orderId; });
+    var idx = orders.findIndex(function (o) { return o.id === orderId; });
     if (idx === -1) return;
     orders.splice(idx, 1);
     if (assignments) {
       assignments.splice(idx, 1);
     }
     variants = []; activeVariant = -1;
-    if (mapInstance) mapInstance.balloon.close();
-    setTimeout(function () { renderAll(); showToast('Точка удалена'); }, 10);
+    closeBalloonSafe();
+    setTimeout(function () { renderAll(); showToast('Точка удалена'); }, 100);
   };
   window.__dc_toggleKbt = function (globalIdx) {
     var order = orders[globalIdx];
@@ -286,15 +298,15 @@
     if (!order.isKbt) {
       order.helperDriverSlot = null;
     }
-    if (mapInstance) mapInstance.balloon.close();
-    setTimeout(function () { renderAll(); }, 10);
+    closeBalloonSafe();
+    setTimeout(renderAll, 100);
   };
   window.__dc_setHelper = function (globalIdx, helperSlot) {
     var order = orders[globalIdx];
     if (!order) return;
     order.helperDriverSlot = helperSlot;
-    if (mapInstance) mapInstance.balloon.close();
-    setTimeout(function () { renderAll(); }, 10);
+    closeBalloonSafe();
+    setTimeout(renderAll, 100);
   };
 
   // ─── Actions ──────────────────────────────────────────────
