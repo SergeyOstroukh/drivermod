@@ -127,7 +127,7 @@
         const coords = e.get('coords');
         orders = orders.map(function (o) {
           if (o.id !== placingOrderId) return o;
-          return Object.assign({}, o, { lat: coords[0], lng: coords[1], geocoded: true, error: null, formattedAddress: coords[0].toFixed(5) + ', ' + coords[1].toFixed(5) + ' (вручную)' });
+          return Object.assign({}, o, { lat: coords[0], lng: coords[1], geocoded: true, error: null, settlementOnly: false, formattedAddress: coords[0].toFixed(5) + ', ' + coords[1].toFixed(5) + ' (вручную)' });
         });
         placingOrderId = null;
         renderAll();
@@ -152,17 +152,36 @@
       const globalIdx = orders.indexOf(order);
       const driverIdx = assignments ? assignments[globalIdx] : -1;
       const isVisible = selectedDriver === null || driverIdx === selectedDriver;
-      const color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : '#3b82f6';
+      const isSettlementOnly = order.settlementOnly;
+      const defaultColor = isSettlementOnly ? '#f59e0b' : '#3b82f6';
+      const color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : defaultColor;
 
       const balloonHtml = buildBalloon(order, globalIdx, driverIdx);
+      const hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
+        (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
+        (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '');
       const pm = new ymaps.Placemark([order.lat, order.lng], {
         balloonContentBody: balloonHtml,
         iconContent: String(globalIdx + 1),
+        hintContent: hintHtml,
       }, {
-        preset: 'islands#circleIcon',
+        preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
         iconColor: color,
         iconOpacity: isVisible ? 1 : 0.25,
       });
+
+      // Hover events: highlight order in sidebar
+      (function (orderId) {
+        pm.events.add('mouseenter', function () {
+          var el = document.querySelector('.dc-order-item[data-order-id="' + orderId + '"]');
+          if (el) { el.classList.add('dc-order-highlighted'); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+        });
+        pm.events.add('mouseleave', function () {
+          var el = document.querySelector('.dc-order-item[data-order-id="' + orderId + '"]');
+          if (el) el.classList.remove('dc-order-highlighted');
+        });
+      })(order.id);
+
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
       bounds.push([order.lat, order.lng]);
@@ -288,11 +307,15 @@
     window.DistributionGeocoder.geocodeAddress(addr).then(function (geo) {
       orders = orders.map(function (o) {
         if (o.id !== orderId) return o;
-        return Object.assign({}, o, { address: addr, lat: geo.lat, lng: geo.lng, formattedAddress: geo.formattedAddress, geocoded: true, error: null });
+        return Object.assign({}, o, { address: addr, lat: geo.lat, lng: geo.lng, formattedAddress: geo.formattedAddress, geocoded: true, error: null, settlementOnly: geo.settlementOnly || false });
       });
       editingOrderId = null;
       renderAll();
-      showToast('Адрес найден');
+      if (geo.settlementOnly) {
+        showToast('Найден только населённый пункт — уточните на карте');
+      } else {
+        showToast('Адрес найден');
+      }
     }).catch(function () {
       showToast('Не найден: ' + addr, 'error');
       input.disabled = false;
@@ -385,6 +408,7 @@
 
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     const failedCount = orders.filter(function (o) { return !o.geocoded && o.error; }).length;
+    const settlementOnlyCount = orders.filter(function (o) { return o.geocoded && o.settlementOnly; }).length;
 
     // Build driver assignment panel (color → driver select)
     let driverSlotsHtml = '';
@@ -476,12 +500,19 @@
         const dIdx = assignments ? assignments[order.globalIndex] : -1;
         const color = dIdx >= 0 ? COLORS[dIdx % COLORS.length] : '';
         const isFailed = !order.geocoded && order.error;
+        const isSettlementOnly = order.geocoded && order.settlementOnly;
         const isEditing = editingOrderId === order.id;
         const isPlacing = placingOrderId === order.id;
         const safeId = order.id.replace(/[^a-zA-Z0-9\-]/g, '');
 
-        listHtml += '<div class="dc-order-item' + (isFailed ? ' failed' : '') + (isPlacing ? ' placing' : '') + '" style="' + (dIdx >= 0 ? 'border-left-color:' + color : '') + '">';
-        listHtml += '<div class="dc-order-num" style="' + (dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : '')) + '">' + (order.globalIndex + 1) + '</div>';
+        let itemClass = 'dc-order-item';
+        if (isFailed) itemClass += ' failed';
+        if (isSettlementOnly) itemClass += ' settlement-only';
+        if (isPlacing) itemClass += ' placing';
+
+        listHtml += '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (dIdx >= 0 ? 'border-left-color:' + color : '') + '">';
+        const numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
+        listHtml += '<div class="dc-order-num" style="' + numBg + '">' + (order.globalIndex + 1) + '</div>';
         listHtml += '<div class="dc-order-info"><div class="dc-order-addr">' + order.address + '</div>';
         if (order.timeSlot || order.phone) {
           listHtml += '<div class="dc-order-meta">';
@@ -490,6 +521,9 @@
           listHtml += '</div>';
         }
         if (order.formattedAddress) listHtml += '<div class="dc-order-faddr">📍 ' + order.formattedAddress + '</div>';
+        if (isSettlementOnly) {
+          listHtml += '<div class="dc-order-warn">⚠ Найден только населённый пункт — уточните точку на карте</div>';
+        }
         if (dIdx >= 0) {
           const driverName = getDriverName(dIdx);
           listHtml += '<div class="dc-order-driver" style="color:' + color + ';">👤 ' + driverName + '</div>';
@@ -503,9 +537,16 @@
           listHtml += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Поставить на карте">📍</button>';
           listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
           listHtml += '</div>';
+        } else if (isSettlementOnly) {
+          listHtml += '<div class="dc-order-actions">';
+          listHtml += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
+          listHtml += '<button class="btn btn-sm dc-place-btn dc-place-btn-warn" data-id="' + order.id + '" title="Уточнить точку на карте">📍 На карту</button>';
+          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить" style="opacity:0.5">✕</button>';
+          listHtml += '</div>';
         } else {
           listHtml += '<div class="dc-order-actions">';
           listHtml += '<span class="dc-status-ok">✓</span>';
+          listHtml += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Переместить на карте" style="opacity:0.3;font-size:11px;">📍</button>';
           listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить" style="opacity:0.3">✕</button>';
           listHtml += '</div>';
         }
@@ -516,7 +557,7 @@
           listHtml += '<div class="dc-edit-row"><input class="dc-edit-input" id="dcEditInput-' + safeId + '" value="' + order.address.replace(/"/g, '&quot;') + '" placeholder="Новый адрес..."><button class="btn btn-primary btn-sm dc-retry-btn" data-id="' + order.id + '">Найти</button><button class="btn btn-outline btn-sm dc-cancel-edit" data-id="' + order.id + '">✕</button></div>';
         }
         if (isPlacing) {
-          listHtml += '<div class="dc-edit-row" style="color:var(--accent);font-size:12px;">👆 Кликните на карту <button class="btn btn-outline btn-sm dc-cancel-place">Отмена</button></div>';
+          listHtml += '<div class="dc-edit-row" style="color:var(--accent);font-size:12px;">👆 Кликните на карту для установки точки <button class="btn btn-outline btn-sm dc-cancel-place">Отмена</button></div>';
         }
       });
     } else if (orders.length === 0) {
@@ -526,7 +567,7 @@
     sidebar.innerHTML =
       '<div class="dc-section"><div class="dc-section-title">Ввод адресов</div>' +
       '<textarea id="dcAddressInput" class="dc-textarea" placeholder="' + (orders.length > 0 ? 'Дополнительные адреса → «+ Добавить»' : 'Вставьте адреса, каждый с новой строки\\nФормат: адрес [TAB] телефон [TAB] время') + '" ' + (isGeocoding ? 'disabled' : '') + '></textarea>' +
-      (orders.length > 0 ? '<div class="dc-info">Загружено: <strong>' + orders.length + '</strong> (найдено: ' + geocodedCount + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
+      (orders.length > 0 ? '<div class="dc-info">Загружено: <strong>' + orders.length + '</strong> (найдено: ' + geocodedCount + (settlementOnlyCount > 0 ? ', <span style="color:#f59e0b;">уточнить: ' + settlementOnlyCount + '</span>' : '') + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
       '</div>' +
       '<div class="dc-section"><div class="dc-controls">' +
       '<div class="dc-control-group"><label>Водителей</label><input type="number" id="dcDriverCount" class="dc-count-input" min="1" max="12" value="' + driverCount + '"></div>' +

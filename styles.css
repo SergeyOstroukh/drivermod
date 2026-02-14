@@ -1944,6 +1944,15 @@ body {
 	background: rgba(239, 68, 68, 0.06);
 	border-left-color: #ef4444;
 }
+.dc-order-item.settlement-only {
+	background: rgba(245, 158, 11, 0.08);
+	border-left-color: #f59e0b;
+}
+.dc-order-item.dc-order-highlighted {
+	background: rgba(59, 130, 246, 0.12);
+	box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.3);
+	transition: background 0.15s, box-shadow 0.15s;
+}
 .dc-order-item.placing {
 	background: rgba(59, 130, 246, 0.1);
 	animation: dc-pulse 1.5s infinite;
@@ -1986,6 +1995,23 @@ body {
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+.dc-order-warn {
+	font-size: 11px;
+	color: #d97706;
+	margin-top: 3px;
+	font-weight: 500;
+}
+.dc-place-btn-warn {
+	background: #f59e0b !important;
+	border-color: #d97706 !important;
+	color: #fff !important;
+	font-weight: 600;
+	font-size: 11px;
+	white-space: nowrap;
+}
+.dc-place-btn-warn:hover {
+	background: #d97706 !important;
 }
 .dc-order-actions {
 	display: flex;
