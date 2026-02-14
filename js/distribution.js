@@ -22,7 +22,7 @@
   let placemarks = [];
   let placingOrderId = null;
   let editingOrderId = null;
-  let suggestTimeout = null;
+  let suggestView = null;
   let suggestAddingId = null; // if set, suggest replaces this order instead of adding new
 
   // Водители из БД
@@ -135,6 +135,9 @@
         renderAll();
         showToast('Точка установлена вручную');
       });
+
+      // Initialize Yandex SuggestView (native autocomplete widget)
+      initSuggestView();
     } catch (err) {
       console.error('Map init error:', err);
     }
@@ -395,10 +398,32 @@
     }
   }
 
-  // ─── Suggest (Yandex-style address search) ────────────────
+  // ─── Suggest (Yandex SuggestView — native widget) ─────────
+  function initSuggestView() {
+    if (suggestView) return; // already initialized
+    var input = document.getElementById('dcSuggestInput');
+    if (!input || !window.ymaps) return;
+
+    try {
+      suggestView = new ymaps.SuggestView(input, {
+        results: 7,
+        boundedBy: [[53.75, 27.25], [54.15, 27.90]],
+      });
+
+      suggestView.events.add('select', function (e) {
+        var item = e.get('item');
+        var selectedAddress = item.value;
+        // Clear input after small delay (so SuggestView finishes)
+        setTimeout(function () { input.value = ''; }, 100);
+        addAddressFromSuggest(selectedAddress);
+      });
+    } catch (err) {
+      console.warn('SuggestView init error:', err);
+    }
+  }
+
   async function addAddressFromSuggest(addressValue) {
-    var geocoding = true;
-    renderAll();
+    showToast('Ищем адрес...');
     try {
       var geo = await window.DistributionGeocoder.geocodeAddress(addressValue);
       if (suggestAddingId) {
@@ -431,84 +456,6 @@
     } catch (err) {
       showToast('Не удалось найти: ' + addressValue, 'error');
     }
-  }
-
-  function initSuggestEvents() {
-    var input = $('#dcSuggestInput');
-    var dropdown = $('#dcSuggestDropdown');
-    if (!input || !dropdown) return;
-
-    input.addEventListener('input', function () {
-      clearTimeout(suggestTimeout);
-      var query = input.value.trim();
-      if (query.length < 3) {
-        dropdown.innerHTML = '';
-        dropdown.style.display = 'none';
-        return;
-      }
-      suggestTimeout = setTimeout(async function () {
-        try {
-          var items = await window.DistributionGeocoder.suggest(query);
-          if (items.length === 0) {
-            dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено</div>';
-            dropdown.style.display = 'block';
-            return;
-          }
-          dropdown.innerHTML = items.map(function (item, i) {
-            return '<div class="dc-suggest-item" data-idx="' + i + '" data-value="' + item.value.replace(/"/g, '&quot;') + '">' + item.displayName + '</div>';
-          }).join('');
-          dropdown.style.display = 'block';
-        } catch (e) {
-          dropdown.style.display = 'none';
-        }
-      }, 250);
-    });
-
-    dropdown.addEventListener('click', function (e) {
-      var item = e.target.closest('.dc-suggest-item');
-      if (!item) return;
-      var value = item.dataset.value;
-      input.value = '';
-      dropdown.style.display = 'none';
-      addAddressFromSuggest(value);
-    });
-
-    input.addEventListener('keydown', function (e) {
-      var items = dropdown.querySelectorAll('.dc-suggest-item');
-      if (e.key === 'Escape') {
-        dropdown.style.display = 'none';
-        return;
-      }
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (items.length === 0) return;
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        var idx = -1;
-        if (active) { idx = Array.from(items).indexOf(active); active.classList.remove('active'); }
-        idx = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
-        if (idx < 0) idx = items.length - 1;
-        if (idx >= items.length) idx = 0;
-        items[idx].classList.add('active');
-        items[idx].scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        if (active) {
-          input.value = '';
-          dropdown.style.display = 'none';
-          addAddressFromSuggest(active.dataset.value);
-        }
-      }
-    });
-
-    // Close dropdown on outside click
-    document.addEventListener('click', function (e) {
-      if (!e.target.closest('.dc-suggest-wrap')) {
-        dropdown.style.display = 'none';
-      }
-    });
   }
 
   // ─── Render ───────────────────────────────────────────────
@@ -683,12 +630,6 @@
     }
 
     sidebar.innerHTML =
-      // Suggest search (Yandex-style)
-      '<div class="dc-section"><div class="dc-section-title">Поиск адреса</div>' +
-      '<div class="dc-suggest-wrap">' +
-      '<input id="dcSuggestInput" class="dc-suggest-input" placeholder="Начните вводить адрес..." autocomplete="off" />' +
-      '<div id="dcSuggestDropdown" class="dc-suggest-dropdown"></div>' +
-      '</div></div>' +
       // Bulk paste
       '<div class="dc-section dc-bulk-section">' +
       '<details class="dc-bulk-details"' + (orders.length === 0 ? ' open' : '') + '>' +
@@ -719,9 +660,6 @@
   function bindSidebarEvents() {
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
-
-    // Suggest input
-    initSuggestEvents();
 
     // Load / Append / Replace
     const loadBtn = sidebar.querySelector('.dc-btn-load');

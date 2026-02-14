@@ -385,8 +385,14 @@
 		<!-- Раздел Распределение маршрутов -->
 		<div id="distributionSection" class="content-section" style="display: none;">
 			<div class="dc-layout">
-				<aside class="dc-sidebar" id="dcSidebar">
-					<!-- Rendered by distribution.js -->
+				<aside class="dc-sidebar-wrap">
+					<div class="dc-suggest-fixed" id="dcSuggestSection">
+						<div class="dc-section-title">ПОИСК АДРЕСА</div>
+						<input id="dcSuggestInput" class="dc-suggest-input" placeholder="Начните вводить адрес..." autocomplete="off" />
+					</div>
+					<div class="dc-sidebar-scroll" id="dcSidebar">
+						<!-- Rendered by distribution.js -->
+					</div>
 				</aside>
 				<div class="dc-map-wrap">
 					<div id="distributionMap" class="dc-map"></div>
