@@ -22,6 +22,7 @@
   let placemarks = [];
   let placingOrderId = null;
   let editingOrderId = null;
+  let suggestTimeout = null;
   let suggestAddingId = null; // if set, suggest replaces this order instead of adding new
 
   // Водители из БД
@@ -397,56 +398,97 @@
     }
   }
 
-  // ─── Native Yandex SuggestView for address autocomplete ──────
+  // ─── Address search via Yandex Maps geocode ──────────────────
   function initAddressSearch() {
     var input = document.getElementById('dcSuggestInput');
-    if (!input) { console.warn('Search init: input not found'); return; }
+    var dropdown = document.getElementById('dcSuggestDropdown');
+    if (!input || !dropdown) { console.warn('Search init: input or dropdown not found'); return; }
     if (input.dataset.searchInit) return;
     input.dataset.searchInit = '1';
+    console.log('Address search initialized (Yandex geocode)');
 
-    var ymaps = window.ymaps;
-    if (!ymaps || !ymaps.SuggestView) {
-      console.warn('ymaps.SuggestView not available');
-      return;
-    }
-
-    // Create native Yandex SuggestView — Yandex draws & handles everything
-    var suggestView = new ymaps.SuggestView(input, {
-      provider: {
-        suggest: function (request) {
-          // Bias suggestions towards Belarus/Minsk
-          return ymaps.suggest('Беларусь, ' + request, {
-            boundedBy: [[53.75, 27.25], [54.15, 27.90]],
-            results: 7,
-          });
-        }
-      },
-      results: 7,
-    });
-    console.log('Yandex SuggestView initialized');
-
-    // When user selects a suggestion — geocode to get coordinates, then add
-    suggestView.events.add('select', function (e) {
-      var selectedItem = e.get('item');
-      var address = selectedItem.value;
-      console.log('SuggestView selected:', address);
-      input.value = '';
-      geocodeAndAddFromSuggest(address);
+    // Input with debounce
+    input.addEventListener('input', function () {
+      clearTimeout(suggestTimeout);
+      var query = input.value.trim();
+      if (query.length < 3) {
+        dropdown.innerHTML = '';
+        dropdown.style.display = 'none';
+        return;
+      }
+      dropdown.innerHTML = '<div class="dc-suggest-loading">Ищем «' + query + '»...</div>';
+      dropdown.style.display = 'block';
+      suggestTimeout = setTimeout(function () {
+        doYandexSearch(query, dropdown);
+      }, 400);
     });
 
-    // Hide the custom dropdown (not needed with SuggestView)
-    var dropdown = document.getElementById('dcSuggestDropdown');
-    if (dropdown) dropdown.style.display = 'none';
+    // Click on result
+    dropdown.addEventListener('click', function (e) {
+      var el = e.target.closest('.dc-suggest-item');
+      if (!el) return;
+      var idx = parseInt(el.dataset.idx);
+      if (dropdown._items && dropdown._items[idx]) {
+        var sel = dropdown._items[idx];
+        input.value = '';
+        dropdown.style.display = 'none';
+        dropdown._items = null;
+        addDirectOrder(sel.displayName, sel.lat, sel.lng);
+      }
+    });
+
+    // Keyboard navigation
+    input.addEventListener('keydown', function (e) {
+      var items = dropdown.querySelectorAll('.dc-suggest-item');
+      if (e.key === 'Escape') { dropdown.style.display = 'none'; return; }
+      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items.length > 0) {
+        e.preventDefault();
+        var active = dropdown.querySelector('.dc-suggest-item.active');
+        var curIdx = -1;
+        if (active) { curIdx = Array.from(items).indexOf(active); active.classList.remove('active'); }
+        curIdx = e.key === 'ArrowDown' ? curIdx + 1 : curIdx - 1;
+        if (curIdx < 0) curIdx = items.length - 1;
+        if (curIdx >= items.length) curIdx = 0;
+        items[curIdx].classList.add('active');
+        items[curIdx].scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var active = dropdown.querySelector('.dc-suggest-item.active');
+        if (active) { active.click(); }
+      }
+    });
+
+    // Close on outside click
+    document.addEventListener('click', function (e) {
+      if (!e.target.closest('.dc-suggest-wrap')) {
+        dropdown.style.display = 'none';
+      }
+    });
   }
 
-  async function geocodeAndAddFromSuggest(addressValue) {
-    showToast('Определяем координаты...');
+  // Search using only Yandex Maps geocode (reliable, accurate)
+  async function doYandexSearch(query, dropdown) {
+    console.log('Yandex geocode search:', query);
     try {
-      var geo = await window.DistributionGeocoder.geocodeAddress(addressValue);
-      addDirectOrder(geo.formattedAddress || addressValue, geo.lat, geo.lng);
-    } catch (err) {
-      console.error('Geocode from suggest error:', err);
-      showToast('Не удалось определить координаты: ' + (err.message || 'неизвестная ошибка'), 'error');
+      var items = await window.DistributionGeocoder.searchAddresses(query);
+      console.log('Results:', items ? items.length : 0);
+      if (!items || items.length === 0) {
+        dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено. Попробуйте уточнить запрос.</div>';
+        return;
+      }
+      dropdown._items = items;
+      dropdown.innerHTML = items.map(function (it, i) {
+        var icon = it.precision === 'exact' ? '📍' : (it.precision === 'street' ? '🛣️' : '📌');
+        return '<div class="dc-suggest-item" data-idx="' + i + '">' +
+          '<span class="dc-suggest-icon">' + icon + '</span>' +
+          '<span class="dc-suggest-text">' + escapeHtml(it.displayName) + '</span></div>';
+      }).join('');
+      dropdown.style.display = 'block';
+    } catch (e) {
+      console.error('Yandex search error:', e);
+      dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска: ' + escapeHtml(e.message || 'неизвестная') + '</div>';
     }
   }
 
