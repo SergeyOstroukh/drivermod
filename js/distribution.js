@@ -398,31 +398,30 @@
     }
   }
 
-  // ─── Address search dropdown (suggest → geocode fallback) ──
-  var suggestWorks = null; // null = unknown, true/false after first test
-
+  // ─── Address search dropdown (geocode-based, guaranteed to work) ──
   function initAddressSearch() {
     var input = document.getElementById('dcSuggestInput');
     var dropdown = document.getElementById('dcSuggestDropdown');
-    if (!input || !dropdown) return;
+    if (!input || !dropdown) { console.warn('Search init: input or dropdown not found'); return; }
     if (input.dataset.searchInit) return;
     input.dataset.searchInit = '1';
+    console.log('Address search initialized');
 
     // Input handler with debounce
     input.addEventListener('input', function () {
       clearTimeout(suggestTimeout);
       var query = input.value.trim();
-      if (query.length < 2) {
+      if (query.length < 3) {
         dropdown.innerHTML = '';
         dropdown.style.display = 'none';
         return;
       }
-      dropdown.innerHTML = '<div class="dc-suggest-loading">Поиск...</div>';
+      dropdown.innerHTML = '<div class="dc-suggest-loading">Ищем «' + query + '»...</div>';
       dropdown.style.display = 'block';
 
       suggestTimeout = setTimeout(function () {
-        doSearch(query, dropdown);
-      }, 350);
+        doGeoSearch(query, dropdown);
+      }, 400);
     });
 
     // Click on result
@@ -435,12 +434,7 @@
         input.value = '';
         dropdown.style.display = 'none';
         dropdown._items = null;
-        // If item has coords, add directly; otherwise geocode the address
-        if (sel.lat && sel.lng) {
-          addDirectOrder(sel.displayName, sel.lat, sel.lng);
-        } else {
-          addAddressFromSuggest(sel.displayName);
-        }
+        addDirectOrder(sel.displayName, sel.lat, sel.lng);
       }
     });
 
@@ -475,68 +469,31 @@
     });
   }
 
-  async function doSearch(query, dropdown) {
+  async function doGeoSearch(query, dropdown) {
+    console.log('Searching for:', query);
     try {
-      // Try ymaps.suggest first (needs suggest_apikey)
-      if (suggestWorks !== false && window.ymaps && window.ymaps.suggest) {
-        try {
-          var suggestResults = await window.ymaps.suggest(query, {
-            results: 7,
-            boundedBy: [[53.4, 26.5], [54.5, 28.5]],
-          });
-          if (suggestResults && suggestResults.length > 0) {
-            suggestWorks = true;
-            renderSuggestResults(dropdown, suggestResults);
-            return;
-          }
-        } catch (e) {
-          console.warn('ymaps.suggest failed, using geocode fallback:', e.message || e);
-          suggestWorks = false;
-        }
-      }
-
-      // Fallback: geocode with multiple results (always works)
-      if (query.length < 3) {
-        dropdown.innerHTML = '<div class="dc-suggest-empty">Введите минимум 3 символа</div>';
+      var items = await window.DistributionGeocoder.searchAddresses(query);
+      console.log('Search results:', items ? items.length : 0);
+      if (!items || items.length === 0) {
+        dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено. Попробуйте уточнить запрос.</div>';
         return;
       }
-      var geoItems = await window.DistributionGeocoder.searchAddresses(query);
-      if (!geoItems || geoItems.length === 0) {
-        dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено. Уточните запрос.</div>';
-        return;
-      }
-      renderGeoResults(dropdown, geoItems);
+      dropdown._items = items;
+      dropdown.innerHTML = items.map(function (it, i) {
+        var icon = it.precision === 'exact' ? '📍' : (it.precision === 'street' ? '🛣️' : '📌');
+        return '<div class="dc-suggest-item" data-idx="' + i + '">' +
+          '<span class="dc-suggest-icon">' + icon + '</span>' +
+          '<span class="dc-suggest-text">' + escapeHtml(it.displayName) + '</span></div>';
+      }).join('');
+      dropdown.style.display = 'block';
     } catch (e) {
-      console.error('Search error:', e);
-      dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска</div>';
+      console.error('Geocode search error:', e);
+      dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска: ' + escapeHtml(e.message || 'неизвестная') + '</div>';
     }
   }
 
-  function renderSuggestResults(dropdown, items) {
-    dropdown._items = items.map(function (it) {
-      return { displayName: it.value, lat: null, lng: null };
-    });
-    dropdown.innerHTML = items.map(function (it, i) {
-      return '<div class="dc-suggest-item" data-idx="' + i + '">' +
-        '<span class="dc-suggest-icon">📍</span>' +
-        '<span class="dc-suggest-text">' + escapeHtml(it.value) + '</span></div>';
-    }).join('');
-  }
-
-  function renderGeoResults(dropdown, items) {
-    dropdown._items = items.map(function (it) {
-      return { displayName: it.displayName, lat: it.lat, lng: it.lng };
-    });
-    dropdown.innerHTML = items.map(function (it, i) {
-      var icon = it.precision === 'exact' ? '📍' : (it.precision === 'street' ? '🛣️' : '📌');
-      return '<div class="dc-suggest-item" data-idx="' + i + '">' +
-        '<span class="dc-suggest-icon">' + icon + '</span>' +
-        '<span class="dc-suggest-text">' + escapeHtml(it.displayName) + '</span></div>';
-    }).join('');
-  }
-
   function escapeHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   function addDirectOrder(address, lat, lng) {
