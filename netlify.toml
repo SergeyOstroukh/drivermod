@@ -1,4 +1,8 @@
 [build]
   # No build step needed — static HTML/JS/CSS served directly
-  command = ""
+  command = "echo 'Static site, no build needed'"
   publish = "."
+
+[build.environment]
+  # Skip peer dependency conflicts (React packages not used in production)
+  NPM_FLAGS = "--legacy-peer-deps"
