@@ -51,23 +51,6 @@
     return { lat: coords[0], lng: coords[1], formattedAddress: formattedAddress, precision: precision };
   }
 
-  // ─── Nominatim fallback ─────────────────────────────────────
-  async function nominatimGeocode(query) {
-    const params = new URLSearchParams({
-      q: query, format: 'json', limit: '1',
-      countrycodes: 'by', 'accept-language': 'ru',
-      viewbox: '27.25,53.75,27.90,54.15', bounded: '0',
-    });
-    try {
-      const response = await fetch('https://nominatim.openstreetmap.org/search?' + params, {
-        headers: { 'User-Agent': 'DriveControl/1.0' },
-      });
-      if (!response.ok) return null;
-      const data = await response.json();
-      if (data.length === 0) return null;
-      return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), formattedAddress: data[0].display_name };
-    } catch (e) { return null; }
-  }
 
   // ─── Address normalization ──────────────────────────────────
   // Converts non-standard abbreviations to full words for better geocoding
@@ -290,9 +273,6 @@
     for (const q of queries) {
       try { const r = await yandexGeocode(q); if (r) return r; } catch (e) { /* continue */ }
     }
-    for (const q of queries) {
-      const r = await nominatimGeocode(q); if (r) return r;
-    }
     const streetOnly = extractStreetName(normalized);
     if (streetOnly) {
       try { const r = await yandexGeocode('Минск, ' + streetOnly); if (r) return r; } catch (e) { /* ignore */ }
@@ -324,53 +304,9 @@
     return results;
   }
 
-  // ─── Yandex Suggest API (fast autocomplete) ─────────────────
-  async function suggestAddresses(query) {
-    const ymaps = await loadYmaps();
-    const items = await ymaps.suggest('Беларусь, ' + query, {
-      boundedBy: MINSK_BOUNDS,
-      results: 7,
-    });
-    return items.map(function (item) {
-      return {
-        displayName: item.displayName,
-        value: item.value,
-      };
-    });
-  }
-
-  // ─── Multi-result search (geocode with multiple results) ────
-  async function searchAddresses(query) {
-    const ymaps = await loadYmaps();
-    const result = await ymaps.geocode(query, {
-      results: 7,
-      boundedBy: MINSK_BOUNDS,
-      strictBounds: false,
-    });
-
-    const items = [];
-    var len = result.geoObjects.getLength();
-    for (var i = 0; i < len; i++) {
-      var obj = result.geoObjects.get(i);
-      var coords = obj.geometry.getCoordinates();
-      var address = obj.getAddressLine();
-      var precision = obj.properties.get('metaDataProperty.GeocoderMetaData.precision');
-      if (precision === 'other') continue;
-      items.push({
-        displayName: address,
-        lat: coords[0],
-        lng: coords[1],
-        precision: precision,
-      });
-    }
-    return items;
-  }
-
   window.DistributionGeocoder = {
     loadYmaps: loadYmaps,
     geocodeAddress: geocodeAddress,
     geocodeOrders: geocodeOrders,
-    searchAddresses: searchAddresses,
-    suggestAddresses: suggestAddresses,
   };
 })();

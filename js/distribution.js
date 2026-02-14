@@ -22,8 +22,6 @@
   let placemarks = [];
   let placingOrderId = null;
   let editingOrderId = null;
-  let suggestTimeout = null;
-  let suggestAddingId = null; // if set, suggest replaces this order instead of adding new
 
   // Водители из БД
   let dbDrivers = [];
@@ -135,9 +133,6 @@
         renderAll();
         showToast('Точка установлена вручную');
       });
-
-      // Initialize address search dropdown
-      initAddressSearch();
     } catch (err) {
       console.error('Map init error:', err);
     }
@@ -398,167 +393,10 @@
     }
   }
 
-  // ─── Address search via Yandex Maps geocode ──────────────────
-  function initAddressSearch() {
-    var input = document.getElementById('dcSuggestInput');
-    var dropdown = document.getElementById('dcSuggestDropdown');
-    if (!input || !dropdown) { console.warn('Search init: input or dropdown not found'); return; }
-    if (input.dataset.searchInit) return;
-    input.dataset.searchInit = '1';
-    console.log('Address search initialized (Yandex geocode)');
-
-    // Input with debounce
-    input.addEventListener('input', function () {
-      clearTimeout(suggestTimeout);
-      var query = input.value.trim();
-      if (query.length < 3) {
-        dropdown.innerHTML = '';
-        dropdown.style.display = 'none';
-        return;
-      }
-      dropdown.innerHTML = '<div class="dc-suggest-loading">Ищем «' + query + '»...</div>';
-      dropdown.style.display = 'block';
-      suggestTimeout = setTimeout(function () {
-        doYandexSearch(query, dropdown);
-      }, 400);
-    });
-
-    // Click on result
-    dropdown.addEventListener('click', function (e) {
-      var el = e.target.closest('.dc-suggest-item');
-      if (!el) return;
-      var idx = parseInt(el.dataset.idx);
-      if (dropdown._items && dropdown._items[idx]) {
-        var sel = dropdown._items[idx];
-        input.value = '';
-        dropdown.style.display = 'none';
-        dropdown._items = null;
-        addDirectOrder(sel.displayName, sel.lat, sel.lng);
-      }
-    });
-
-    // Keyboard navigation
-    input.addEventListener('keydown', function (e) {
-      var items = dropdown.querySelectorAll('.dc-suggest-item');
-      if (e.key === 'Escape') { dropdown.style.display = 'none'; return; }
-      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items.length > 0) {
-        e.preventDefault();
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        var curIdx = -1;
-        if (active) { curIdx = Array.from(items).indexOf(active); active.classList.remove('active'); }
-        curIdx = e.key === 'ArrowDown' ? curIdx + 1 : curIdx - 1;
-        if (curIdx < 0) curIdx = items.length - 1;
-        if (curIdx >= items.length) curIdx = 0;
-        items[curIdx].classList.add('active');
-        items[curIdx].scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        if (active) { active.click(); }
-      }
-    });
-
-    // Close on outside click
-    document.addEventListener('click', function (e) {
-      if (!e.target.closest('.dc-suggest-wrap')) {
-        dropdown.style.display = 'none';
-      }
-    });
-  }
-
-  // Search using only Yandex Maps geocode (reliable, accurate)
-  async function doYandexSearch(query, dropdown) {
-    console.log('Yandex geocode search:', query);
-    try {
-      var items = await window.DistributionGeocoder.searchAddresses(query);
-      console.log('Results:', items ? items.length : 0);
-      if (!items || items.length === 0) {
-        dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено. Попробуйте уточнить запрос.</div>';
-        return;
-      }
-      dropdown._items = items;
-      dropdown.innerHTML = items.map(function (it, i) {
-        var icon = it.precision === 'exact' ? '📍' : (it.precision === 'street' ? '🛣️' : '📌');
-        return '<div class="dc-suggest-item" data-idx="' + i + '">' +
-          '<span class="dc-suggest-icon">' + icon + '</span>' +
-          '<span class="dc-suggest-text">' + escapeHtml(it.displayName) + '</span></div>';
-      }).join('');
-      dropdown.style.display = 'block';
-    } catch (e) {
-      console.error('Yandex search error:', e);
-      dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска: ' + escapeHtml(e.message || 'неизвестная') + '</div>';
-    }
-  }
-
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  function addDirectOrder(address, lat, lng) {
-    var newOrder = {
-      id: 'order-' + Date.now() + '-' + (orders.length + 1),
-      address: address,
-      phone: '', timeSlot: null,
-      geocoded: true, lat: lat, lng: lng,
-      formattedAddress: address,
-      error: null, settlementOnly: false,
-      driverIndex: -1,
-    };
-    if (suggestAddingId) {
-      orders = orders.map(function (o) {
-        if (o.id !== suggestAddingId) return o;
-        return Object.assign({}, o, {
-          address: address, lat: lat, lng: lng,
-          formattedAddress: address, geocoded: true,
-          error: null, settlementOnly: false,
-        });
-      });
-      suggestAddingId = null;
-    } else {
-      orders.push(newOrder);
-      if (assignments) assignments.push(-1);
-    }
-    renderAll();
-    showToast('Адрес добавлен');
-  }
-
-  async function addAddressFromSuggest(addressValue) {
-    showToast('Ищем адрес...');
-    try {
-      var geo = await window.DistributionGeocoder.geocodeAddress(addressValue);
-      if (suggestAddingId) {
-        // Replace existing failed order
-        orders = orders.map(function (o) {
-          if (o.id !== suggestAddingId) return o;
-          return Object.assign({}, o, {
-            address: addressValue, lat: geo.lat, lng: geo.lng,
-            formattedAddress: geo.formattedAddress, geocoded: true,
-            error: null, settlementOnly: geo.settlementOnly || false,
-          });
-        });
-        suggestAddingId = null;
-      } else {
-        // Add new order
-        var newOrder = {
-          id: 'order-' + Date.now() + '-' + (orders.length + 1),
-          address: addressValue,
-          phone: '', timeSlot: null,
-          geocoded: true, lat: geo.lat, lng: geo.lng,
-          formattedAddress: geo.formattedAddress,
-          error: null, settlementOnly: geo.settlementOnly || false,
-          driverIndex: -1,
-        };
-        orders.push(newOrder);
-        if (assignments) assignments.push(-1);
-      }
-      renderAll();
-      showToast(geo.settlementOnly ? 'Населённый пункт найден — уточните на карте' : 'Адрес добавлен');
-    } catch (err) {
-      showToast('Не удалось найти: ' + addressValue, 'error');
-    }
-  }
 
   // ─── Render ───────────────────────────────────────────────
   function renderAll() {
