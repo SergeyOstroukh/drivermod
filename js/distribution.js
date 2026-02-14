@@ -130,6 +130,7 @@
           return Object.assign({}, o, { lat: coords[0], lng: coords[1], geocoded: true, error: null, settlementOnly: false, formattedAddress: coords[0].toFixed(5) + ', ' + coords[1].toFixed(5) + ' (вручную)' });
         });
         placingOrderId = null;
+        _fitBoundsNext = true;
         renderAll();
         showToast('Точка установлена вручную');
       });
@@ -138,12 +139,20 @@
     }
   }
 
+  // true only when we need the map to fit all points (initial load, new addresses)
+  var _fitBoundsNext = true;
+
   function updatePlacemarks() {
     if (!mapInstance || !window.ymaps) return;
     var ymaps = window.ymaps;
 
-    // Remove ALL geo-objects at once (robust — avoids stale reference issues)
-    try { mapInstance.geoObjects.removeAll(); } catch (e) { console.warn('removeAll:', e); }
+    // 1. Close any open balloon FIRST (before touching placemarks)
+    try { mapInstance.balloon.close(); } catch (e) {}
+
+    // 2. Remove old placemarks one by one (safer than removeAll which can corrupt state)
+    for (var r = placemarks.length - 1; r >= 0; r--) {
+      try { mapInstance.geoObjects.remove(placemarks[r]); } catch (e) {}
+    }
     placemarks = [];
 
     var geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
@@ -164,38 +173,16 @@
         (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
         (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ</span>' : '');
 
-      var pm;
-
-      if (order.isKbt) {
-        // ── KBT: double concentric circle (circle inside circle) ──
-        var opacity = isVisible ? 1 : 0.25;
-        var num = String(globalIdx + 1);
-        var kbtLayout = ymaps.templateLayoutFactory.createClass(
-          '<div style="position:relative;width:44px;height:44px;opacity:' + opacity + ';">' +
-            '<div style="position:absolute;top:0;left:0;width:44px;height:44px;border-radius:50%;background:' + color + ';opacity:0.35;"></div>' +
-            '<div style="position:absolute;top:10px;left:10px;width:24px;height:24px;border-radius:50%;background:' + color + ';color:#fff;font-size:11px;font-weight:700;line-height:24px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.3);">' + num + '</div>' +
-          '</div>'
-        );
-        pm = new ymaps.Placemark([order.lat, order.lng], {
-          balloonContentBody: balloonHtml,
-          hintContent: hintHtml,
-        }, {
-          iconLayout: kbtLayout,
-          iconShape: { type: 'Circle', coordinates: [22, 22], radius: 22 },
-          iconOffset: [-22, -22],
-        });
-      } else {
-        // ── Normal order: standard circle icon ──
-        pm = new ymaps.Placemark([order.lat, order.lng], {
-          balloonContentBody: balloonHtml,
-          iconContent: String(globalIdx + 1),
-          hintContent: hintHtml,
-        }, {
-          preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
-          iconColor: color,
-          iconOpacity: isVisible ? 1 : 0.25,
-        });
-      }
+      // ALL markers use the standard preset — guaranteed balloon & click support
+      var pm = new ymaps.Placemark([order.lat, order.lng], {
+        balloonContentBody: balloonHtml,
+        iconContent: String(globalIdx + 1),
+        hintContent: hintHtml,
+      }, {
+        preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
+        iconColor: color,
+        iconOpacity: isVisible ? 1 : 0.25,
+      });
 
       // Hover events: highlight order in sidebar
       (function (orderId) {
@@ -212,10 +199,26 @@
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
       bounds.push([order.lat, order.lng]);
+
+      // KBT: decorative outer ring (circle inside circle effect)
+      // Non-interactive — pointer-events:none + zero-radius shape
+      if (order.isKbt && isVisible) {
+        var ringHtml = '<div style="width:44px;height:44px;border-radius:50%;background:' + color + ';opacity:0.3;pointer-events:none;"></div>';
+        var ringLayout = ymaps.templateLayoutFactory.createClass(ringHtml);
+        var ring = new ymaps.Placemark([order.lat, order.lng], {}, {
+          iconLayout: ringLayout,
+          iconOffset: [-22, -22],
+          iconShape: { type: 'Circle', coordinates: [0, 0], radius: 0 },
+        });
+        mapInstance.geoObjects.add(ring);
+        placemarks.push(ring);
+      }
     });
 
-    if (bounds.length > 0) {
+    // Only fit bounds on initial load / new addresses — NOT on every re-render
+    if (_fitBoundsNext && bounds.length > 0) {
       mapInstance.setBounds(ymaps.util.bounds.fromPoints(bounds), { checkZoomRange: true, zoomMargin: 40 });
+      _fitBoundsNext = false;
     }
   }
 
@@ -262,51 +265,65 @@
       kbtHtml + '</div>';
   }
 
-  // Global callbacks for balloon HTML
-  // IMPORTANT: balloon.close() + setTimeout — the DOM that triggers onclick
-  // gets destroyed by renderAll(), so we must defer the re-render.
-  function closeBalloonSafe() {
-    try { if (mapInstance && mapInstance.balloon) mapInstance.balloon.close(); } catch (e) { /* ignore */ }
-  }
+  // ─── Global callbacks for balloon HTML buttons ──────────
+  // NOTE: Do NOT manually close the balloon here.
+  // updatePlacemarks() closes it before removing old markers.
+  // setTimeout defers renderAll to the next tick so the onclick
+  // handler finishes before its DOM is destroyed.
 
   window.__dc_assign = function (globalIdx, driverIdx) {
-    if (!assignments) {
-      assignments = [];
-      for (var i = 0; i < orders.length; i++) assignments.push(-1);
-    }
-    assignments = assignments.slice();
-    assignments[globalIdx] = driverIdx;
-    activeVariant = -1;
-    closeBalloonSafe();
-    setTimeout(renderAll, 100);
+    console.log('[DC] assign', globalIdx, '→ driver', driverIdx);
+    try {
+      if (!assignments) {
+        assignments = [];
+        for (var i = 0; i < orders.length; i++) assignments.push(-1);
+      }
+      assignments = assignments.slice();
+      assignments[globalIdx] = driverIdx;
+      activeVariant = -1;
+    } catch (e) { console.error('[DC] assign error:', e); }
+    setTimeout(function () {
+      try { renderAll(); } catch (e) { console.error('[DC] renderAll error:', e); }
+    }, 50);
   };
+
   window.__dc_delete = function (orderId) {
-    var idx = orders.findIndex(function (o) { return o.id === orderId; });
-    if (idx === -1) return;
-    orders.splice(idx, 1);
-    if (assignments) {
-      assignments.splice(idx, 1);
-    }
-    variants = []; activeVariant = -1;
-    closeBalloonSafe();
-    setTimeout(function () { renderAll(); showToast('Точка удалена'); }, 100);
+    console.log('[DC] delete', orderId);
+    try {
+      var idx = orders.findIndex(function (o) { return o.id === orderId; });
+      if (idx === -1) return;
+      orders.splice(idx, 1);
+      if (assignments) { assignments.splice(idx, 1); }
+      variants = []; activeVariant = -1;
+    } catch (e) { console.error('[DC] delete error:', e); }
+    setTimeout(function () {
+      try { renderAll(); showToast('Точка удалена'); } catch (e) { console.error('[DC] renderAll error:', e); }
+    }, 50);
   };
+
   window.__dc_toggleKbt = function (globalIdx) {
-    var order = orders[globalIdx];
-    if (!order) return;
-    order.isKbt = !order.isKbt;
-    if (!order.isKbt) {
-      order.helperDriverSlot = null;
-    }
-    closeBalloonSafe();
-    setTimeout(renderAll, 100);
+    console.log('[DC] toggleKbt', globalIdx);
+    try {
+      var order = orders[globalIdx];
+      if (!order) return;
+      order.isKbt = !order.isKbt;
+      if (!order.isKbt) { order.helperDriverSlot = null; }
+    } catch (e) { console.error('[DC] toggleKbt error:', e); }
+    setTimeout(function () {
+      try { renderAll(); } catch (e) { console.error('[DC] renderAll error:', e); }
+    }, 50);
   };
+
   window.__dc_setHelper = function (globalIdx, helperSlot) {
-    var order = orders[globalIdx];
-    if (!order) return;
-    order.helperDriverSlot = helperSlot;
-    closeBalloonSafe();
-    setTimeout(renderAll, 100);
+    console.log('[DC] setHelper', globalIdx, helperSlot);
+    try {
+      var order = orders[globalIdx];
+      if (!order) return;
+      order.helperDriverSlot = helperSlot;
+    } catch (e) { console.error('[DC] setHelper error:', e); }
+    setTimeout(function () {
+      try { renderAll(); } catch (e) { console.error('[DC] renderAll error:', e); }
+    }, 50);
   };
 
   // ─── Actions ──────────────────────────────────────────────
@@ -320,6 +337,7 @@
     if (!append) { orders = []; assignments = null; variants = []; activeVariant = -1; }
     const prevAssignments = append ? assignments : null;
     isGeocoding = true;
+    _fitBoundsNext = true;
     renderAll();
 
     const progressEl = $('#dcProgress');
@@ -360,6 +378,7 @@
     activeVariant = 0;
     assignments = variants[0].assignments.slice();
     selectedDriver = null;
+    _fitBoundsNext = true;
     renderAll();
     showToast('Создано ' + variants.length + ' вариантов');
   }
@@ -821,6 +840,7 @@
     if (orders.length === 0) {
       loadState();
     }
+    _fitBoundsNext = true;
     initMap().then(function () { updatePlacemarks(); });
     renderSidebar();
   }
