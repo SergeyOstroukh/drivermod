@@ -19,9 +19,7 @@
   let selectedDriver = null;
   let isGeocoding = false;
   let mapInstance = null;
-  let placemarks = [];   // backward compat reference
-  let _mainPms = [];     // one per geocoded order (never removed during fast update)
-  let _ringPms = [];     // KBT decorative rings
+  let placemarks = [];
   let placingOrderId = null;
   let editingOrderId = null;
 
@@ -125,115 +123,44 @@
       }, { suppressMapOpenBlock: true });
 
       mapInstance.events.add('click', function (e) {
-        if (!placingOrderId) return;
-        const coords = e.get('coords');
-        orders = orders.map(function (o) {
-          if (o.id !== placingOrderId) return o;
-          return Object.assign({}, o, { lat: coords[0], lng: coords[1], geocoded: true, error: null, settlementOnly: false, formattedAddress: coords[0].toFixed(5) + ', ' + coords[1].toFixed(5) + ' (вручную)' });
-        });
-        placingOrderId = null;
-        _fitBoundsNext = true;
-        renderAll();
-        showToast('Точка установлена вручную');
+        if (placingOrderId) {
+          var coords = e.get('coords');
+          orders = orders.map(function (o) {
+            if (o.id !== placingOrderId) return o;
+            return Object.assign({}, o, { lat: coords[0], lng: coords[1], geocoded: true, error: null, settlementOnly: false, formattedAddress: coords[0].toFixed(5) + ', ' + coords[1].toFixed(5) + ' (вручную)' });
+          });
+          placingOrderId = null;
+          _fitBoundsNext = true;
+          renderAll();
+          showToast('Точка установлена вручную');
+        }
+      });
+
+      // Close balloon when clicking on empty area of map
+      mapInstance.events.add('click', function () {
+        try { if (mapInstance.balloon.isOpen()) mapInstance.balloon.close(); } catch (e) {}
       });
     } catch (err) {
       console.error('Map init error:', err);
     }
   }
 
-  // true only when we need the map to fit all points (initial load, new addresses)
   var _fitBoundsNext = true;
 
-  // ── Helper: build hint HTML ──
-  function _buildHint(order, globalIdx, isSettlementOnly) {
-    return '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
-      (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
-      (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
-      (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ</span>' : '');
-  }
-
-  // ── Main entry: decide fast-update vs full-rebuild ──
   function updatePlacemarks() {
     if (!mapInstance || !window.ymaps) return;
     var ymaps = window.ymaps;
 
-    // Close any open balloon
-    try { mapInstance.balloon.close(); } catch (e) {}
+    // Do NOT call balloon.close() — removing the placemark auto-closes it.
+    // Manual balloon.close() was causing the map to break.
 
-    var geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
-
-    // FAST PATH: same number of orders → update properties in place (no remove/add)
-    if (_mainPms.length > 0 && _mainPms.length === geocoded.length) {
-      console.log('[DC] fast update:', geocoded.length, 'markers');
-      _fastUpdatePlacemarks(ymaps, geocoded);
-      return;
+    // Remove all old placemarks
+    for (var r = placemarks.length - 1; r >= 0; r--) {
+      try { mapInstance.geoObjects.remove(placemarks[r]); } catch (e) {}
     }
-
-    // FULL REBUILD: order count changed
-    console.log('[DC] full rebuild:', geocoded.length, 'markers');
-    _fullRebuildPlacemarks(ymaps, geocoded);
-  }
-
-  // ── Fast path: update existing placemark properties WITHOUT remove/add ──
-  function _fastUpdatePlacemarks(ymaps, geocoded) {
-    // 1. Remove only the KBT decorative rings (they're just visual)
-    for (var k = _ringPms.length - 1; k >= 0; k--) {
-      try { mapInstance.geoObjects.remove(_ringPms[k]); } catch (e) {}
-    }
-    _ringPms = [];
-
-    // 2. Update each main placemark in place
-    geocoded.forEach(function (order, i) {
-      var pm = _mainPms[i];
-      if (!pm) return;
-      var globalIdx = orders.indexOf(order);
-      var driverIdx = assignments ? assignments[globalIdx] : -1;
-      var isVisible = selectedDriver === null || driverIdx === selectedDriver;
-      var isSettlementOnly = order.settlementOnly;
-      var defaultColor = isSettlementOnly ? '#f59e0b' : '#3b82f6';
-      var color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : defaultColor;
-
-      // Update data properties (balloon, hint, number)
-      pm.properties.set({
-        balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
-        iconContent: String(globalIdx + 1),
-        hintContent: _buildHint(order, globalIdx, isSettlementOnly),
-      });
-      // Update visual options (color, opacity)
-      pm.options.set({
-        iconColor: color,
-        iconOpacity: isVisible ? 1 : 0.25,
-      });
-
-      // 3. Add KBT decorative ring if needed
-      if (order.isKbt && isVisible) {
-        var ringHtml = '<div style="width:44px;height:44px;border-radius:50%;background:' + color + ';opacity:0.3;pointer-events:none;"></div>';
-        var ringLayout = ymaps.templateLayoutFactory.createClass(ringHtml);
-        var ring = new ymaps.Placemark([order.lat, order.lng], {}, {
-          iconLayout: ringLayout,
-          iconOffset: [-22, -22],
-          iconShape: { type: 'Circle', coordinates: [0, 0], radius: 0 },
-        });
-        mapInstance.geoObjects.add(ring);
-        _ringPms.push(ring);
-      }
-    });
-  }
-
-  // ── Full rebuild: remove all markers and create from scratch ──
-  function _fullRebuildPlacemarks(ymaps, geocoded) {
-    // Remove old main placemarks
-    for (var r = _mainPms.length - 1; r >= 0; r--) {
-      try { mapInstance.geoObjects.remove(_mainPms[r]); } catch (e) {}
-    }
-    // Remove old KBT rings
-    for (var k = _ringPms.length - 1; k >= 0; k--) {
-      try { mapInstance.geoObjects.remove(_ringPms[k]); } catch (e) {}
-    }
-    _mainPms = [];
-    _ringPms = [];
     placemarks = [];
 
+    var geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
     if (geocoded.length === 0) return;
 
     var bounds = [];
@@ -245,17 +172,22 @@
       var defaultColor = isSettlementOnly ? '#f59e0b' : '#3b82f6';
       var color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : defaultColor;
 
+      var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
+        (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
+        (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
+        (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ</span>' : '');
+
       var pm = new ymaps.Placemark([order.lat, order.lng], {
         balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
         iconContent: String(globalIdx + 1),
-        hintContent: _buildHint(order, globalIdx, isSettlementOnly),
+        hintContent: hintHtml,
       }, {
         preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
         iconColor: color,
         iconOpacity: isVisible ? 1 : 0.25,
       });
 
-      // Hover events: highlight order in sidebar
+      // Hover: highlight sidebar
       (function (orderId) {
         pm.events.add('mouseenter', function () {
           var el = document.querySelector('.dc-order-item[data-order-id="' + orderId + '"]');
@@ -268,11 +200,10 @@
       })(order.id);
 
       mapInstance.geoObjects.add(pm);
-      _mainPms.push(pm);
       placemarks.push(pm);
       bounds.push([order.lat, order.lng]);
 
-      // KBT ring
+      // KBT ring (circle inside circle)
       if (order.isKbt && isVisible) {
         var ringHtml = '<div style="width:44px;height:44px;border-radius:50%;background:' + color + ';opacity:0.3;pointer-events:none;"></div>';
         var ringLayout = ymaps.templateLayoutFactory.createClass(ringHtml);
@@ -282,7 +213,6 @@
           iconShape: { type: 'Circle', coordinates: [0, 0], radius: 0 },
         });
         mapInstance.geoObjects.add(ring);
-        _ringPms.push(ring);
         placemarks.push(ring);
       }
     });
@@ -337,66 +267,45 @@
   }
 
   // ─── Global callbacks for balloon HTML buttons ──────────
-  // NOTE: Do NOT manually close the balloon here.
-  // updatePlacemarks() closes it before removing old markers.
-  // setTimeout defers renderAll to the next tick so the onclick
-  // handler finishes before its DOM is destroyed.
+  // Called SYNCHRONOUSLY — no setTimeout, no balloon.close().
+  // Removing the placemark in updatePlacemarks() auto-closes the balloon.
+  // JS is single-threaded so the onclick handler runs to completion
+  // even if its DOM element is destroyed during renderAll().
 
   window.__dc_assign = function (globalIdx, driverIdx) {
-    console.log('[DC] assign', globalIdx, '→ driver', driverIdx);
-    try {
-      if (!assignments) {
-        assignments = [];
-        for (var i = 0; i < orders.length; i++) assignments.push(-1);
-      }
-      assignments = assignments.slice();
-      assignments[globalIdx] = driverIdx;
-      activeVariant = -1;
-    } catch (e) { console.error('[DC] assign error:', e); }
-    setTimeout(function () {
-      try { renderAll(); } catch (e) { console.error('[DC] renderAll error:', e); }
-    }, 50);
+    if (!assignments) {
+      assignments = [];
+      for (var i = 0; i < orders.length; i++) assignments.push(-1);
+    }
+    assignments = assignments.slice();
+    assignments[globalIdx] = driverIdx;
+    activeVariant = -1;
+    renderAll();
   };
 
   window.__dc_delete = function (orderId) {
-    console.log('[DC] delete', orderId);
-    try {
-      var idx = orders.findIndex(function (o) { return o.id === orderId; });
-      if (idx === -1) return;
-      orders.splice(idx, 1);
-      if (assignments) { assignments.splice(idx, 1); }
-      variants = []; activeVariant = -1;
-      // Force full rebuild since order count changed
-      _mainPms = []; _ringPms = [];
-    } catch (e) { console.error('[DC] delete error:', e); }
-    setTimeout(function () {
-      try { renderAll(); showToast('Точка удалена'); } catch (e) { console.error('[DC] renderAll error:', e); }
-    }, 50);
+    var idx = orders.findIndex(function (o) { return o.id === orderId; });
+    if (idx === -1) return;
+    orders.splice(idx, 1);
+    if (assignments) { assignments.splice(idx, 1); }
+    variants = []; activeVariant = -1;
+    renderAll();
+    showToast('Точка удалена');
   };
 
   window.__dc_toggleKbt = function (globalIdx) {
-    console.log('[DC] toggleKbt', globalIdx);
-    try {
-      var order = orders[globalIdx];
-      if (!order) return;
-      order.isKbt = !order.isKbt;
-      if (!order.isKbt) { order.helperDriverSlot = null; }
-    } catch (e) { console.error('[DC] toggleKbt error:', e); }
-    setTimeout(function () {
-      try { renderAll(); } catch (e) { console.error('[DC] renderAll error:', e); }
-    }, 50);
+    var order = orders[globalIdx];
+    if (!order) return;
+    order.isKbt = !order.isKbt;
+    if (!order.isKbt) { order.helperDriverSlot = null; }
+    renderAll();
   };
 
   window.__dc_setHelper = function (globalIdx, helperSlot) {
-    console.log('[DC] setHelper', globalIdx, helperSlot);
-    try {
-      var order = orders[globalIdx];
-      if (!order) return;
-      order.helperDriverSlot = helperSlot;
-    } catch (e) { console.error('[DC] setHelper error:', e); }
-    setTimeout(function () {
-      try { renderAll(); } catch (e) { console.error('[DC] renderAll error:', e); }
-    }, 50);
+    var order = orders[globalIdx];
+    if (!order) return;
+    order.helperDriverSlot = helperSlot;
+    renderAll();
   };
 
   // ─── Actions ──────────────────────────────────────────────
@@ -491,8 +400,6 @@
   function clearAll() {
     orders = []; assignments = null; variants = []; activeVariant = -1; selectedDriver = null;
     driverSlots = [];
-    // Force full rebuild on next render
-    _mainPms = []; _ringPms = [];
     clearState();
     _fitBoundsNext = true;
     renderAll();
@@ -865,7 +772,6 @@
           assignments.splice(idx, 1);
         }
         variants = []; activeVariant = -1;
-        _mainPms = []; _ringPms = []; // force full rebuild
         renderAll();
       });
     });
