@@ -30,9 +30,9 @@
 
   // ─── Fixed POI locations (ПВЗ / склады) ──────────────────
   var POI_DEFS = [
-    { id: 'pvz1', label: 'ПВЗ 1', address: 'Минск, Лобанка 89', color: '#2563eb', icon: '📦' },
-    { id: 'pvz2', label: 'ПВЗ 2', address: 'Минск, Туровского 12', color: '#7c3aed', icon: '📦' },
-    { id: 'rbdodoma', label: 'РБ Додома', address: 'Минск, Железнодорожная 33к1', color: '#ea580c', icon: '🏠' },
+    { id: 'pvz1', label: 'ПВЗ 1', short: 'П1', address: 'Минск, Притыцкого 89', color: '#2563eb' },
+    { id: 'pvz2', label: 'ПВЗ 2', short: 'П2', address: 'Минск, Туровского 12', color: '#7c3aed' },
+    { id: 'rbdodoma', label: 'РБ Додома', short: 'РБ', address: 'Минск, Железнодорожная 33к1', color: '#ea580c' },
   ];
   var poiVisible = {};   // { pvz1: true, pvz2: false, ... }
   var poiCoords = {};    // { pvz1: { lat, lng, formatted }, ... } — cached after geocode
@@ -165,14 +165,18 @@
   async function togglePoi(poiId) {
     poiVisible[poiId] = !poiVisible[poiId];
 
-    // Geocode if not cached yet
+    // Geocode if not cached yet, or if address changed
+    var def0 = POI_DEFS.find(function (p) { return p.id === poiId; });
+    if (poiVisible[poiId] && poiCoords[poiId] && def0 && poiCoords[poiId]._addr !== def0.address) {
+      poiCoords[poiId] = null; // address changed, re-geocode
+    }
     if (poiVisible[poiId] && !poiCoords[poiId]) {
       var def = POI_DEFS.find(function (p) { return p.id === poiId; });
       if (!def) return;
       try {
         showToast('Ищу адрес: ' + def.address + '...');
         var geo = await window.DistributionGeocoder.geocodeAddress(def.address);
-        poiCoords[poiId] = { lat: geo.lat, lng: geo.lng, formatted: geo.formattedAddress || def.address };
+        poiCoords[poiId] = { lat: geo.lat, lng: geo.lng, formatted: geo.formattedAddress || def.address, _addr: def.address };
       } catch (e) {
         showToast('Не найден: ' + def.address, 'error');
         poiVisible[poiId] = false;
@@ -196,20 +200,21 @@
       if (!poiVisible[def.id] || !poiCoords[def.id]) return;
       var c = poiCoords[def.id];
 
-      // Small compact square label — doesn't obscure order circles
-      var labelHtml = '<div style="background:' + def.color + ';color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.6);line-height:14px;">' + def.label + '</div>';
-      var layout = ymaps.templateLayoutFactory.createClass(labelHtml);
+      // Filled square marker, same size as order circles (~24px), dark text
+      var sqHtml = '<div style="width:24px;height:24px;border-radius:4px;background:' + def.color + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.8);">' +
+        '<span style="color:#111;font-size:10px;font-weight:800;text-shadow:0 0 3px rgba(255,255,255,.9);">' + def.short + '</span></div>';
+      var layout = ymaps.templateLayoutFactory.createClass(sqHtml);
 
       var pm = new ymaps.Placemark([c.lat, c.lng], {
         hintContent: '<b>' + def.label + '</b><br>' + c.formatted,
         balloonContentBody: '<div style="font-family:system-ui,sans-serif;padding:4px;">' +
-          '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + def.icon + ' ' + def.label + '</div>' +
+          '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + def.label + '</div>' +
           '<div style="color:#666;font-size:12px;">' + c.formatted + '</div>' +
           '</div>',
       }, {
         iconLayout: layout,
-        iconShape: { type: 'Rectangle', coordinates: [[0, 0], [50, 16]] },
-        iconOffset: [-25, -20],
+        iconShape: { type: 'Rectangle', coordinates: [[0, 0], [24, 24]] },
+        iconOffset: [-12, -12],
       });
 
       mapInstance.geoObjects.add(pm);
@@ -789,7 +794,7 @@
       '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
       POI_DEFS.map(function (def) {
         var active = !!poiVisible[def.id];
-        return '<button class="dc-poi-toggle" data-poi="' + def.id + '" style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:8px;border:2px solid ' + (active ? def.color : '#ddd') + ';background:' + (active ? def.color : '#fff') + ';color:' + (active ? '#fff' : '#666') + ';cursor:pointer;font-size:11px;font-weight:600;transition:all .15s;">' + def.icon + ' ' + def.label + '</button>';
+        return '<button class="dc-poi-toggle" data-poi="' + def.id + '" style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:8px;border:2px solid ' + (active ? def.color : '#ddd') + ';background:' + (active ? def.color : '#fff') + ';color:' + (active ? '#fff' : '#666') + ';cursor:pointer;font-size:11px;font-weight:600;transition:all .15s;"><span style="width:14px;height:14px;border-radius:3px;background:' + def.color + ';display:inline-block;flex-shrink:0;"></span>' + def.label + '</button>';
       }).join('') +
       '</div></div>' +
       variantsHtml + statsHtml +
