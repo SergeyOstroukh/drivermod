@@ -28,6 +28,16 @@
   // Привязка цвет-индекс → driver_id (driverSlots[0] = driver_id для цвета 0)
   let driverSlots = [];
 
+  // ─── Fixed POI locations (ПВЗ / склады) ──────────────────
+  var POI_DEFS = [
+    { id: 'pvz1', label: 'ПВЗ 1', address: 'Минск, Лобанка 89', color: '#2563eb', icon: '📦' },
+    { id: 'pvz2', label: 'ПВЗ 2', address: 'Минск, Туровского 12', color: '#7c3aed', icon: '📦' },
+    { id: 'rbdodoma', label: 'РБ Додома', address: 'Минск, Железнодорожная 33к1', color: '#ea580c', icon: '🏠' },
+  ];
+  var poiVisible = {};   // { pvz1: true, pvz2: false, ... }
+  var poiCoords = {};    // { pvz1: { lat, lng, formatted }, ... } — cached after geocode
+  var poiPlacemarks = []; // map placemarks for POIs
+
   // ─── DOM helpers ──────────────────────────────────────────
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
 
@@ -75,6 +85,8 @@
         driverCount: driverCount,
         activeVariant: activeVariant,
         driverSlots: driverSlots,
+        poiVisible: poiVisible,
+        poiCoords: poiCoords,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
@@ -93,6 +105,8 @@
         driverCount = data.driverCount || 3;
         activeVariant = data.activeVariant != null ? data.activeVariant : -1;
         driverSlots = data.driverSlots || [];
+        poiVisible = data.poiVisible || {};
+        poiCoords = data.poiCoords || {};
         // Ensure driverSlots has correct length
         while (driverSlots.length < driverCount) driverSlots.push(null);
         // Regenerate variants if we had assignments
@@ -146,6 +160,59 @@
   }
 
   var _fitBoundsNext = true;
+
+  // ─── POI: geocode and toggle ──────────────────────────────
+  async function togglePoi(poiId) {
+    poiVisible[poiId] = !poiVisible[poiId];
+
+    // Geocode if not cached yet
+    if (poiVisible[poiId] && !poiCoords[poiId]) {
+      var def = POI_DEFS.find(function (p) { return p.id === poiId; });
+      if (!def) return;
+      try {
+        showToast('Ищу адрес: ' + def.address + '...');
+        var geo = await window.DistributionGeocoder.geocodeAddress(def.address);
+        poiCoords[poiId] = { lat: geo.lat, lng: geo.lng, formatted: geo.formattedAddress || def.address };
+      } catch (e) {
+        showToast('Не найден: ' + def.address, 'error');
+        poiVisible[poiId] = false;
+      }
+    }
+
+    renderAll();
+  }
+
+  function _renderPoiMarkers() {
+    if (!mapInstance || !window.ymaps) return;
+    var ymaps = window.ymaps;
+
+    // Remove old POI placemarks
+    for (var i = poiPlacemarks.length - 1; i >= 0; i--) {
+      try { mapInstance.geoObjects.remove(poiPlacemarks[i]); } catch (e) {}
+    }
+    poiPlacemarks = [];
+
+    POI_DEFS.forEach(function (def) {
+      if (!poiVisible[def.id] || !poiCoords[def.id]) return;
+      var c = poiCoords[def.id];
+
+      // Use stretchy icon (label-style) — visually distinct from order circles
+      var pm = new ymaps.Placemark([c.lat, c.lng], {
+        iconContent: def.icon + ' ' + def.label,
+        hintContent: '<b>' + def.label + '</b><br>' + c.formatted,
+        balloonContentBody: '<div style="font-family:system-ui,sans-serif;padding:4px;">' +
+          '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + def.icon + ' ' + def.label + '</div>' +
+          '<div style="color:#666;font-size:12px;">' + c.formatted + '</div>' +
+          '</div>',
+      }, {
+        preset: 'islands#nightStretchyIcon',
+        iconColor: def.color,
+      });
+
+      mapInstance.geoObjects.add(pm);
+      poiPlacemarks.push(pm);
+    });
+  }
 
   function updatePlacemarks() {
     if (!mapInstance || !window.ymaps) return;
@@ -221,6 +288,9 @@
       mapInstance.setBounds(ymaps.util.bounds.fromPoints(bounds), { checkZoomRange: true, zoomMargin: 40 });
       _fitBoundsNext = false;
     }
+
+    // Render POI markers (ПВЗ / склады) on top of order markers
+    _renderPoiMarkers();
   }
 
   function buildBalloon(order, globalIdx, driverIdx) {
@@ -711,6 +781,15 @@
       (geocodedCount > 0 ? '<button class="btn btn-primary dc-btn-distribute" style="background:var(--accent);border-color:#0a3d31;color:#04211b;">Распределить</button>' : '') +
       (orders.length > 0 ? '<button class="btn btn-outline btn-sm dc-btn-clear" style="color:var(--danger);border-color:var(--danger);">Сбросить данные</button>' : '') +
       '</div></div></div>' +
+      // POI toggles (ПВЗ / склады)
+      '<div class="dc-section dc-poi-section">' +
+      '<div class="dc-section-title" style="font-size:12px;color:#888;margin-bottom:6px;">Отображение на карте</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
+      POI_DEFS.map(function (def) {
+        var active = !!poiVisible[def.id];
+        return '<button class="dc-poi-toggle" data-poi="' + def.id + '" style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:8px;border:2px solid ' + (active ? def.color : '#ddd') + ';background:' + (active ? def.color : '#fff') + ';color:' + (active ? '#fff' : '#666') + ';cursor:pointer;font-size:11px;font-weight:600;transition:all .15s;">' + def.icon + ' ' + def.label + '</button>';
+      }).join('') +
+      '</div></div>' +
       variantsHtml + statsHtml +
       driverSlotsHtml + finishHtml +
       '<div class="dc-orders-list">' + listHtml + '</div>';
@@ -738,6 +817,11 @@
     // Finish distribution
     const finishBtn = sidebar.querySelector('.dc-btn-finish');
     if (finishBtn) finishBtn.addEventListener('click', finishDistribution);
+
+    // POI toggles
+    sidebar.querySelectorAll('.dc-poi-toggle').forEach(function (btn) {
+      btn.addEventListener('click', function () { togglePoi(btn.dataset.poi); });
+    });
 
     // Driver slot selects
     sidebar.querySelectorAll('.dc-driver-select').forEach(function (sel) {
