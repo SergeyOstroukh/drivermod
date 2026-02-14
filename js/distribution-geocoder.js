@@ -324,24 +324,37 @@
     return results;
   }
 
-  // ─── Yandex Suggest (autocomplete) ───────────────────────────
-  async function suggest(query) {
+  // ─── Multi-result search (geocode with multiple results) ────
+  async function searchAddresses(query) {
     const ymaps = await loadYmaps();
-    try {
-      const items = await ymaps.suggest(query, {
-        results: 7,
-        boundedBy: MINSK_BOUNDS,
+    const result = await ymaps.geocode(query, {
+      results: 7,
+      boundedBy: MINSK_BOUNDS,
+      strictBounds: false,
+    });
+
+    const items = [];
+    var len = result.geoObjects.getLength();
+    for (var i = 0; i < len; i++) {
+      var obj = result.geoObjects.get(i);
+      var coords = obj.geometry.getCoordinates();
+      var address = obj.getAddressLine();
+      var precision = obj.properties.get('metaDataProperty.GeocoderMetaData.precision');
+      if (precision === 'other') continue;
+      items.push({
+        displayName: address,
+        lat: coords[0],
+        lng: coords[1],
+        precision: precision,
       });
-      return items || [];
-    } catch (e) {
-      return [];
     }
+    return items;
   }
 
   window.DistributionGeocoder = {
     loadYmaps: loadYmaps,
     geocodeAddress: geocodeAddress,
     geocodeOrders: geocodeOrders,
-    suggest: suggest,
+    searchAddresses: searchAddresses,
   };
 })();
