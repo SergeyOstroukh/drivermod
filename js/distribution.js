@@ -22,7 +22,6 @@
   let placemarks = [];
   let placingOrderId = null;
   let editingOrderId = null;
-  let suggestTimeout = null;
   let suggestAddingId = null; // if set, suggest replaces this order instead of adding new
 
   // Водители из БД
@@ -398,125 +397,46 @@
     }
   }
 
-  // ─── Address search dropdown (geocode-based, guaranteed to work) ──
+  // ─── Native Yandex SuggestView for address autocomplete ──────
   function initAddressSearch() {
     var input = document.getElementById('dcSuggestInput');
-    var dropdown = document.getElementById('dcSuggestDropdown');
-    if (!input || !dropdown) { console.warn('Search init: input or dropdown not found'); return; }
+    if (!input) { console.warn('Search init: input not found'); return; }
     if (input.dataset.searchInit) return;
     input.dataset.searchInit = '1';
-    console.log('Address search initialized');
 
-    // Input handler with debounce
-    input.addEventListener('input', function () {
-      clearTimeout(suggestTimeout);
-      var query = input.value.trim();
-      if (query.length < 2) {
-        dropdown.innerHTML = '';
-        dropdown.style.display = 'none';
-        return;
-      }
-      dropdown.innerHTML = '<div class="dc-suggest-loading">Ищем «' + query + '»...</div>';
-      dropdown.style.display = 'block';
-
-      suggestTimeout = setTimeout(function () {
-        doGeoSearch(query, dropdown);
-      }, 300);
-    });
-
-    // Click on result
-    dropdown.addEventListener('click', function (e) {
-      var el = e.target.closest('.dc-suggest-item');
-      if (!el) return;
-      var idx = parseInt(el.dataset.idx);
-      if (dropdown._items && dropdown._items[idx]) {
-        var sel = dropdown._items[idx];
-        input.value = '';
-        dropdown.style.display = 'none';
-        dropdown._items = null;
-        // If result has coordinates (from geocode fallback), add directly
-        if (sel.lat != null && sel.lng != null) {
-          addDirectOrder(sel.displayName, sel.lat, sel.lng);
-        } else {
-          // Suggest result — geocode the address to get coordinates
-          geocodeAndAddFromSuggest(sel.value || sel.displayName);
-        }
-      }
-    });
-
-    // Keyboard navigation
-    input.addEventListener('keydown', function (e) {
-      var items = dropdown.querySelectorAll('.dc-suggest-item');
-      if (e.key === 'Escape') { dropdown.style.display = 'none'; return; }
-      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items.length > 0) {
-        e.preventDefault();
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        var curIdx = -1;
-        if (active) { curIdx = Array.from(items).indexOf(active); active.classList.remove('active'); }
-        curIdx = e.key === 'ArrowDown' ? curIdx + 1 : curIdx - 1;
-        if (curIdx < 0) curIdx = items.length - 1;
-        if (curIdx >= items.length) curIdx = 0;
-        items[curIdx].classList.add('active');
-        items[curIdx].scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        if (active) { active.click(); }
-      }
-    });
-
-    // Close on outside click
-    document.addEventListener('click', function (e) {
-      if (!e.target.closest('.dc-suggest-wrap')) {
-        dropdown.style.display = 'none';
-      }
-    });
-  }
-
-  async function doGeoSearch(query, dropdown) {
-    console.log('Searching for:', query);
-    try {
-      // Try Yandex Suggest API first (fast autocomplete)
-      var suggestItems = [];
-      try {
-        suggestItems = await window.DistributionGeocoder.suggestAddresses(query);
-        console.log('Suggest results:', suggestItems ? suggestItems.length : 0);
-      } catch (suggestErr) {
-        console.warn('Suggest API error, falling back to geocode:', suggestErr);
-      }
-
-      if (suggestItems && suggestItems.length > 0) {
-        dropdown._items = suggestItems;
-        dropdown.innerHTML = suggestItems.map(function (it, i) {
-          return '<div class="dc-suggest-item" data-idx="' + i + '">' +
-            '<span class="dc-suggest-icon">📍</span>' +
-            '<span class="dc-suggest-text">' + escapeHtml(it.displayName) + '</span></div>';
-        }).join('');
-        dropdown.style.display = 'block';
-        return;
-      }
-
-      // Fallback to geocode-based search
-      var items = await window.DistributionGeocoder.searchAddresses(query);
-      console.log('Geocode search results:', items ? items.length : 0);
-      if (!items || items.length === 0) {
-        dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено. Попробуйте уточнить запрос.</div>';
-        return;
-      }
-      dropdown._items = items;
-      dropdown.innerHTML = items.map(function (it, i) {
-        var icon = it.precision === 'exact' ? '📍' : (it.precision === 'street' ? '🛣️' : '📌');
-        return '<div class="dc-suggest-item" data-idx="' + i + '">' +
-          '<span class="dc-suggest-icon">' + icon + '</span>' +
-          '<span class="dc-suggest-text">' + escapeHtml(it.displayName) + '</span></div>';
-      }).join('');
-      dropdown.style.display = 'block';
-    } catch (e) {
-      console.error('Geocode search error:', e);
-      dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска: ' + escapeHtml(e.message || 'неизвестная') + '</div>';
+    var ymaps = window.ymaps;
+    if (!ymaps || !ymaps.SuggestView) {
+      console.warn('ymaps.SuggestView not available');
+      return;
     }
+
+    // Create native Yandex SuggestView — Yandex draws & handles everything
+    var suggestView = new ymaps.SuggestView(input, {
+      provider: {
+        suggest: function (request) {
+          // Bias suggestions towards Belarus/Minsk
+          return ymaps.suggest('Беларусь, ' + request, {
+            boundedBy: [[53.75, 27.25], [54.15, 27.90]],
+            results: 7,
+          });
+        }
+      },
+      results: 7,
+    });
+    console.log('Yandex SuggestView initialized');
+
+    // When user selects a suggestion — geocode to get coordinates, then add
+    suggestView.events.add('select', function (e) {
+      var selectedItem = e.get('item');
+      var address = selectedItem.value;
+      console.log('SuggestView selected:', address);
+      input.value = '';
+      geocodeAndAddFromSuggest(address);
+    });
+
+    // Hide the custom dropdown (not needed with SuggestView)
+    var dropdown = document.getElementById('dcSuggestDropdown');
+    if (dropdown) dropdown.style.display = 'none';
   }
 
   async function geocodeAndAddFromSuggest(addressValue) {
