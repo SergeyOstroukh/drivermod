@@ -1778,6 +1778,84 @@ body {
 	margin-bottom: 6px;
 }
 
+/* Suggest search */
+.dc-suggest-wrap {
+	position: relative;
+}
+.dc-suggest-input {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	background: var(--bg-card);
+	color: var(--text);
+	font-size: 14px;
+	outline: none;
+	box-sizing: border-box;
+	transition: border-color 0.15s, box-shadow 0.15s;
+}
+.dc-suggest-input:focus {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+.dc-suggest-input::placeholder {
+	color: var(--muted);
+}
+.dc-suggest-dropdown {
+	display: none;
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	z-index: 100;
+	background: var(--bg-card);
+	border: 1px solid var(--border);
+	border-top: none;
+	border-radius: 0 0 8px 8px;
+	box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+	max-height: 260px;
+	overflow-y: auto;
+}
+.dc-suggest-item {
+	padding: 10px 12px;
+	font-size: 13px;
+	cursor: pointer;
+	border-bottom: 1px solid rgba(255,255,255,0.04);
+	transition: background 0.1s;
+}
+.dc-suggest-item:last-child {
+	border-bottom: none;
+}
+.dc-suggest-item:hover,
+.dc-suggest-item.active {
+	background: rgba(16, 185, 129, 0.1);
+}
+.dc-suggest-empty {
+	padding: 12px;
+	font-size: 13px;
+	color: var(--muted);
+	text-align: center;
+}
+
+/* Bulk paste toggle */
+.dc-bulk-details summary {
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+}
+.dc-bulk-details summary::-webkit-details-marker {
+	display: none;
+}
+.dc-bulk-details summary::before {
+	content: '▶ ';
+	font-size: 10px;
+	transition: transform 0.15s;
+	display: inline-block;
+}
+.dc-bulk-details[open] summary::before {
+	content: '▼ ';
+}
+
 .dc-textarea {
 	width: 100%;
 	min-height: 100px;
@@ -2018,6 +2096,15 @@ body {
 	gap: 4px;
 	align-items: center;
 	flex-shrink: 0;
+}
+.dc-del-visible {
+	opacity: 0.4;
+	transition: opacity 0.15s, color 0.15s;
+}
+.dc-del-visible:hover {
+	opacity: 1;
+	color: var(--danger) !important;
+	border-color: var(--danger) !important;
 }
 .dc-status-ok {
 	color: var(--accent);

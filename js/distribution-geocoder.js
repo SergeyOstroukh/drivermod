@@ -324,9 +324,24 @@
     return results;
   }
 
+  // ─── Yandex Suggest (autocomplete) ───────────────────────────
+  async function suggest(query) {
+    const ymaps = await loadYmaps();
+    try {
+      const items = await ymaps.suggest(query, {
+        results: 7,
+        boundedBy: MINSK_BOUNDS,
+      });
+      return items || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
   window.DistributionGeocoder = {
     loadYmaps: loadYmaps,
     geocodeAddress: geocodeAddress,
     geocodeOrders: geocodeOrders,
+    suggest: suggest,
   };
 })();

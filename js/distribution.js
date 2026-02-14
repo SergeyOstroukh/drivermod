@@ -22,6 +22,8 @@
   let placemarks = [];
   let placingOrderId = null;
   let editingOrderId = null;
+  let suggestTimeout = null;
+  let suggestAddingId = null; // if set, suggest replaces this order instead of adding new
 
   // Водители из БД
   let dbDrivers = [];
@@ -393,6 +395,122 @@
     }
   }
 
+  // ─── Suggest (Yandex-style address search) ────────────────
+  async function addAddressFromSuggest(addressValue) {
+    var geocoding = true;
+    renderAll();
+    try {
+      var geo = await window.DistributionGeocoder.geocodeAddress(addressValue);
+      if (suggestAddingId) {
+        // Replace existing failed order
+        orders = orders.map(function (o) {
+          if (o.id !== suggestAddingId) return o;
+          return Object.assign({}, o, {
+            address: addressValue, lat: geo.lat, lng: geo.lng,
+            formattedAddress: geo.formattedAddress, geocoded: true,
+            error: null, settlementOnly: geo.settlementOnly || false,
+          });
+        });
+        suggestAddingId = null;
+      } else {
+        // Add new order
+        var newOrder = {
+          id: 'order-' + Date.now() + '-' + (orders.length + 1),
+          address: addressValue,
+          phone: '', timeSlot: null,
+          geocoded: true, lat: geo.lat, lng: geo.lng,
+          formattedAddress: geo.formattedAddress,
+          error: null, settlementOnly: geo.settlementOnly || false,
+          driverIndex: -1,
+        };
+        orders.push(newOrder);
+        if (assignments) assignments.push(-1);
+      }
+      renderAll();
+      showToast(geo.settlementOnly ? 'Населённый пункт найден — уточните на карте' : 'Адрес добавлен');
+    } catch (err) {
+      showToast('Не удалось найти: ' + addressValue, 'error');
+    }
+  }
+
+  function initSuggestEvents() {
+    var input = $('#dcSuggestInput');
+    var dropdown = $('#dcSuggestDropdown');
+    if (!input || !dropdown) return;
+
+    input.addEventListener('input', function () {
+      clearTimeout(suggestTimeout);
+      var query = input.value.trim();
+      if (query.length < 3) {
+        dropdown.innerHTML = '';
+        dropdown.style.display = 'none';
+        return;
+      }
+      suggestTimeout = setTimeout(async function () {
+        try {
+          var items = await window.DistributionGeocoder.suggest(query);
+          if (items.length === 0) {
+            dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено</div>';
+            dropdown.style.display = 'block';
+            return;
+          }
+          dropdown.innerHTML = items.map(function (item, i) {
+            return '<div class="dc-suggest-item" data-idx="' + i + '" data-value="' + item.value.replace(/"/g, '&quot;') + '">' + item.displayName + '</div>';
+          }).join('');
+          dropdown.style.display = 'block';
+        } catch (e) {
+          dropdown.style.display = 'none';
+        }
+      }, 250);
+    });
+
+    dropdown.addEventListener('click', function (e) {
+      var item = e.target.closest('.dc-suggest-item');
+      if (!item) return;
+      var value = item.dataset.value;
+      input.value = '';
+      dropdown.style.display = 'none';
+      addAddressFromSuggest(value);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      var items = dropdown.querySelectorAll('.dc-suggest-item');
+      if (e.key === 'Escape') {
+        dropdown.style.display = 'none';
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (items.length === 0) return;
+        var active = dropdown.querySelector('.dc-suggest-item.active');
+        var idx = -1;
+        if (active) { idx = Array.from(items).indexOf(active); active.classList.remove('active'); }
+        idx = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
+        if (idx < 0) idx = items.length - 1;
+        if (idx >= items.length) idx = 0;
+        items[idx].classList.add('active');
+        items[idx].scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var active = dropdown.querySelector('.dc-suggest-item.active');
+        if (active) {
+          input.value = '';
+          dropdown.style.display = 'none';
+          addAddressFromSuggest(active.dataset.value);
+        }
+      }
+    });
+
+    // Close dropdown on outside click
+    document.addEventListener('click', function (e) {
+      if (!e.target.closest('.dc-suggest-wrap')) {
+        dropdown.style.display = 'none';
+      }
+    });
+  }
+
   // ─── Render ───────────────────────────────────────────────
   function renderAll() {
     renderSidebar();
@@ -541,13 +659,13 @@
           listHtml += '<div class="dc-order-actions">';
           listHtml += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
           listHtml += '<button class="btn btn-sm dc-place-btn dc-place-btn-warn" data-id="' + order.id + '" title="Уточнить точку на карте">📍 На карту</button>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить" style="opacity:0.5">✕</button>';
+          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
           listHtml += '</div>';
         } else {
           listHtml += '<div class="dc-order-actions">';
           listHtml += '<span class="dc-status-ok">✓</span>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Переместить на карте" style="opacity:0.3;font-size:11px;">📍</button>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить" style="opacity:0.3">✕</button>';
+          listHtml += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Переместить на карте">📍</button>';
+          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn dc-del-visible" data-id="' + order.id + '" title="Удалить">✕</button>';
           listHtml += '</div>';
         }
         listHtml += '</div>';
@@ -565,17 +683,28 @@
     }
 
     sidebar.innerHTML =
-      '<div class="dc-section"><div class="dc-section-title">Ввод адресов</div>' +
-      '<textarea id="dcAddressInput" class="dc-textarea" placeholder="' + (orders.length > 0 ? 'Дополнительные адреса → «+ Добавить»' : 'Вставьте адреса, каждый с новой строки\\nФормат: адрес [TAB] телефон [TAB] время') + '" ' + (isGeocoding ? 'disabled' : '') + '></textarea>' +
-      (orders.length > 0 ? '<div class="dc-info">Загружено: <strong>' + orders.length + '</strong> (найдено: ' + geocodedCount + (settlementOnlyCount > 0 ? ', <span style="color:#f59e0b;">уточнить: ' + settlementOnlyCount + '</span>' : '') + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
-      '</div>' +
-      '<div class="dc-section"><div class="dc-controls">' +
-      '<div class="dc-control-group"><label>Водителей</label><input type="number" id="dcDriverCount" class="dc-count-input" min="1" max="12" value="' + driverCount + '"></div>' +
-      '<div class="dc-buttons">' +
+      // Suggest search (Yandex-style)
+      '<div class="dc-section"><div class="dc-section-title">Поиск адреса</div>' +
+      '<div class="dc-suggest-wrap">' +
+      '<input id="dcSuggestInput" class="dc-suggest-input" placeholder="Начните вводить адрес..." autocomplete="off" />' +
+      '<div id="dcSuggestDropdown" class="dc-suggest-dropdown"></div>' +
+      '</div></div>' +
+      // Bulk paste
+      '<div class="dc-section dc-bulk-section">' +
+      '<details class="dc-bulk-details"' + (orders.length === 0 ? ' open' : '') + '>' +
+      '<summary class="dc-section-title dc-bulk-toggle">Вставить список адресов</summary>' +
+      '<textarea id="dcAddressInput" class="dc-textarea" placeholder="Вставьте адреса, каждый с новой строки\\nФормат: адрес [TAB] телефон [TAB] время" ' + (isGeocoding ? 'disabled' : '') + '></textarea>' +
+      '<div class="dc-buttons" style="margin-top:6px;">' +
       (orders.length === 0
         ? '<button class="btn btn-primary dc-btn-load" ' + (isGeocoding ? 'disabled' : '') + '>' + (isGeocoding ? '<span id="dcProgress">...</span>' : 'На карту') + '</button>'
         : '<button class="btn btn-primary dc-btn-append" ' + (isGeocoding ? 'disabled' : '') + '>' + (isGeocoding ? '<span id="dcProgress">...</span>' : '+ Добавить') + '</button><button class="btn btn-outline btn-sm dc-btn-replace" ' + (isGeocoding ? 'disabled' : '') + '>Заменить всё</button>'
       ) +
+      '</div></details></div>' +
+      // Info + controls
+      (orders.length > 0 ? '<div class="dc-info">Загружено: <strong>' + orders.length + '</strong> (найдено: ' + geocodedCount + (settlementOnlyCount > 0 ? ', <span style="color:#f59e0b;">уточнить: ' + settlementOnlyCount + '</span>' : '') + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
+      '<div class="dc-section"><div class="dc-controls">' +
+      '<div class="dc-control-group"><label>Водителей</label><input type="number" id="dcDriverCount" class="dc-count-input" min="1" max="12" value="' + driverCount + '"></div>' +
+      '<div class="dc-buttons">' +
       (geocodedCount > 0 ? '<button class="btn btn-primary dc-btn-distribute" style="background:var(--accent);border-color:#0a3d31;color:#04211b;">Распределить</button>' : '') +
       (orders.length > 0 ? '<button class="btn btn-outline btn-sm dc-btn-clear" style="color:var(--danger);border-color:var(--danger);">Сбросить данные</button>' : '') +
       '</div></div></div>' +
@@ -590,6 +719,9 @@
   function bindSidebarEvents() {
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
+
+    // Suggest input
+    initSuggestEvents();
 
     // Load / Append / Replace
     const loadBtn = sidebar.querySelector('.dc-btn-load');
