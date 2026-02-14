@@ -136,8 +136,8 @@
         showToast('Точка установлена вручную');
       });
 
-      // Initialize search with geocode-based dropdown
-      initSearch();
+      // Initialize Yandex SuggestView (native autocomplete)
+      initSuggestView();
     } catch (err) {
       console.error('Map init error:', err);
     }
@@ -398,131 +398,69 @@
     }
   }
 
-  // ─── Search with geocode-based dropdown ──────────────────
-  function initSearch() {
+  // ─── Yandex SuggestView (native autocomplete with API key) ──
+  var suggestViewInstance = null;
+
+  function initSuggestView() {
+    if (suggestViewInstance) return;
+    var input = document.getElementById('dcSuggestInput');
+    if (!input || !window.ymaps) return;
+
+    try {
+      suggestViewInstance = new ymaps.SuggestView(input, {
+        results: 7,
+        boundedBy: [[53.4, 26.5], [54.5, 28.5]],
+      });
+
+      suggestViewInstance.events.add('select', function (e) {
+        var item = e.get('item');
+        var selectedAddress = item.value;
+        setTimeout(function () { input.value = ''; }, 120);
+        addAddressFromSuggest(selectedAddress);
+      });
+
+      console.log('SuggestView initialized OK');
+    } catch (err) {
+      console.warn('SuggestView init error, falling back to geocode search:', err);
+      initSearchFallback();
+    }
+  }
+
+  // Fallback: geocode-based search if SuggestView fails
+  function initSearchFallback() {
     var input = document.getElementById('dcSuggestInput');
     var dropdown = document.getElementById('dcSuggestDropdown');
-    if (!input || !dropdown) return;
-
-    // Already initialized? (check by data attribute)
-    if (input.dataset.searchInit) return;
+    if (!input || !dropdown || input.dataset.searchInit) return;
     input.dataset.searchInit = '1';
 
     input.addEventListener('input', function () {
       clearTimeout(suggestTimeout);
       var query = input.value.trim();
-      if (query.length < 3) {
-        dropdown.innerHTML = '';
-        dropdown.style.display = 'none';
-        return;
-      }
-      // Show loading state
+      if (query.length < 3) { dropdown.innerHTML = ''; dropdown.style.display = 'none'; return; }
       dropdown.innerHTML = '<div class="dc-suggest-loading">Поиск...</div>';
       dropdown.style.display = 'block';
-
       suggestTimeout = setTimeout(async function () {
         try {
           var items = await window.DistributionGeocoder.searchAddresses(query);
-          if (items.length === 0) {
-            dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено. Попробуйте уточнить запрос.</div>';
-            return;
-          }
-          dropdown.innerHTML = items.map(function (item, i) {
-            var icon = item.precision === 'exact' ? '📍' : (item.precision === 'street' ? '🛣️' : '📌');
-            return '<div class="dc-suggest-item" data-idx="' + i + '">' +
-              '<span class="dc-suggest-icon">' + icon + '</span>' +
-              '<span class="dc-suggest-text">' + item.displayName + '</span></div>';
+          if (!items.length) { dropdown.innerHTML = '<div class="dc-suggest-empty">Ничего не найдено</div>'; return; }
+          dropdown.innerHTML = items.map(function (it, i) {
+            return '<div class="dc-suggest-item" data-idx="' + i + '">' + it.displayName + '</div>';
           }).join('');
-          // Store items for selection
           dropdown._items = items;
-        } catch (e) {
-          dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска</div>';
-        }
+        } catch (e) { dropdown.innerHTML = '<div class="dc-suggest-empty">Ошибка поиска</div>'; }
       }, 400);
     });
-
-    // Click on result
     dropdown.addEventListener('click', function (e) {
-      var item = e.target.closest('.dc-suggest-item');
-      if (!item || !dropdown._items) return;
-      var idx = parseInt(item.dataset.idx);
-      var selected = dropdown._items[idx];
-      if (!selected) return;
-      input.value = '';
-      dropdown.style.display = 'none';
-      dropdown._items = null;
-      addFromSearchResult(selected);
+      var el = e.target.closest('.dc-suggest-item');
+      if (!el || !dropdown._items) return;
+      var sel = dropdown._items[parseInt(el.dataset.idx)];
+      if (!sel) return;
+      input.value = ''; dropdown.style.display = 'none';
+      addAddressFromSuggest(sel.displayName);
     });
-
-    // Keyboard navigation
-    input.addEventListener('keydown', function (e) {
-      var items = dropdown.querySelectorAll('.dc-suggest-item');
-      if (e.key === 'Escape') { dropdown.style.display = 'none'; return; }
-      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && items.length > 0) {
-        e.preventDefault();
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        var idx = -1;
-        if (active) { idx = Array.from(items).indexOf(active); active.classList.remove('active'); }
-        idx = e.key === 'ArrowDown' ? idx + 1 : idx - 1;
-        if (idx < 0) idx = items.length - 1;
-        if (idx >= items.length) idx = 0;
-        items[idx].classList.add('active');
-        items[idx].scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        var active = dropdown.querySelector('.dc-suggest-item.active');
-        if (active && dropdown._items) {
-          var idx = parseInt(active.dataset.idx);
-          var selected = dropdown._items[idx];
-          if (selected) {
-            input.value = '';
-            dropdown.style.display = 'none';
-            dropdown._items = null;
-            addFromSearchResult(selected);
-          }
-        }
-      }
-    });
-
-    // Close dropdown on outside click
     document.addEventListener('click', function (e) {
-      if (!e.target.closest('.dc-suggest-wrap')) {
-        dropdown.style.display = 'none';
-      }
+      if (!e.target.closest('.dc-suggest-wrap')) dropdown.style.display = 'none';
     });
-  }
-
-  function addFromSearchResult(result) {
-    // Add order directly using coordinates from search result
-    var newOrder = {
-      id: 'order-' + Date.now() + '-' + (orders.length + 1),
-      address: result.displayName,
-      phone: '', timeSlot: null,
-      geocoded: true,
-      lat: result.lat, lng: result.lng,
-      formattedAddress: result.displayName,
-      error: null, settlementOnly: false,
-      driverIndex: -1,
-    };
-
-    if (suggestAddingId) {
-      orders = orders.map(function (o) {
-        if (o.id !== suggestAddingId) return o;
-        return Object.assign({}, o, {
-          address: result.displayName, lat: result.lat, lng: result.lng,
-          formattedAddress: result.displayName, geocoded: true,
-          error: null, settlementOnly: false,
-        });
-      });
-      suggestAddingId = null;
-    } else {
-      orders.push(newOrder);
-      if (assignments) assignments.push(-1);
-    }
-    renderAll();
-    showToast('Адрес добавлен');
   }
 
   async function addAddressFromSuggest(addressValue) {

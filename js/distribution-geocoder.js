@@ -6,7 +6,7 @@
 (() => {
   "use strict";
 
-  const YMAPS_SRC = 'https://api-maps.yandex.ru/2.1/?lang=ru_RU';
+  const YMAPS_SRC = 'https://api-maps.yandex.ru/2.1/?apikey=8c44c726-c732-45f2-94ac-af2cf0bb0181&lang=ru_RU&suggest_apikey=8c44c726-c732-45f2-94ac-af2cf0bb0181';
   const MINSK_BOUNDS = [[53.75, 27.25], [54.15, 27.90]];
 
   function loadYmaps() {
