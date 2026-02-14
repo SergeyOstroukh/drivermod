@@ -196,17 +196,20 @@
       if (!poiVisible[def.id] || !poiCoords[def.id]) return;
       var c = poiCoords[def.id];
 
-      // Use stretchy icon (label-style) — visually distinct from order circles
+      // Small compact square label — doesn't obscure order circles
+      var labelHtml = '<div style="background:' + def.color + ';color:#fff;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.6);line-height:14px;">' + def.label + '</div>';
+      var layout = ymaps.templateLayoutFactory.createClass(labelHtml);
+
       var pm = new ymaps.Placemark([c.lat, c.lng], {
-        iconContent: def.icon + ' ' + def.label,
         hintContent: '<b>' + def.label + '</b><br>' + c.formatted,
         balloonContentBody: '<div style="font-family:system-ui,sans-serif;padding:4px;">' +
           '<div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + def.icon + ' ' + def.label + '</div>' +
           '<div style="color:#666;font-size:12px;">' + c.formatted + '</div>' +
           '</div>',
       }, {
-        preset: 'islands#nightStretchyIcon',
-        iconColor: def.color,
+        iconLayout: layout,
+        iconShape: { type: 'Rectangle', coordinates: [[0, 0], [50, 16]] },
+        iconOffset: [-25, -20],
       });
 
       mapInstance.geoObjects.add(pm);
@@ -289,8 +292,6 @@
       _fitBoundsNext = false;
     }
 
-    // Render POI markers (ПВЗ / склады) on top of order markers
-    _renderPoiMarkers();
   }
 
   function buildBalloon(order, globalIdx, driverIdx) {
@@ -586,8 +587,9 @@
   function renderAll() {
     renderSidebar();
     updatePlacemarks();
+    _renderPoiMarkers(); // always render POIs, even when no orders exist
     saveState();
-    const mapContainer = $('#distributionMap');
+    var mapContainer = $('#distributionMap');
     if (mapContainer) mapContainer.style.cursor = placingOrderId ? 'crosshair' : '';
   }
 
