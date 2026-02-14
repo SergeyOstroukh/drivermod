@@ -40,8 +40,9 @@
     clean = clean.replace(/,?\s*эт(?:аж)?\.?\s*\d*/gi, '');
     clean = clean.replace(/,?\s*корп\.?\s*(?:\d*)/gi, '');
     clean = clean.replace(/,?\s*чд\b/gi, '');
-    clean = clean.replace(/,\s*,/g, ',');
+    clean = clean.replace(/(?:,\s*){2,}/g, ',');  // multiple commas → single
     clean = clean.replace(/,\s*$/, '');
+    clean = clean.replace(/^\s*,/, '');
     clean = clean.replace(/\s+/g, ' ');
     return clean.trim();
   }

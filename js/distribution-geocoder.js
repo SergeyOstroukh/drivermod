@@ -69,8 +69,35 @@
     } catch (e) { return null; }
   }
 
+  // ─── Address normalization ──────────────────────────────────
+  // Converts non-standard abbreviations to full words for better geocoding
+  function normalizeAddress(address) {
+    let s = address;
+    // проспект: п-кт, пр-кт, п.кт, пр.кт
+    s = s.replace(/п[\-\.]кт\.?(?=\s|,|$)/gi, 'проспект');
+    s = s.replace(/пр[\-\.]кт\.?(?=\s|,|$)/gi, 'проспект');
+    // проезд: пр-д, пр.д
+    s = s.replace(/пр[\-\.]д\.?(?=\s|,|$)/gi, 'проезд');
+    // переулок: пер-к, пер.к
+    s = s.replace(/пер[\-\.]к\.?(?=\s|,|$)/gi, 'переулок');
+    // бульвар: б-р, б.р
+    s = s.replace(/б[\-\.]р\.?(?=\s|,|$)/gi, 'бульвар');
+    // тракт: тр-т, тр.т
+    s = s.replace(/тр[\-\.]т\.?(?=\s|,|$)/gi, 'тракт');
+    // шоссе: ш.
+    s = s.replace(/ш\.(?=\s)/gi, 'шоссе');
+    // набережная: наб.
+    s = s.replace(/наб\.(?=\s)/gi, 'набережная');
+    // площадь: пл.
+    s = s.replace(/пл\.(?=\s)/gi, 'площадь');
+    // микрорайон: мкр., мкрн.
+    s = s.replace(/мкр(?:н)?\.(?=\s)/gi, 'микрорайон');
+    return s;
+  }
+
   // ─── Settlement extraction ──────────────────────────────────
   // Extracts settlement name from address like "Прилуки, ул. Центральная 5"
+  // or "аг.Самохваловичи, Калинина 31"
   function extractSettlement(address) {
     let s = address;
     // Remove country/region prefixes
@@ -80,10 +107,11 @@
     s = s.trim();
 
     // Remove settlement type prefix (д., п., г., аг., дер., пос.)
-    s = s.replace(/^(?:д\.?\s+|дер\.?\s+|п\.?\s+|пос\.?\s+|г\.?\s+|гор\.?\s+|аг\.?\s+|с\.?\s+)/i, '').trim();
+    // Supports both "аг. Самохваловичи" and "аг.Самохваловичи" (dot without space)
+    s = s.replace(/^(?:(?:д|дер|п|пос|г|гор|аг|с)(?:\.\s*|\s+)|(?:деревня|посёлок|поселок|город|село|агрогородок)\s+)/i, '').trim();
 
-    // Find where street part begins
-    const streetRegex = /(?:,\s*)?(?:ул\.?\s|улица\s|пр[\.\-]т?\s|проспект\s|бульвар\s|б[\.\-]р\.?\s|пер\.?\s|переулок\s|тр[\.\-]т\s|тракт\s|шоссе\s|\d+[\-\s]?(?:й|я|е|ой|ая|ое)\s)/i;
+    // Find where street part begins (expanded regex with all abbreviation forms)
+    const streetRegex = /(?:,\s*)?(?:ул\.?\s|улица\s|пр[\.\-]т?\s|п[\.\-]кт\.?\s|пр[\.\-]кт\.?\s|проспект\s|проезд\s|пр[\.\-]д\.?\s|бульвар\s|б[\.\-]р\.?\s|пер[\.\-]?к?\.?\s|переулок\s|тр[\.\-]т\.?\s|тракт\s|шоссе\s|ш\.\s|набережная\s|наб\.?\s|площадь\s|пл\.?\s|микрорайон\s|мкр(?:н)?\.?\s|\d+[\-\s]?(?:й|я|е|ой|ая|ое)\s)/i;
     const streetMatch = s.match(streetRegex);
 
     if (streetMatch && streetMatch.index > 0) {
@@ -93,7 +121,7 @@
       }
     }
 
-    // Try comma separator
+    // Try comma separator: "Самохваловичи, Калинина 31"
     const commaIdx = s.indexOf(',');
     if (commaIdx > 1) {
       const before = s.substring(0, commaIdx).trim();
@@ -166,6 +194,8 @@
       fullQueries.push('Беларусь, Минский район, ' + settlement + ', ' + streetPart);
     }
     fullQueries.push('Беларусь, Минский район, ' + cleanAddress);
+    // Also try the raw address — Yandex has built-in typo tolerance
+    fullQueries.push(cleanAddress);
 
     // Try with strict bounds first (only results within settlement area)
     for (const q of fullQueries) {
@@ -199,9 +229,9 @@
   // ─── Address helpers ────────────────────────────────────────
   function simplifyAddress(address) {
     let s = address.replace(/^(минск|беларусь)[,\s]*/i, '').trim();
-    const match = s.match(/((?:ул\.?|улица|пр-т|пр\.?|проспект|бульвар|б-р|пер\.?|переулок|тр-т|тракт)\s*[А-Яа-яёЁ\s\.\-]+?\s+\d+[а-яА-Я]?)\b/i);
+    const match = s.match(/((?:ул\.?|улица|пр-т|пр\.?|проспект|проезд|бульвар|б-р|пер\.?|переулок|тр-т|тракт|шоссе|площадь|набережная)\s*[А-Яа-яёЁ\s\.\-«»]+?\s+\d+[а-яА-Я]?)\b/i);
     if (match) return match[1].trim();
-    const match2 = s.match(/^([А-Яа-яёЁ][А-Яа-яёЁа-я\s\.\-]+?\s+\d+[а-яА-Я]?)\b/);
+    const match2 = s.match(/^([А-Яа-яёЁ][А-Яа-яёЁа-я\s\.\-«»]+?\s+\d+[а-яА-Я]?)\b/);
     if (match2) return match2[1].trim();
     return s;
   }
@@ -216,33 +246,46 @@
   // ─── Main geocoding entry point ─────────────────────────────
   async function geocodeAddress(rawAddress) {
     const cleanAddress = window.DistributionParser.cleanAddressForGeocoding(rawAddress);
+    // Normalize non-standard abbreviations (пр-д → проезд, п-кт → проспект, etc.)
+    const normalized = normalizeAddress(cleanAddress);
 
-    const isMinskRegion = /минск(ий|ого|ому)/i.test(cleanAddress) ||
-      /прилуки|копище|богатырёво|богатырево|лесной|сеница|боровляны|колодищи|заславль|фаниполь|ратомка|тарасово|озерцо|щомыслица|новый\s*двор|атолино|хатежино|дзержинск|столбцы|смолевичи|жодино|логойск|руденск|михановичи|привольный|сосны|зелёный\s*бор|зеленый\s*бор|луговая\s*слобода|лесковка|большевик|мачулищи|гатово|чуриловичи|колядичи|паперня|самохваловичи|fanipol|borovlyany/i.test(cleanAddress);
-    const hasMinsk = /минск/i.test(cleanAddress);
+    const isMinskRegion = /минск(ий|ого|ому)/i.test(normalized) ||
+      /прилуки|копище|богатырёво|богатырево|лесной|сеница|боровляны|колодищи|заславль|фаниполь|ратомка|тарасово|озерцо|щомыслица|новый\s*двор|атолино|хатежино|дзержинск|столбцы|смолевичи|жодино|логойск|руденск|михановичи|привольный|сосны|зелёный\s*бор|зеленый\s*бор|луговая\s*слобода|лесковка|большевик|мачулищи|гатово|чуриловичи|колядичи|паперня|самохваловичи|fanipol|borovlyany/i.test(normalized);
+    const hasMinsk = /минск/i.test(normalized);
 
     // For regional addresses: two-step geocoding (settlement first, then street)
     if (isMinskRegion) {
       try {
-        const regional = await geocodeRegional(cleanAddress);
+        const regional = await geocodeRegional(normalized);
         if (regional) return regional;
       } catch (e) { /* fall through to standard geocoding */ }
     }
 
-    // Standard geocoding
+    // Standard geocoding — build query list from most specific to broadest
     const queries = [];
     if (isMinskRegion) {
-      queries.push('Беларусь, Минский район, ' + cleanAddress);
-      queries.push(cleanAddress);
+      queries.push('Беларусь, Минский район, ' + normalized);
+      queries.push(normalized);
     } else if (hasMinsk) {
-      queries.push('Беларусь, ' + cleanAddress);
-      queries.push(cleanAddress);
+      queries.push('Беларусь, ' + normalized);
+      queries.push(normalized);
     } else {
-      queries.push('Минск, ' + cleanAddress);
-      queries.push('Беларусь, Минск, ' + cleanAddress);
+      queries.push('Минск, ' + normalized);
+      queries.push('Беларусь, Минск, ' + normalized);
     }
-    const simplified = simplifyAddress(cleanAddress);
-    if (simplified !== cleanAddress) queries.push('Минск, ' + simplified);
+    const simplified = simplifyAddress(normalized);
+    if (simplified !== normalized) queries.push('Минск, ' + simplified);
+
+    // Also try the original cleaned address (before normalization) as fallback
+    if (normalized !== cleanAddress) {
+      queries.push(cleanAddress);
+    }
+
+    // Fallback: raw address without any prefix — lets Yandex use its own
+    // typo tolerance and fuzzy matching to the fullest
+    if (!hasMinsk && !isMinskRegion) {
+      queries.push(normalized);
+    }
 
     for (const q of queries) {
       try { const r = await yandexGeocode(q); if (r) return r; } catch (e) { /* continue */ }
@@ -250,7 +293,7 @@
     for (const q of queries) {
       const r = await nominatimGeocode(q); if (r) return r;
     }
-    const streetOnly = extractStreetName(cleanAddress);
+    const streetOnly = extractStreetName(normalized);
     if (streetOnly) {
       try { const r = await yandexGeocode('Минск, ' + streetOnly); if (r) return r; } catch (e) { /* ignore */ }
     }
