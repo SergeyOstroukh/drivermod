@@ -550,6 +550,7 @@
     if (!textarea) return;
     const text = textarea.value.trim();
     if (!text) { showToast('Вставьте названия поставщиков', 'error'); return; }
+    try {
 
     // Parse supplier names (one per line)
     const names = text.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l.length > 0; });
@@ -560,6 +561,7 @@
     renderAll();
     await loadDbSuppliers();
 
+    var prevAssignments = append ? assignments : null;
     if (!append) {
       // Remove only supplier orders, keep address orders
       var keepOrders = [];
@@ -673,15 +675,21 @@
     if (prevAssignments) {
       assignments = prevAssignments.slice();
       for (var a = 0; a < supplierOrders.length; a++) assignments.push(-1);
-    } else {
+    } else if (!append) {
+      // Reset distribution since we replaced suppliers
       assignments = null; variants = []; activeVariant = -1;
     }
 
     _fitBoundsNext = true;
-    isLoadingSuppliers = false;
     textarea.value = '';
-    renderAll();
     showToast('Поставщики: найдено ' + found + (notFound > 0 ? ', не найдено: ' + notFound : ''), notFound > 0 ? 'error' : undefined);
+    } catch (err) {
+      console.error('loadSuppliers error:', err);
+      showToast('Ошибка загрузки поставщиков: ' + err.message, 'error');
+    } finally {
+      isLoadingSuppliers = false;
+      renderAll();
+    }
   }
 
   // ─── Create supplier from distribution ─────────────────────
