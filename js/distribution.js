@@ -490,6 +490,11 @@
     driverSlots = [];
     clearState();
     _fitBoundsNext = true;
+    // Explicitly clear all markers from the map
+    if (mapInstance) {
+      try { mapInstance.geoObjects.removeAll(); } catch (e) {}
+    }
+    placemarks = [];
     renderAll();
     showToast('Данные карты сброшены');
   }
