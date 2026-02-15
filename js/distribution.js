@@ -25,6 +25,9 @@
 
   // Водители из БД
   let dbDrivers = [];
+  // Поставщики из БД (кэш)
+  let dbSuppliers = [];
+  let isLoadingSuppliers = false;
   // Привязка цвет-индекс → driver_id (driverSlots[0] = driver_id для цвета 0)
   let driverSlots = [];
 
@@ -58,6 +61,35 @@
       console.warn('Failed to load drivers:', e);
       dbDrivers = [];
     }
+  }
+
+  // ─── Load suppliers from DB ───────────────────────────────
+  async function loadDbSuppliers() {
+    try {
+      if (window.SuppliersDB && window.SuppliersDB.getAllWithId) {
+        dbSuppliers = await window.SuppliersDB.getAllWithId();
+      }
+    } catch (e) {
+      console.warn('Failed to load suppliers:', e);
+      dbSuppliers = [];
+    }
+  }
+
+  // Normalize string for fuzzy matching
+  function normalizeName(s) {
+    return s.toLowerCase().replace(/ё/g, 'е').replace(/[«»"""'']/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  // Find supplier in DB by name (case-insensitive, partial match)
+  function findSupplierInDb(name) {
+    const n = normalizeName(name);
+    if (!n) return null;
+    // Exact match first
+    var exact = dbSuppliers.find(function (s) { return normalizeName(s.name) === n; });
+    if (exact) return exact;
+    // Contains match
+    var partial = dbSuppliers.find(function (s) { return normalizeName(s.name).includes(n) || n.includes(normalizeName(s.name)); });
+    return partial || null;
   }
 
   function getDriverName(slotIdx) {
@@ -237,10 +269,11 @@
       var driverIdx = assignments ? assignments[globalIdx] : -1;
       var isVisible = selectedDriver === null || driverIdx === selectedDriver;
       var isSettlementOnly = order.settlementOnly;
-      var defaultColor = isSettlementOnly ? '#f59e0b' : '#3b82f6';
+      var defaultColor = isSettlementOnly ? '#f59e0b' : (order.isSupplier ? '#10b981' : '#3b82f6');
       var color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : defaultColor;
 
       var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
+        (order.isSupplier ? '<br><span style="color:#10b981;font-size:11px;">Поставщик</span>' : '') +
         (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
         (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
         (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ</span>' : '');
@@ -260,6 +293,21 @@
           iconLayout: sqLayout,
           iconShape: { type: 'Rectangle', coordinates: [[0, 0], [24, 24]] },
           iconOffset: [-12, -12],
+        });
+      } else if (order.isSupplier) {
+        // Supplier: diamond-shaped marker
+        var supColor = driverIdx >= 0 ? color : '#10b981';
+        var supOpacity = isVisible ? 1 : 0.25;
+        var supHtml = '<div style="width:26px;height:26px;transform:rotate(45deg);border-radius:4px;background:' + supColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.9);opacity:' + supOpacity + ';">' +
+          '<span style="transform:rotate(-45deg);color:#fff;font-size:10px;font-weight:800;">П</span></div>';
+        var supLayout = ymaps.templateLayoutFactory.createClass(supHtml);
+        pm = new ymaps.Placemark([order.lat, order.lng], {
+          balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
+          hintContent: hintHtml,
+        }, {
+          iconLayout: supLayout,
+          iconShape: { type: 'Rectangle', coordinates: [[0, 0], [26, 26]] },
+          iconOffset: [-13, -13],
         });
       } else {
         // Regular order: circle icon
@@ -434,6 +482,171 @@
       isGeocoding = false;
       textarea.value = '';
       renderAll();
+    }
+  }
+
+  // ─── Supplier loading ────────────────────────────────────
+  async function loadSuppliers(append) {
+    const textarea = $('#dcSupplierInput');
+    if (!textarea) return;
+    const text = textarea.value.trim();
+    if (!text) { showToast('Вставьте названия поставщиков', 'error'); return; }
+
+    // Parse supplier names (one per line)
+    const names = text.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l.length > 0; });
+    if (names.length === 0) { showToast('Не найдено поставщиков', 'error'); return; }
+
+    // Reload suppliers from DB to have fresh data
+    isLoadingSuppliers = true;
+    renderAll();
+    await loadDbSuppliers();
+
+    if (!append) {
+      // Remove only supplier orders, keep address orders
+      var keepOrders = [];
+      var keepAssignments = [];
+      for (var k = 0; k < orders.length; k++) {
+        if (!orders[k].isSupplier) {
+          keepOrders.push(orders[k]);
+          if (assignments) keepAssignments.push(assignments[k]);
+        }
+      }
+      orders = keepOrders;
+      assignments = keepAssignments.length > 0 ? keepAssignments : null;
+      variants = []; activeVariant = -1;
+    }
+
+    var found = 0, notFound = 0, needGeocode = [];
+    var supplierOrders = [];
+    var orderCounter = Date.now();
+
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i].replace(/^\d+[\.):\-\s]+\s*/, '').trim();
+      if (!name) continue;
+      orderCounter++;
+      var supplier = findSupplierInDb(name);
+
+      if (supplier && supplier.lat && supplier.lon) {
+        // Found in DB with coordinates
+        found++;
+        supplierOrders.push({
+          id: 'supplier-' + orderCounter + '-' + i,
+          address: supplier.name,
+          phone: '',
+          timeSlot: null,
+          geocoded: true,
+          lat: supplier.lat,
+          lng: supplier.lon,
+          formattedAddress: supplier.address || (supplier.lat + ', ' + supplier.lon),
+          error: null,
+          isSupplier: true,
+          supplierDbId: supplier.id,
+          supplierName: supplier.name,
+          supplierData: supplier,
+        });
+      } else if (supplier && (!supplier.lat || !supplier.lon)) {
+        // Found but no coordinates — needs geocoding
+        notFound++;
+        supplierOrders.push({
+          id: 'supplier-' + orderCounter + '-' + i,
+          address: name,
+          phone: '',
+          timeSlot: null,
+          geocoded: false,
+          lat: null,
+          lng: null,
+          formattedAddress: null,
+          error: 'Нет координат в базе',
+          isSupplier: true,
+          supplierDbId: supplier.id,
+          supplierName: supplier.name,
+          supplierData: supplier,
+        });
+        needGeocode.push(supplierOrders[supplierOrders.length - 1]);
+      } else {
+        // Not found in DB
+        notFound++;
+        supplierOrders.push({
+          id: 'supplier-' + orderCounter + '-' + i,
+          address: name,
+          phone: '',
+          timeSlot: null,
+          geocoded: false,
+          lat: null,
+          lng: null,
+          formattedAddress: null,
+          error: 'Не найден в базе',
+          isSupplier: true,
+          supplierDbId: null,
+          supplierName: name,
+          supplierData: null,
+        });
+      }
+    }
+
+    // Geocode suppliers that have address in DB but no coordinates
+    for (var g = 0; g < needGeocode.length; g++) {
+      var so = needGeocode[g];
+      var addr = so.supplierData && so.supplierData.address ? so.supplierData.address : so.address;
+      try {
+        var geo = await window.DistributionGeocoder.geocodeAddress(addr);
+        so.lat = geo.lat;
+        so.lng = geo.lng;
+        so.formattedAddress = geo.formattedAddress;
+        so.geocoded = true;
+        so.error = null;
+        found++;
+        notFound--;
+      } catch (e) { /* keep as not found */ }
+    }
+
+    // Add supplier orders to main orders array
+    orders = orders.concat(supplierOrders);
+    if (prevAssignments) {
+      assignments = prevAssignments.slice();
+      for (var a = 0; a < supplierOrders.length; a++) assignments.push(-1);
+    } else {
+      assignments = null; variants = []; activeVariant = -1;
+    }
+
+    _fitBoundsNext = true;
+    isLoadingSuppliers = false;
+    textarea.value = '';
+    renderAll();
+    showToast('Поставщики: найдено ' + found + (notFound > 0 ? ', не найдено: ' + notFound : ''), notFound > 0 ? 'error' : undefined);
+  }
+
+  // ─── Create supplier from distribution ─────────────────────
+  async function createSupplierFromOrder(orderId) {
+    var order = orders.find(function (o) { return o.id === orderId; });
+    if (!order || !order.isSupplier) return;
+
+    if (!order.geocoded || !order.lat || !order.lng) {
+      showToast('Сначала укажите координаты (геокодируйте или поставьте на карту)', 'error');
+      return;
+    }
+
+    try {
+      var newSupplier = {
+        name: order.supplierName || order.address,
+        lat: order.lat,
+        lon: order.lng,
+        address: order.formattedAddress || order.address,
+      };
+      var result = await window.SuppliersDB.add(newSupplier);
+      // Refresh cache
+      await loadDbSuppliers();
+      // Update order with DB info
+      var created = dbSuppliers.find(function (s) { return normalizeName(s.name) === normalizeName(newSupplier.name); });
+      if (created) {
+        order.supplierDbId = created.id;
+        order.supplierData = created;
+        order.error = null;
+      }
+      renderAll();
+      showToast('Поставщик «' + newSupplier.name + '» создан в базе');
+    } catch (err) {
+      showToast('Ошибка создания: ' + err.message, 'error');
     }
   }
 
@@ -620,9 +833,106 @@
     if (mapContainer) mapContainer.style.cursor = placingOrderId ? 'crosshair' : '';
   }
 
+  function renderOrderItem(order, idx) {
+    const dIdx = assignments ? assignments[idx] : -1;
+    const color = dIdx >= 0 ? COLORS[dIdx % COLORS.length] : '';
+    const isFailed = !order.geocoded && order.error;
+    const isSettlementOnly = order.geocoded && order.settlementOnly;
+    const isEditing = editingOrderId === order.id;
+    const isPlacing = placingOrderId === order.id;
+    const safeId = order.id.replace(/[^a-zA-Z0-9\-]/g, '');
+
+    let itemClass = 'dc-order-item';
+    if (isFailed) itemClass += ' failed';
+    if (isSettlementOnly) itemClass += ' settlement-only';
+    if (isPlacing) itemClass += ' placing';
+
+    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (dIdx >= 0 ? 'border-left-color:' + color : '') + '">';
+    var numBg;
+    if (order.isPoi) {
+      numBg = 'background:' + (dIdx >= 0 ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
+    } else if (order.isSupplier) {
+      numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
+    } else {
+      numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
+    }
+    var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (idx + 1));
+    html += '<div class="dc-order-num" style="' + numBg + '">' + numLabel + '</div>';
+    html += '<div class="dc-order-info"><div class="dc-order-addr">' + order.address + '</div>';
+    if (order.timeSlot || order.phone) {
+      html += '<div class="dc-order-meta">';
+      if (order.timeSlot) html += '<span>⏰ ' + order.timeSlot + '</span> ';
+      if (order.phone) html += '<span>📞 ' + order.phone + '</span>';
+      html += '</div>';
+    }
+    if (order.formattedAddress) html += '<div class="dc-order-faddr">📍 ' + order.formattedAddress + '</div>';
+    if (isSettlementOnly) {
+      html += '<div class="dc-order-warn">⚠ Найден только населённый пункт — уточните точку на карте</div>';
+    }
+    if (order.isSupplier && order.supplierDbId) {
+      html += '<div style="font-size:10px;color:#10b981;margin-top:1px;">В базе</div>';
+    } else if (order.isSupplier && !order.supplierDbId) {
+      html += '<div style="font-size:10px;color:#ef4444;margin-top:1px;">Не найден в базе</div>';
+    }
+    if (dIdx >= 0) {
+      const driverName = getDriverName(dIdx);
+      html += '<div class="dc-order-driver" style="color:' + color + ';">👤 ' + driverName + '</div>';
+    }
+    if (order.isKbt) {
+      var helperName = order.helperDriverSlot != null ? getDriverName(order.helperDriverSlot) : '?';
+      var helperColor = order.helperDriverSlot != null ? COLORS[order.helperDriverSlot % COLORS.length] : '#a855f7';
+      html += '<div class="dc-order-kbt" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
+      html += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;">КБТ +1</span>';
+      html += '<span style="font-size:11px;color:' + helperColor + ';">помощник: ' + helperName + '</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Actions
+    if (isFailed) {
+      html += '<div class="dc-order-actions">';
+      html += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
+      html += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Поставить на карте">📍</button>';
+      if (order.isSupplier && !order.supplierDbId && order.geocoded) {
+        html += '<button class="btn btn-outline btn-sm dc-create-supplier-btn" data-id="' + order.id + '" title="Создать поставщика в базе" style="color:#10b981;border-color:#10b981;font-size:10px;">+ В базу</button>';
+      }
+      html += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
+      html += '</div>';
+    } else if (isSettlementOnly) {
+      html += '<div class="dc-order-actions">';
+      html += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
+      html += '<button class="btn btn-sm dc-place-btn dc-place-btn-warn" data-id="' + order.id + '" title="Уточнить точку на карте">📍 На карту</button>';
+      html += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
+      html += '</div>';
+    } else {
+      html += '<div class="dc-order-actions">';
+      html += '<span class="dc-status-ok">✓</span>';
+      if (order.isSupplier && !order.supplierDbId) {
+        html += '<button class="btn btn-outline btn-sm dc-create-supplier-btn" data-id="' + order.id + '" title="Создать поставщика в базе" style="color:#10b981;border-color:#10b981;font-size:10px;">+ В базу</button>';
+      }
+      html += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Переместить на карте">📍</button>';
+      html += '<button class="btn btn-outline btn-sm dc-del-btn dc-del-visible" data-id="' + order.id + '" title="Удалить">✕</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    // Edit row
+    if (isEditing) {
+      html += '<div class="dc-edit-row"><input class="dc-edit-input" id="dcEditInput-' + safeId + '" value="' + order.address.replace(/"/g, '&quot;') + '" placeholder="Новый адрес..."><button class="btn btn-primary btn-sm dc-retry-btn" data-id="' + order.id + '">Найти</button><button class="btn btn-outline btn-sm dc-cancel-edit" data-id="' + order.id + '">✕</button></div>';
+    }
+    if (isPlacing) {
+      html += '<div class="dc-edit-row" style="color:var(--accent);font-size:12px;">👆 Кликните на карту для установки точки <button class="btn btn-outline btn-sm dc-cancel-place">Отмена</button></div>';
+    }
+    return html;
+  }
+
   function renderSidebar() {
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
+
+    const allOrders = orders.map(function (o, i) { return Object.assign({}, o, { globalIndex: i }); });
+    const supplierItems = allOrders.filter(function (o) { return o.isSupplier; });
+    const addressItems = allOrders.filter(function (o) { return !o.isSupplier; });
 
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     const failedCount = orders.filter(function (o) { return !o.geocoded && o.error; }).length;
@@ -636,7 +946,7 @@
         const c = COLORS[d % COLORS.length];
         const currentDriverId = driverSlots[d] || '';
         const count = assignments.filter(function (a) { return a === d; }).length;
-        if (count === 0) continue; // Skip empty slots
+        if (count === 0) continue;
 
         driverSlotsHtml += '<div class="dc-driver-slot">';
         driverSlotsHtml += '<span class="dc-dot-lg" style="background:' + c + '"></span>';
@@ -644,7 +954,6 @@
         driverSlotsHtml += '<option value="">-- Выберите водителя --</option>';
         dbDrivers.forEach(function (dr) {
           const sel = dr.id == currentDriverId ? ' selected' : '';
-          // Check if this driver is already assigned to another slot
           const usedInOther = driverSlots.some(function (sid, si) { return si !== d && sid === dr.id; });
           driverSlotsHtml += '<option value="' + dr.id + '"' + sel + (usedInOther ? ' disabled' : '') + '>' + dr.name + (usedInOther ? ' (занят)' : '') + '</option>';
         });
@@ -696,7 +1005,6 @@
     // Finish button
     let finishHtml = '';
     if (assignments) {
-      // Check if all used slots have drivers
       const usedSlots = new Set();
       assignments.forEach(function (a) { if (a >= 0) usedSlots.add(a); });
       let allAssigned = true;
@@ -708,114 +1016,72 @@
         'Завершить распределение</button></div>';
     }
 
-    // Orders list
-    let listHtml = '';
-    const displayOrders = orders.map(function (o, i) { return Object.assign({}, o, { globalIndex: i }); });
-    const filtered = selectedDriver !== null ? displayOrders.filter(function (o) { return assignments && assignments[o.globalIndex] === selectedDriver; }) : displayOrders;
-
-    if (filtered.length > 0) {
-      filtered.forEach(function (order) {
-        const dIdx = assignments ? assignments[order.globalIndex] : -1;
-        const color = dIdx >= 0 ? COLORS[dIdx % COLORS.length] : '';
-        const isFailed = !order.geocoded && order.error;
-        const isSettlementOnly = order.geocoded && order.settlementOnly;
-        const isEditing = editingOrderId === order.id;
-        const isPlacing = placingOrderId === order.id;
-        const safeId = order.id.replace(/[^a-zA-Z0-9\-]/g, '');
-
-        let itemClass = 'dc-order-item';
-        if (isFailed) itemClass += ' failed';
-        if (isSettlementOnly) itemClass += ' settlement-only';
-        if (isPlacing) itemClass += ' placing';
-
-        listHtml += '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (dIdx >= 0 ? 'border-left-color:' + color : '') + '">';
-        var numBg;
-        if (order.isPoi) {
-          numBg = 'background:' + (dIdx >= 0 ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
-        } else {
-          numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
-        }
-        listHtml += '<div class="dc-order-num" style="' + numBg + '">' + (order.isPoi ? (order.poiShort || 'П') : (order.globalIndex + 1)) + '</div>';
-        listHtml += '<div class="dc-order-info"><div class="dc-order-addr">' + order.address + '</div>';
-        if (order.timeSlot || order.phone) {
-          listHtml += '<div class="dc-order-meta">';
-          if (order.timeSlot) listHtml += '<span>⏰ ' + order.timeSlot + '</span> ';
-          if (order.phone) listHtml += '<span>📞 ' + order.phone + '</span>';
-          listHtml += '</div>';
-        }
-        if (order.formattedAddress) listHtml += '<div class="dc-order-faddr">📍 ' + order.formattedAddress + '</div>';
-        if (isSettlementOnly) {
-          listHtml += '<div class="dc-order-warn">⚠ Найден только населённый пункт — уточните точку на карте</div>';
-        }
-        if (dIdx >= 0) {
-          const driverName = getDriverName(dIdx);
-          listHtml += '<div class="dc-order-driver" style="color:' + color + ';">👤 ' + driverName + '</div>';
-        }
-        if (order.isKbt) {
-          var helperName = order.helperDriverSlot != null ? getDriverName(order.helperDriverSlot) : '?';
-          var helperColor = order.helperDriverSlot != null ? COLORS[order.helperDriverSlot % COLORS.length] : '#a855f7';
-          listHtml += '<div class="dc-order-kbt" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
-          listHtml += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;">КБТ +1</span>';
-          listHtml += '<span style="font-size:11px;color:' + helperColor + ';">помощник: ' + helperName + '</span>';
-          listHtml += '</div>';
-        }
-        listHtml += '</div>';
-
-        // Actions
-        if (isFailed) {
-          listHtml += '<div class="dc-order-actions">';
-          listHtml += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Поставить на карте">📍</button>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
-          listHtml += '</div>';
-        } else if (isSettlementOnly) {
-          listHtml += '<div class="dc-order-actions">';
-          listHtml += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
-          listHtml += '<button class="btn btn-sm dc-place-btn dc-place-btn-warn" data-id="' + order.id + '" title="Уточнить точку на карте">📍 На карту</button>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
-          listHtml += '</div>';
-        } else {
-          listHtml += '<div class="dc-order-actions">';
-          listHtml += '<span class="dc-status-ok">✓</span>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Переместить на карте">📍</button>';
-          listHtml += '<button class="btn btn-outline btn-sm dc-del-btn dc-del-visible" data-id="' + order.id + '" title="Удалить">✕</button>';
-          listHtml += '</div>';
-        }
-        listHtml += '</div>';
-
-        // Edit row
-        if (isEditing) {
-          listHtml += '<div class="dc-edit-row"><input class="dc-edit-input" id="dcEditInput-' + safeId + '" value="' + order.address.replace(/"/g, '&quot;') + '" placeholder="Новый адрес..."><button class="btn btn-primary btn-sm dc-retry-btn" data-id="' + order.id + '">Найти</button><button class="btn btn-outline btn-sm dc-cancel-edit" data-id="' + order.id + '">✕</button></div>';
-        }
-        if (isPlacing) {
-          listHtml += '<div class="dc-edit-row" style="color:var(--accent);font-size:12px;">👆 Кликните на карту для установки точки <button class="btn btn-outline btn-sm dc-cancel-place">Отмена</button></div>';
-        }
+    // ─── Supplier list (collapsible) ─────────────────────────
+    var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) { return assignments && assignments[o.globalIndex] === selectedDriver; }) : supplierItems;
+    var supplierListHtml = '';
+    if (filteredSuppliers.length > 0) {
+      supplierListHtml = '<div class="dc-section"><details class="dc-list-details" open>' +
+        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Поставщики <span style="font-weight:400;color:#888;">(' + filteredSuppliers.length + ')</span></summary>' +
+        '<div class="dc-orders-list">';
+      filteredSuppliers.forEach(function (order) {
+        supplierListHtml += renderOrderItem(order, order.globalIndex);
       });
-    } else if (orders.length === 0) {
-      listHtml = '<div class="dc-empty">Вставьте адреса и нажмите «На карту»</div>';
+      supplierListHtml += '</div></details></div>';
     }
 
+    // ─── Address list (collapsible) ──────────────────────────
+    var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) { return assignments && assignments[o.globalIndex] === selectedDriver; }) : addressItems;
+    var addressListHtml = '';
+    if (filteredAddresses.length > 0) {
+      addressListHtml = '<div class="dc-section"><details class="dc-list-details" open>' +
+        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Адреса <span style="font-weight:400;color:#888;">(' + filteredAddresses.length + ')</span></summary>' +
+        '<div class="dc-orders-list">';
+      filteredAddresses.forEach(function (order) {
+        addressListHtml += renderOrderItem(order, order.globalIndex);
+      });
+      addressListHtml += '</div></details></div>';
+    }
+
+    var emptyHtml = '';
+    if (orders.length === 0) {
+      emptyHtml = '<div class="dc-empty">Вставьте поставщиков или адреса и нажмите «На карту»</div>';
+    }
+
+    var hasSupplierOrders = supplierItems.length > 0;
+    var hasAddressOrders = addressItems.length > 0;
+
     sidebar.innerHTML =
-      // Bulk paste
+      // ─── Supplier paste section ──────────────────────────
       '<div class="dc-section dc-bulk-section">' +
-      '<details class="dc-bulk-details"' + (orders.length === 0 ? ' open' : '') + '>' +
+      '<details class="dc-bulk-details"' + (!hasSupplierOrders && !hasAddressOrders ? ' open' : '') + '>' +
+      '<summary class="dc-section-title dc-bulk-toggle">Вставить список поставщиков</summary>' +
+      '<textarea id="dcSupplierInput" class="dc-textarea" placeholder="Вставьте названия поставщиков, каждый с новой строки" ' + (isLoadingSuppliers ? 'disabled' : '') + '></textarea>' +
+      '<div class="dc-buttons" style="margin-top:6px;">' +
+      (!hasSupplierOrders
+        ? '<button class="btn btn-primary dc-btn-load-suppliers" ' + (isLoadingSuppliers ? 'disabled' : '') + '>' + (isLoadingSuppliers ? '<span id="dcSupplierProgress">...</span>' : 'Найти') + '</button>'
+        : '<button class="btn btn-primary dc-btn-append-suppliers" ' + (isLoadingSuppliers ? 'disabled' : '') + '>' + (isLoadingSuppliers ? '<span id="dcSupplierProgress">...</span>' : '+ Добавить') + '</button>'
+      ) +
+      '</div></details></div>' +
+      // ─── Address paste section ───────────────────────────
+      '<div class="dc-section dc-bulk-section">' +
+      '<details class="dc-bulk-details"' + (!hasAddressOrders && !hasSupplierOrders ? ' open' : '') + '>' +
       '<summary class="dc-section-title dc-bulk-toggle">Вставить список адресов</summary>' +
       '<textarea id="dcAddressInput" class="dc-textarea" placeholder="Вставьте адреса, каждый с новой строки\\nФормат: адрес [TAB] телефон [TAB] время" ' + (isGeocoding ? 'disabled' : '') + '></textarea>' +
       '<div class="dc-buttons" style="margin-top:6px;">' +
-      (orders.length === 0
+      (!hasAddressOrders
         ? '<button class="btn btn-primary dc-btn-load" ' + (isGeocoding ? 'disabled' : '') + '>' + (isGeocoding ? '<span id="dcProgress">...</span>' : 'На карту') + '</button>'
         : '<button class="btn btn-primary dc-btn-append" ' + (isGeocoding ? 'disabled' : '') + '>' + (isGeocoding ? '<span id="dcProgress">...</span>' : '+ Добавить') + '</button><button class="btn btn-outline btn-sm dc-btn-replace" ' + (isGeocoding ? 'disabled' : '') + '>Заменить всё</button>'
       ) +
       '</div></details></div>' +
       // Info + controls
-      (orders.length > 0 ? '<div class="dc-info">Загружено: <strong>' + orders.length + '</strong> (найдено: ' + geocodedCount + (settlementOnlyCount > 0 ? ', <span style="color:#f59e0b;">уточнить: ' + settlementOnlyCount + '</span>' : '') + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
+      (orders.length > 0 ? '<div class="dc-info">Всего точек: <strong>' + orders.length + '</strong> (поставщики: ' + supplierItems.length + ', адреса: ' + addressItems.length + ', найдено: ' + geocodedCount + (settlementOnlyCount > 0 ? ', <span style="color:#f59e0b;">уточнить: ' + settlementOnlyCount + '</span>' : '') + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
       '<div class="dc-section"><div class="dc-controls">' +
       '<div class="dc-control-group"><label>Водителей</label><input type="number" id="dcDriverCount" class="dc-count-input" min="1" max="12" value="' + driverCount + '"></div>' +
       '<div class="dc-buttons">' +
       (geocodedCount > 0 ? '<button class="btn btn-primary dc-btn-distribute" style="background:var(--accent);border-color:#0a3d31;color:#04211b;">Распределить</button>' : '') +
       (orders.length > 0 ? '<button class="btn btn-outline btn-sm dc-btn-clear" style="color:var(--danger);border-color:var(--danger);">Сбросить данные</button>' : '') +
       '</div></div></div>' +
-      // POI toggles (ПВЗ / склады)
+      // POI toggles
       '<div class="dc-section dc-poi-section">' +
       '<div class="dc-section-title" style="font-size:12px;color:#888;margin-bottom:6px;">Отображение на карте</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
@@ -826,7 +1092,7 @@
       '</div></div>' +
       variantsHtml + statsHtml +
       driverSlotsHtml + finishHtml +
-      '<div class="dc-orders-list">' + listHtml + '</div>';
+      supplierListHtml + addressListHtml + emptyHtml;
 
     // Bind events
     bindSidebarEvents();
@@ -836,7 +1102,13 @@
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
 
-    // Load / Append / Replace
+    // Supplier load / append
+    const loadSuppliersBtn = sidebar.querySelector('.dc-btn-load-suppliers');
+    if (loadSuppliersBtn) loadSuppliersBtn.addEventListener('click', function () { loadSuppliers(false); });
+    const appendSuppliersBtn = sidebar.querySelector('.dc-btn-append-suppliers');
+    if (appendSuppliersBtn) appendSuppliersBtn.addEventListener('click', function () { loadSuppliers(true); });
+
+    // Load / Append / Replace addresses
     const loadBtn = sidebar.querySelector('.dc-btn-load');
     if (loadBtn) loadBtn.addEventListener('click', function () { loadAddresses(false); });
     const appendBtn = sidebar.querySelector('.dc-btn-append');
@@ -922,6 +1194,11 @@
       btn.addEventListener('click', function () { placingOrderId = null; renderAll(); });
     });
 
+    // Create supplier from order
+    sidebar.querySelectorAll('.dc-create-supplier-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () { createSupplierFromOrder(btn.dataset.id); });
+    });
+
     // Enter in edit inputs
     sidebar.querySelectorAll('.dc-edit-input').forEach(function (input) {
       input.addEventListener('keydown', function (e) {
@@ -935,8 +1212,8 @@
 
   // ─── Init on tab switch ───────────────────────────────────
   async function onSectionActivated() {
-    // Load drivers from DB
-    await loadDbDrivers();
+    // Load drivers and suppliers from DB
+    await Promise.all([loadDbDrivers(), loadDbSuppliers()]);
     // Restore saved data on first activation
     if (orders.length === 0) {
       loadState();
