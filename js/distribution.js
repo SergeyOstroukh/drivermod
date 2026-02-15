@@ -470,7 +470,7 @@
       for (var i = 0; i < orders.length; i++) assignments.push(-1);
     }
     assignments = assignments.slice();
-    assignments[globalIdx] = driverIdx;
+    assignments[globalIdx] = (driverIdx != null ? driverIdx : -1);
     activeVariant = -1;
     renderAll();
   };
@@ -508,8 +508,21 @@
     const parsed = window.DistributionParser.parseOrders(text);
     if (parsed.length === 0) { showToast('Не найдено адресов', 'error'); return; }
 
-    if (!append) { orders = []; assignments = null; variants = []; activeVariant = -1; }
-    const prevAssignments = append ? assignments : null;
+    if (!append) {
+      // Keep supplier orders, remove only address orders
+      var keepOrders = [];
+      var keepAssignments = [];
+      for (var k = 0; k < orders.length; k++) {
+        if (orders[k].isSupplier) {
+          keepOrders.push(orders[k]);
+          if (assignments) keepAssignments.push(assignments[k]);
+        }
+      }
+      orders = keepOrders;
+      assignments = keepAssignments.length > 0 ? keepAssignments : null;
+      variants = []; activeVariant = -1;
+    }
+    const prevAssignments = assignments;
     isGeocoding = true;
     _fitBoundsNext = true;
     renderAll();
@@ -519,16 +532,13 @@
       const geocoded = await window.DistributionGeocoder.geocodeOrders(parsed, function (cur, tot) {
         if (progressEl) progressEl.textContent = cur + '/' + tot;
       });
-      if (append) {
-        orders = orders.concat(geocoded);
-        if (prevAssignments) {
-          assignments = prevAssignments.slice();
-          for (let i = 0; i < geocoded.length; i++) {
-            assignments.push(-1);
-          }
+      orders = orders.concat(geocoded);
+      if (prevAssignments) {
+        assignments = prevAssignments.slice();
+        for (let i = 0; i < geocoded.length; i++) {
+          assignments.push(-1);
         }
       }
-      else { orders = geocoded; }
       const ok = geocoded.filter(function (o) { return o.geocoded; }).length;
       const fail = geocoded.length - ok;
       showToast((append ? 'Добавлено ' + geocoded.length + '. ' : '') + 'Найдено: ' + ok + (fail > 0 ? ', ошибок: ' + fail : ''), fail > 0 ? 'error' : undefined);
@@ -947,17 +957,20 @@
       var driver = dbDrivers.find(function (d) { return d.id === driverId; });
       if (!driver) continue;
 
-      // Collect points for this driver
+      // Collect only SUPPLIER points for this driver (addresses sent separately in future)
       var points = [];
       orders.forEach(function (order, idx) {
         if (assignments[idx] !== slot || !order.geocoded) return;
+        if (!order.isSupplier) return; // Only suppliers for now
         points.push({
           address: order.address,
           formattedAddress: order.formattedAddress || null,
           phone: order.phone || null,
           timeSlot: order.timeSlot || null,
           orderNum: points.length + 1,
-          isSupplier: order.isSupplier || false,
+          isSupplier: true,
+          lat: order.lat || null,
+          lng: order.lng || null,
         });
       });
 
@@ -1009,38 +1022,23 @@
 
     var msg = '📋 <b>Маршрут на ' + dateStr + '</b>\n';
     msg += '👤 ' + escapeHtml(driverName) + '\n';
-    msg += '📍 Точек: ' + points.length + '\n';
+    msg += '🏢 Поставщиков: ' + points.length + '\n';
     msg += '─────────────────\n\n';
 
-    var suppliers = points.filter(function (p) { return p.isSupplier; });
-    var addresses = points.filter(function (p) { return !p.isSupplier; });
+    points.forEach(function (p, i) {
+      msg += (i + 1) + '. <b>' + escapeHtml(p.address) + '</b>';
+      if (p.timeSlot) msg += ' ⏰ ' + p.timeSlot;
+      // Yandex Maps link for GPS navigation
+      if (p.lat && p.lng) {
+        var ymapsUrl = 'https://yandex.ru/maps/?pt=' + p.lng + ',' + p.lat + '&z=17&l=map';
+        msg += '\n   🗺 <a href="' + ymapsUrl + '">Открыть на карте</a>';
+      }
+      if (p.formattedAddress) msg += '\n   📍 ' + escapeHtml(p.formattedAddress);
+      if (p.phone) msg += '\n   📞 ' + p.phone;
+      msg += '\n\n';
+    });
 
-    if (suppliers.length > 0) {
-      msg += '🏢 <b>Поставщики (' + suppliers.length + '):</b>\n';
-      suppliers.forEach(function (p, i) {
-        msg += (i + 1) + '. <b>' + escapeHtml(p.address) + '</b>';
-        if (p.timeSlot) msg += ' ⏰ ' + p.timeSlot;
-        if (p.formattedAddress) msg += '\n   📍 ' + escapeHtml(p.formattedAddress);
-        if (p.phone) msg += '\n   📞 ' + p.phone;
-        msg += '\n';
-      });
-      msg += '\n';
-    }
-
-    if (addresses.length > 0) {
-      msg += '🏠 <b>Адреса (' + addresses.length + '):</b>\n';
-      addresses.forEach(function (p, i) {
-        msg += (i + 1) + '. <b>' + escapeHtml(p.address) + '</b>';
-        if (p.timeSlot) msg += ' ⏰ ' + p.timeSlot;
-        if (p.formattedAddress && p.formattedAddress !== p.address) {
-          msg += '\n   📍 ' + escapeHtml(p.formattedAddress);
-        }
-        if (p.phone) msg += '\n   📞 ' + p.phone;
-        msg += '\n';
-      });
-    }
-
-    msg += '\n✅ Хорошего дня!';
+    msg += '✅ Хорошего дня!';
     return msg;
   }
 
@@ -1099,10 +1097,15 @@
     } else if (order.isSupplier && !order.supplierDbId) {
       html += '<div style="font-size:10px;color:#ef4444;margin-top:1px;">Не найден в базе</div>';
     }
+    // Inline driver assignment
+    html += '<div class="dc-order-driver-assign" style="margin-top:3px;">';
     if (dIdx >= 0) {
       const driverName = getDriverName(dIdx);
-      html += '<div class="dc-order-driver" style="color:' + color + ';">👤 ' + driverName + '</div>';
+      html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:' + color + ';cursor:pointer;font-size:12px;font-weight:600;" title="Нажмите чтобы сменить водителя">👤 ' + driverName + ' ▾</span>';
+    } else if (order.geocoded) {
+      html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
     }
+    html += '</div>';
     if (order.isKbt) {
       var helperName = order.helperDriverSlot != null ? getDriverName(order.helperDriverSlot) : '?';
       var helperColor = order.helperDriverSlot != null ? COLORS[order.helperDriverSlot % COLORS.length] : '#a855f7';
@@ -1241,7 +1244,7 @@
         'Завершить распределение</button>' +
         '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' +
-        'Отправить в Telegram</button>' +
+        'Поставщики → Telegram</button>' +
         '</div>';
     }
 
@@ -1491,6 +1494,58 @@
           const retryBtn = input.parentElement.querySelector('.dc-retry-btn');
           if (retryBtn) retryBtn.click();
         }
+      });
+    });
+
+    // Inline driver assignment on sidebar items
+    sidebar.querySelectorAll('.dc-assign-label').forEach(function (label) {
+      label.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var idx = parseInt(label.dataset.idx);
+        // Remove any existing dropdown
+        var existing = sidebar.querySelector('.dc-inline-driver-picker');
+        if (existing) existing.remove();
+        // Create dropdown
+        var picker = document.createElement('div');
+        picker.className = 'dc-inline-driver-picker';
+        picker.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;padding:6px 0;';
+        var currentD = assignments ? assignments[idx] : -1;
+        for (var d = 0; d < driverCount; d++) {
+          var c = COLORS[d % COLORS.length];
+          var active = d === currentD;
+          var name = getDriverName(d);
+          var btn = document.createElement('button');
+          btn.dataset.driver = d;
+          btn.style.cssText = 'display:flex;align-items:center;gap:3px;padding:3px 8px;border-radius:10px;border:2px solid ' + (active ? '#333' : 'transparent') + ';background:' + c + ';cursor:pointer;color:#fff;font-size:11px;font-weight:600;';
+          btn.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + name;
+          btn.title = name;
+          (function (driverIdx) {
+            btn.addEventListener('click', function (ev) {
+              ev.stopPropagation();
+              window.__dc_assign(idx, driverIdx);
+            });
+          })(d);
+          picker.appendChild(btn);
+        }
+        // Unassign button
+        if (currentD >= 0) {
+          var unBtn = document.createElement('button');
+          unBtn.style.cssText = 'display:flex;align-items:center;gap:3px;padding:3px 8px;border-radius:10px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;color:#999;font-size:11px;';
+          unBtn.textContent = '✕ Снять';
+          unBtn.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            window.__dc_assign(idx, -1);
+          });
+          picker.appendChild(unBtn);
+        }
+        label.parentElement.appendChild(picker);
+        // Close on outside click
+        setTimeout(function () {
+          document.addEventListener('click', function closePicker() {
+            if (picker.parentElement) picker.remove();
+            document.removeEventListener('click', closePicker);
+          }, { once: true });
+        }, 10);
       });
     });
   }
