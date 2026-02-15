@@ -915,6 +915,135 @@
     }
   }
 
+  // ─── Send routes to Telegram ─────────────────────────────
+  async function sendToTelegram() {
+    if (!assignments) { showToast('Сначала распределите точки', 'error'); return; }
+
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+    if (!botToken) {
+      showToast('Telegram бот не настроен. Укажите токен в config.js', 'error');
+      return;
+    }
+
+    // Check that drivers are assigned
+    var usedSlots = new Set();
+    assignments.forEach(function (a) { if (a >= 0) usedSlots.add(a); });
+    var unassignedSlots = [];
+    usedSlots.forEach(function (s) { if (!driverSlots[s]) unassignedSlots.push(s); });
+
+    if (unassignedSlots.length > 0) {
+      showToast('Назначьте водителей для всех цветов', 'error');
+      return;
+    }
+
+    // Build messages per driver
+    var routeDate = new Date().toISOString().split('T')[0];
+    var messagesSent = 0, messagesFailed = 0, noTelegram = [];
+
+    for (var slot = 0; slot < driverCount; slot++) {
+      var driverId = driverSlots[slot];
+      if (!driverId) continue;
+
+      var driver = dbDrivers.find(function (d) { return d.id === driverId; });
+      if (!driver) continue;
+
+      // Collect points for this driver
+      var points = [];
+      orders.forEach(function (order, idx) {
+        if (assignments[idx] !== slot || !order.geocoded) return;
+        points.push({
+          address: order.address,
+          formattedAddress: order.formattedAddress || null,
+          phone: order.phone || null,
+          timeSlot: order.timeSlot || null,
+          orderNum: points.length + 1,
+          isSupplier: order.isSupplier || false,
+        });
+      });
+
+      if (points.length === 0) continue;
+
+      if (!driver.telegram_chat_id) {
+        noTelegram.push(driver.name);
+        continue;
+      }
+
+      // Format message
+      var msg = formatTelegramMessage(driver.name, routeDate, points);
+
+      // Send via Telegram Bot API directly
+      try {
+        var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: driver.telegram_chat_id,
+            text: msg,
+            parse_mode: 'HTML',
+          }),
+        });
+        var data = await resp.json();
+        if (data.ok) {
+          messagesSent++;
+        } else {
+          messagesFailed++;
+          console.warn('Telegram error for', driver.name, ':', data.description);
+        }
+      } catch (err) {
+        messagesFailed++;
+        console.error('Telegram send error:', err);
+      }
+    }
+
+    var result = 'Telegram: отправлено ' + messagesSent;
+    if (messagesFailed > 0) result += ', ошибок: ' + messagesFailed;
+    if (noTelegram.length > 0) result += '\nНет Telegram ID: ' + noTelegram.join(', ');
+    showToast(result, messagesFailed > 0 || noTelegram.length > 0 ? 'error' : undefined);
+  }
+
+  function formatTelegramMessage(driverName, routeDate, points) {
+    var d = new Date(routeDate + 'T00:00:00');
+    var days = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    var months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    var dateStr = days[d.getDay()] + ', ' + d.getDate() + ' ' + months[d.getMonth()];
+
+    var msg = '📋 <b>Маршрут на ' + dateStr + '</b>\n';
+    msg += '👤 ' + escapeHtml(driverName) + '\n';
+    msg += '📍 Точек: ' + points.length + '\n';
+    msg += '─────────────────\n\n';
+
+    var suppliers = points.filter(function (p) { return p.isSupplier; });
+    var addresses = points.filter(function (p) { return !p.isSupplier; });
+
+    if (suppliers.length > 0) {
+      msg += '🏢 <b>Поставщики (' + suppliers.length + '):</b>\n';
+      suppliers.forEach(function (p, i) {
+        msg += (i + 1) + '. <b>' + escapeHtml(p.address) + '</b>';
+        if (p.timeSlot) msg += ' ⏰ ' + p.timeSlot;
+        if (p.formattedAddress) msg += '\n   📍 ' + escapeHtml(p.formattedAddress);
+        if (p.phone) msg += '\n   📞 ' + p.phone;
+        msg += '\n';
+      });
+      msg += '\n';
+    }
+
+    if (addresses.length > 0) {
+      msg += '🏠 <b>Адреса (' + addresses.length + '):</b>\n';
+      addresses.forEach(function (p, i) {
+        msg += (i + 1) + '. <b>' + escapeHtml(p.address) + '</b>';
+        if (p.timeSlot) msg += ' ⏰ ' + p.timeSlot;
+        if (p.formattedAddress && p.formattedAddress !== p.address) {
+          msg += '\n   📍 ' + escapeHtml(p.formattedAddress);
+        }
+        if (p.phone) msg += '\n   📞 ' + p.phone;
+        msg += '\n';
+      });
+    }
+
+    msg += '\n✅ Хорошего дня!';
+    return msg;
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
@@ -1109,7 +1238,11 @@
       finishHtml = '<div class="dc-section dc-finish-section">' +
         '<button class="btn dc-btn-finish' + (allAssigned ? ' ready' : '') + '">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> ' +
-        'Завершить распределение</button></div>';
+        'Завершить распределение</button>' +
+        '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' +
+        'Отправить в Telegram</button>' +
+        '</div>';
     }
 
     // ─── Supplier list (collapsible) ─────────────────────────
@@ -1273,6 +1406,8 @@
     // Finish distribution
     const finishBtn = sidebar.querySelector('.dc-btn-finish');
     if (finishBtn) finishBtn.addEventListener('click', finishDistribution);
+    const telegramBtn = sidebar.querySelector('.dc-btn-telegram');
+    if (telegramBtn) telegramBtn.addEventListener('click', sendToTelegram);
 
     // POI toggles
     sidebar.querySelectorAll('.dc-poi-toggle').forEach(function (btn) {

@@ -258,6 +258,7 @@
 			document.getElementById("driverPhone").value = driver.phone || "";
 			document.getElementById("driverLicense").value = driver.license_number || "";
 			document.getElementById("driverLicenseExpiry").value = driver.license_expiry || "";
+			document.getElementById("driverTelegram").value = driver.telegram_chat_id || "";
 			document.getElementById("driverNotes").value = driver.notes || "";
 			deleteBtn.style.display = "block";
 		} else {
@@ -284,6 +285,7 @@
 				phone: formData.get("phone")?.trim() || null,
 				license_number: formData.get("license_number")?.trim() || null,
 				license_expiry: formData.get("license_expiry") || null,
+				telegram_chat_id: formData.get("telegram_chat_id") ? parseInt(formData.get("telegram_chat_id")) : null,
 				notes: formData.get("notes")?.trim() || null
 			};
 
