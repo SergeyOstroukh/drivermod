@@ -1013,6 +1013,7 @@
       var driver = entry.driver;
       if (!driver) { messagesFailed++; continue; }
       if (!driver.telegram_chat_id) { noTelegram.push(driver.name); continue; }
+      if (driver.telegram_chat_id < 0) { noTelegram.push(driver.name + ' (групповой ID!)'); continue; }
 
       var msg = formatTelegramMessage(driver.name, routeDate, entry.points);
       try {
@@ -1060,6 +1061,7 @@
     var driver = dbDrivers.find(function (d) { return d.id === driverId; });
     if (!driver) { showToast('Водитель не найден', 'error'); return; }
     if (!driver.telegram_chat_id) { showToast('У водителя ' + driver.name + ' не указан Telegram', 'error'); return; }
+    if (driver.telegram_chat_id < 0) { showToast('У водителя ' + driver.name + ' указан ID группы, нужен личный. Перепривяжите Telegram.', 'error'); return; }
 
     var routeDate = new Date().toISOString().split('T')[0];
     var points = [{

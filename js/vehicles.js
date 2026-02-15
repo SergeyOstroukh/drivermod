@@ -1911,11 +1911,13 @@
 				return;
 			}
 
-			// Collect unique users
+			// Collect unique users — ONLY from private chats (not groups!)
 			var tgUsers = {};
 			updates.forEach(function (upd) {
 				var msg = upd.message || upd.edited_message;
 				if (!msg || !msg.from) return;
+				// Skip group/supergroup messages — only private chats
+				if (msg.chat.type !== 'private') return;
 				var u = msg.from;
 				tgUsers[u.id] = {
 					chat_id: msg.chat.id,
