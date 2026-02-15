@@ -75,21 +75,80 @@
     }
   }
 
-  // Normalize string for fuzzy matching
-  function normalizeName(s) {
-    return s.toLowerCase().replace(/ё/g, 'е').replace(/[«»"""'']/g, '').replace(/\s+/g, ' ').trim();
+  // Strip organizational form and quotes: ООО "Название" → Название
+  function stripOrgForm(s) {
+    // Remove org form prefixes: ООО, ОДО, ЧУП, УП, ИП, ЗАО, ОАО, ЧТУП, СООО, ИООО, etc.
+    var cleaned = s.replace(/^(?:ООО|ОДО|ЧУП|УП|ИП|ЗАО|ОАО|ЧТУП|СООО|ИООО|ЧП|СП)\s*/i, '');
+    // Remove all types of quotes
+    cleaned = cleaned.replace(/[«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂]/g, '');
+    return cleaned.trim();
   }
 
-  // Find supplier in DB by name (case-insensitive, partial match)
+  // Extract time slot from supplier line: "Название до 14" → { name: "Название", timeSlot: "до 14" }
+  function extractSupplierTimeSlot(line) {
+    var timeMatch = line.match(/\s+(до\s+\d{1,2}(?:[:.]\d{2})?|после\s+\d{1,2}(?:[:.]\d{2})?|с\s+\d{1,2}(?:[:.]\d{2})?\s*(?:до|[-–])\s*\d{1,2}(?:[:.]\d{2})?)\s*$/i);
+    if (timeMatch) {
+      return {
+        name: line.substring(0, timeMatch.index).trim(),
+        timeSlot: timeMatch[1].trim(),
+      };
+    }
+    return { name: line, timeSlot: null };
+  }
+
+  // Normalize string for fuzzy matching
+  function normalizeName(s) {
+    return s.toLowerCase().replace(/ё/g, 'е').replace(/[«»"""''\"\'„"‟❝❞⹂〝〞〟＂]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  // Normalize for comparison: strip org form + quotes + lowercase
+  function normalizeForSearch(s) {
+    return normalizeName(stripOrgForm(s));
+  }
+
+  // Find supplier in DB by name (smart matching: strips org form, quotes, case-insensitive)
   function findSupplierInDb(name) {
-    const n = normalizeName(name);
-    if (!n) return null;
-    // Exact match first
-    var exact = dbSuppliers.find(function (s) { return normalizeName(s.name) === n; });
+    var n = normalizeForSearch(name);
+    if (!n || n.length < 2) return null;
+
+    // 1. Exact match on cleaned names
+    var exact = dbSuppliers.find(function (s) { return normalizeForSearch(s.name) === n; });
     if (exact) return exact;
-    // Contains match
-    var partial = dbSuppliers.find(function (s) { return normalizeName(s.name).includes(n) || n.includes(normalizeName(s.name)); });
-    return partial || null;
+
+    // 2. One contains the other (for partial names)
+    var partial = dbSuppliers.find(function (s) {
+      var sn = normalizeForSearch(s.name);
+      return sn.includes(n) || n.includes(sn);
+    });
+    if (partial) return partial;
+
+    // 3. Word-based fuzzy: check if all significant words from search appear in DB name
+    var searchWords = n.split(/\s+/).filter(function (w) { return w.length > 2; });
+    if (searchWords.length > 0) {
+      var wordMatch = dbSuppliers.find(function (s) {
+        var sn = normalizeForSearch(s.name);
+        return searchWords.every(function (w) { return sn.includes(w); });
+      });
+      if (wordMatch) return wordMatch;
+    }
+
+    return null;
+  }
+
+  // Search suppliers for autocomplete (returns top N matches)
+  function searchSuppliers(query, limit) {
+    var q = normalizeForSearch(query);
+    if (!q || q.length < 1) return [];
+    var results = [];
+    for (var i = 0; i < dbSuppliers.length; i++) {
+      var s = dbSuppliers[i];
+      var sn = normalizeForSearch(s.name);
+      if (sn.includes(q)) {
+        results.push(s);
+        if (results.length >= (limit || 8)) break;
+      }
+    }
+    return results;
   }
 
   function getDriverName(slotIdx) {
@@ -521,8 +580,17 @@
     var orderCounter = Date.now();
 
     for (var i = 0; i < names.length; i++) {
-      var name = names[i].replace(/^\d+[\.):\-\s]+\s*/, '').trim();
-      if (!name) continue;
+      var rawLine = names[i].replace(/^\d+[\.):\-\s]+\s*/, '').trim();
+      if (!rawLine) continue;
+
+      // Extract time slot from end of line ("до 14", "после 15", etc.)
+      var parsed = extractSupplierTimeSlot(rawLine);
+      var name = parsed.name;
+      var timeSlot = parsed.timeSlot;
+
+      // Strip org form + quotes for clean display name
+      var cleanName = stripOrgForm(name);
+
       orderCounter++;
       var supplier = findSupplierInDb(name);
 
@@ -533,7 +601,7 @@
           id: 'supplier-' + orderCounter + '-' + i,
           address: supplier.name,
           phone: '',
-          timeSlot: null,
+          timeSlot: timeSlot,
           geocoded: true,
           lat: supplier.lat,
           lng: supplier.lon,
@@ -549,9 +617,9 @@
         notFound++;
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
-          address: name,
+          address: supplier.name,
           phone: '',
-          timeSlot: null,
+          timeSlot: timeSlot,
           geocoded: false,
           lat: null,
           lng: null,
@@ -564,13 +632,13 @@
         });
         needGeocode.push(supplierOrders[supplierOrders.length - 1]);
       } else {
-        // Not found in DB
+        // Not found in DB — use cleaned name
         notFound++;
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
-          address: name,
+          address: rawLine,
           phone: '',
-          timeSlot: null,
+          timeSlot: timeSlot,
           geocoded: false,
           lat: null,
           lng: null,
@@ -578,7 +646,7 @@
           error: 'Не найден в базе',
           isSupplier: true,
           supplierDbId: null,
-          supplierName: name,
+          supplierName: cleanName || name,
           supplierData: null,
         });
       }
@@ -893,7 +961,7 @@
       html += '<div class="dc-order-actions">';
       html += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
       html += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Поставить на карте">📍</button>';
-      if (order.isSupplier && !order.supplierDbId && order.geocoded) {
+      if (order.isSupplier && !order.supplierDbId) {
         html += '<button class="btn btn-outline btn-sm dc-create-supplier-btn" data-id="' + order.id + '" title="Создать поставщика в базе" style="color:#10b981;border-color:#10b981;font-size:10px;">+ В базу</button>';
       }
       html += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
@@ -1055,7 +1123,11 @@
       '<div class="dc-section dc-bulk-section">' +
       '<details class="dc-bulk-details"' + (!hasSupplierOrders && !hasAddressOrders ? ' open' : '') + '>' +
       '<summary class="dc-section-title dc-bulk-toggle">Вставить список поставщиков</summary>' +
-      '<textarea id="dcSupplierInput" class="dc-textarea" placeholder="Вставьте названия поставщиков, каждый с новой строки" ' + (isLoadingSuppliers ? 'disabled' : '') + '></textarea>' +
+      '<div class="dc-supplier-search" style="position:relative;margin-bottom:6px;">' +
+      '<input id="dcSupplierSearch" class="dc-search-input" type="text" placeholder="Поиск поставщика по базе..." autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;" />' +
+      '<div id="dcSupplierSuggest" class="dc-suggest-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #ddd;border-top:none;border-radius:0 0 6px 6px;max-height:200px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div>' +
+      '</div>' +
+      '<textarea id="dcSupplierInput" class="dc-textarea" placeholder="Вставьте названия поставщиков, каждый с новой строки\\nФормат: ООО «Название» до 14" ' + (isLoadingSuppliers ? 'disabled' : '') + '></textarea>' +
       '<div class="dc-buttons" style="margin-top:6px;">' +
       (!hasSupplierOrders
         ? '<button class="btn btn-primary dc-btn-load-suppliers" ' + (isLoadingSuppliers ? 'disabled' : '') + '>' + (isLoadingSuppliers ? '<span id="dcSupplierProgress">...</span>' : 'Найти') + '</button>'
@@ -1107,6 +1179,56 @@
     if (loadSuppliersBtn) loadSuppliersBtn.addEventListener('click', function () { loadSuppliers(false); });
     const appendSuppliersBtn = sidebar.querySelector('.dc-btn-append-suppliers');
     if (appendSuppliersBtn) appendSuppliersBtn.addEventListener('click', function () { loadSuppliers(true); });
+
+    // Supplier autocomplete search
+    const searchInput = sidebar.querySelector('#dcSupplierSearch');
+    const suggestBox = sidebar.querySelector('#dcSupplierSuggest');
+    if (searchInput && suggestBox) {
+      searchInput.addEventListener('input', function () {
+        var q = searchInput.value.trim();
+        if (q.length < 1) { suggestBox.style.display = 'none'; suggestBox.innerHTML = ''; return; }
+        var results = searchSuppliers(q, 10);
+        if (results.length === 0) {
+          suggestBox.innerHTML = '<div style="padding:8px 12px;color:#999;font-size:12px;">Не найдено</div>';
+          suggestBox.style.display = 'block';
+          return;
+        }
+        suggestBox.innerHTML = results.map(function (s) {
+          return '<div class="dc-suggest-item" data-name="' + escapeHtml(s.name) + '" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0;transition:background .1s;">' +
+            '<div style="font-weight:600;">' + escapeHtml(s.name) + '</div>' +
+            (s.address ? '<div style="font-size:11px;color:#888;">' + escapeHtml(s.address) + '</div>' : '') +
+            '</div>';
+        }).join('');
+        suggestBox.style.display = 'block';
+        // Bind click on suggest items
+        suggestBox.querySelectorAll('.dc-suggest-item').forEach(function (item) {
+          item.addEventListener('mouseenter', function () { item.style.background = '#f0f7ff'; });
+          item.addEventListener('mouseleave', function () { item.style.background = ''; });
+          item.addEventListener('click', function () {
+            var supplierName = item.dataset.name;
+            var textarea = sidebar.querySelector('#dcSupplierInput');
+            if (textarea) {
+              var existing = textarea.value.trim();
+              textarea.value = (existing ? existing + '\n' : '') + supplierName;
+            }
+            searchInput.value = '';
+            suggestBox.style.display = 'none';
+            suggestBox.innerHTML = '';
+            searchInput.focus();
+          });
+        });
+      });
+      // Hide suggest on blur (with delay to allow click)
+      searchInput.addEventListener('blur', function () {
+        setTimeout(function () { suggestBox.style.display = 'none'; }, 200);
+      });
+      // Show suggest on focus if there's text
+      searchInput.addEventListener('focus', function () {
+        if (searchInput.value.trim().length >= 1) {
+          searchInput.dispatchEvent(new Event('input'));
+        }
+      });
+    }
 
     // Load / Append / Replace addresses
     const loadBtn = sidebar.querySelector('.dc-btn-load');
