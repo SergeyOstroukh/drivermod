@@ -901,6 +901,11 @@
         orderNum: routesByDriver[driverId].length + 1,
       };
 
+      // Supplier flag
+      if (order.isSupplier) {
+        pointData.isSupplier = true;
+      }
+
       // POI flag
       if (order.isPoi) {
         pointData.isPoi = true;
@@ -1416,7 +1421,7 @@
       '<summary class="dc-section-title dc-bulk-toggle">Вставить список поставщиков</summary>' +
       '<div class="dc-supplier-search" style="position:relative;margin-bottom:6px;">' +
       '<input id="dcSupplierSearch" class="dc-search-input" type="text" placeholder="Поиск поставщика по базе..." autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;" />' +
-      '<div id="dcSupplierSuggest" class="dc-suggest-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #ddd;border-top:none;border-radius:0 0 6px 6px;max-height:200px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div>' +
+      '<div id="dcSupplierSuggest" class="dc-suggest-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e1e2e;color:#e0e0e0;border:1px solid #444;border-top:none;border-radius:0 0 6px 6px;max-height:200px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.4);"></div>' +
       '</div>' +
       '<textarea id="dcSupplierInput" class="dc-textarea" placeholder="Вставьте названия поставщиков, каждый с новой строки\\nФормат: ООО «Название» до 14" ' + (isLoadingSuppliers ? 'disabled' : '') + '></textarea>' +
       '<div class="dc-buttons" style="margin-top:6px;">' +
@@ -1480,20 +1485,20 @@
         if (q.length < 1) { suggestBox.style.display = 'none'; suggestBox.innerHTML = ''; return; }
         var results = searchSuppliers(q, 10);
         if (results.length === 0) {
-          suggestBox.innerHTML = '<div style="padding:8px 12px;color:#999;font-size:12px;">Не найдено</div>';
+          suggestBox.innerHTML = '<div style="padding:8px 12px;color:#888;font-size:12px;">Не найдено</div>';
           suggestBox.style.display = 'block';
           return;
         }
         suggestBox.innerHTML = results.map(function (s) {
-          return '<div class="dc-suggest-item" data-name="' + escapeHtml(s.name) + '" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0;transition:background .1s;">' +
-            '<div style="font-weight:600;">' + escapeHtml(s.name) + '</div>' +
-            (s.address ? '<div style="font-size:11px;color:#888;">' + escapeHtml(s.address) + '</div>' : '') +
+          return '<div class="dc-suggest-item" data-name="' + escapeHtml(s.name) + '" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #333;transition:background .1s;color:#e0e0e0;">' +
+            '<div style="font-weight:600;color:#fff;">' + escapeHtml(s.name) + '</div>' +
+            (s.address ? '<div style="font-size:11px;color:#aaa;">' + escapeHtml(s.address) + '</div>' : '') +
             '</div>';
         }).join('');
         suggestBox.style.display = 'block';
         // Bind click on suggest items
         suggestBox.querySelectorAll('.dc-suggest-item').forEach(function (item) {
-          item.addEventListener('mouseenter', function () { item.style.background = '#f0f7ff'; });
+          item.addEventListener('mouseenter', function () { item.style.background = '#2a2a3e'; });
           item.addEventListener('mouseleave', function () { item.style.background = ''; });
           item.addEventListener('click', function () {
             var supplierName = item.dataset.name;

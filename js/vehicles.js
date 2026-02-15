@@ -430,53 +430,71 @@
 		html += '</div>';
 		html += '</div>';
 
-		// Points list
-		let num = 0;
-		displayPoints.forEach(function (pt, idx) {
-			const isCompleted = pt.status === 'completed';
-			const ptIndex = allPoints.indexOf(pt);
-			if (!isCompleted) num++;
+		// Split points into suppliers and orders
+		var supplierPoints = displayPoints.filter(function(pt) { return pt.isSupplier; });
+		var orderPoints = displayPoints.filter(function(pt) { return !pt.isSupplier; });
 
-			html += '<div class="route-point' + (isCompleted ? ' route-point-completed' : '') + '">';
-			html += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
-			html += '<div class="route-point-info">';
-			html += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + pt.address + '</div>';
+		function renderRoutePoint(pt, num, isLast) {
+			var isCompleted = pt.status === 'completed';
+			var ptIndex = allPoints.indexOf(pt);
+			var h = '';
+			h += '<div class="route-point' + (isCompleted ? ' route-point-completed' : '') + '">';
+			h += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
+			h += '<div class="route-point-info">';
+			h += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + pt.address + '</div>';
 			if (pt.formattedAddress) {
-				html += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
+				h += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
 			}
 			if (pt.isKbt) {
-				html += '<div class="route-point-kbt" style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
-				html += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:3px;">📦 КБТ</span>';
+				h += '<div class="route-point-kbt" style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
+				h += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:3px;">📦 КБТ</span>';
 				if (pt.isKbtHelper && pt.mainDriverName) {
-					html += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Вы помогаете: ' + pt.mainDriverName + '</span>';
+					h += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Вы помогаете: ' + pt.mainDriverName + '</span>';
 				} else if (pt.helperDriverName) {
-					html += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Помощник: ' + pt.helperDriverName + '</span>';
+					h += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Помощник: ' + pt.helperDriverName + '</span>';
 				}
-				html += '</div>';
+				h += '</div>';
 			}
 			if (pt.timeSlot) {
-				html += '<div class="route-point-meta">⏰ ' + pt.timeSlot + '</div>';
+				h += '<div class="route-point-meta">⏰ ' + pt.timeSlot + '</div>';
 			}
 			if (pt.phone) {
-				html += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">📞 ' + pt.phone + '</a></div>';
+				h += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">📞 ' + pt.phone + '</a></div>';
 			}
-			html += '</div>';
-			html += '<div class="route-point-actions">';
+			h += '</div>';
+			h += '<div class="route-point-actions">';
 			if (!isCompleted) {
-				// Navigate to single point
 				if (pt.lat && pt.lng) {
-					const webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
-					html += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
+					var webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
+					h += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
 				}
-				// Complete button
-				html += '<button class="btn btn-primary btn-sm route-complete-btn" data-pt-index="' + ptIndex + '" title="Завершить">✓</button>';
+				h += '<button class="btn btn-primary btn-sm route-complete-btn" data-pt-index="' + ptIndex + '" title="Завершить">✓</button>';
 			}
-			html += '</div>';
-			html += '</div>';
-			if (idx < displayPoints.length - 1) {
-				html += '<div class="route-connector"></div>';
-			}
-		});
+			h += '</div>';
+			h += '</div>';
+			if (!isLast) h += '<div class="route-connector"></div>';
+			return h;
+		}
+
+		// Suppliers section
+		if (supplierPoints.length > 0) {
+			html += '<div style="margin:12px 0 6px;font-size:13px;font-weight:700;color:#10b981;display:flex;align-items:center;gap:6px;">🏢 Поставщики (' + supplierPoints.length + ')</div>';
+			var sNum = 0;
+			supplierPoints.forEach(function(pt, idx) {
+				if (pt.status !== 'completed') sNum++;
+				html += renderRoutePoint(pt, sNum || '✓', idx === supplierPoints.length - 1);
+			});
+		}
+
+		// Orders section
+		if (orderPoints.length > 0) {
+			html += '<div style="margin:12px 0 6px;font-size:13px;font-weight:700;color:#3b82f6;display:flex;align-items:center;gap:6px;">🏠 Заказы (' + orderPoints.length + ')</div>';
+			var oNum = 0;
+			orderPoints.forEach(function(pt, idx) {
+				if (pt.status !== 'completed') oNum++;
+				html += renderRoutePoint(pt, oNum || '✓', idx === orderPoints.length - 1);
+			});
+		}
 
 		if (activePoints.length === 0 && completedPoints.length > 0 && !showCompletedPoints) {
 			html += '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg><p>Все точки завершены!</p></div>';
