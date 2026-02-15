@@ -1095,6 +1095,52 @@
     }
   }
 
+  // ─── Cancel supplier — send cancellation to driver, unassign ──
+  async function cancelOneFromTelegram(orderId) {
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+
+    var orderIdx = orders.findIndex(function (o) { return o.id === orderId; });
+    if (orderIdx < 0) return;
+    var order = orders[orderIdx];
+    if (!order.isSupplier) return;
+
+    // Get the driver this was sent to
+    var driverId = getOrderDriverId(orderIdx);
+    var driver = driverId ? dbDrivers.find(function (d) { return d.id === driverId; }) : null;
+
+    // Send cancellation message if driver has telegram
+    if (botToken && driver && driver.telegram_chat_id && driver.telegram_chat_id > 0 && order.telegramSent) {
+      var cancelMsg = '❌ <b>ОТМЕНА</b>\n\n' +
+        '🏢 <b>' + escapeHtml(order.address) + '</b>' +
+        (order.timeSlot ? ' ⏰ ' + order.timeSlot : '') +
+        '\n\nЭтот поставщик снят с вашего маршрута.';
+
+      try {
+        var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: driver.telegram_chat_id, text: cancelMsg, parse_mode: 'HTML' }),
+        });
+        var data = await resp.json();
+        if (data.ok) {
+          showToast('Отмена отправлена: ' + order.address + ' → ' + driver.name);
+        } else {
+          showToast('Ошибка отправки отмены: ' + (data.description || '?'), 'error');
+        }
+      } catch (err) {
+        showToast('Ошибка: ' + err.message, 'error');
+      }
+    }
+
+    // Reset state: unassign driver, clear sent flag
+    order.telegramSent = false;
+    order.assignedDriverId = null;
+    if (assignments && assignments[orderIdx] >= 0) {
+      assignments[orderIdx] = -1;
+    }
+    renderAll();
+  }
+
   function formatTelegramMessage(driverName, routeDate, points) {
     var d = new Date(routeDate + 'T00:00:00');
     var days = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
@@ -1188,12 +1234,13 @@
       html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
     }
     html += '</div>';
-    // Telegram send indicator for suppliers
+    // Telegram send indicator + cancel for suppliers
     if (order.isSupplier && order.geocoded) {
       html += '<div class="dc-tg-row" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
       if (order.telegramSent) {
         html += '<span style="font-size:11px;color:#229ED9;" title="Отправлено в Telegram">✈️ ✓</span>';
         html += '<button class="btn btn-outline btn-sm dc-tg-send-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#229ED9;border-color:#229ED9;" title="Отправить повторно">↻</button>';
+        html += '<button class="btn btn-outline btn-sm dc-tg-cancel-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#ef4444;border-color:#ef4444;" title="Отправить отмену водителю и снять назначение">✕ Отмена</button>';
       } else if (driverId) {
         html += '<button class="btn btn-outline btn-sm dc-tg-send-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#229ED9;border-color:#229ED9;" title="Отправить в Telegram">✈️ →</button>';
       } else {
@@ -1648,6 +1695,13 @@
     sidebar.querySelectorAll('.dc-tg-send-one').forEach(function (btn) {
       btn.addEventListener('click', function () {
         sendOneToTelegram(btn.dataset.id);
+      });
+    });
+
+    // Per-row Telegram cancel
+    sidebar.querySelectorAll('.dc-tg-cancel-one').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        cancelOneFromTelegram(btn.dataset.id);
       });
     });
   }
