@@ -21,5 +21,5 @@ window.SUPABASE_CONFIG = {
 
 // Telegram Bot Token (для рассылки маршрутов водителям)
 // Создайте бота через @BotFather в Telegram и вставьте токен сюда
-window.TELEGRAM_BOT_TOKEN = '';
+window.TELEGRAM_BOT_TOKEN = '8341968562:AAG322AITdXhlZCQ_8PKQRnshwD6hyB_-VI';
 
