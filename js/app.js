@@ -1088,6 +1088,11 @@
 			await loadSuppliers();
 			applyCurrentView();
 			closeSupplierModal();
+			// Notify distribution module (if callback set)
+			if (window._onSupplierSaved) {
+				try { window._onSupplierSaved(supplier); } catch (e) { console.warn(e); }
+				window._onSupplierSaved = null;
+			}
 			return true;
 		} catch (err) {
 			console.error("Ошибка сохранения поставщика:", err);
@@ -1203,6 +1208,12 @@
 		applyCurrentView();
 		detectLocation();
 	}
+
+	// Expose modal for use from distribution module
+	window.SupplierModal = {
+		open: openSupplierModal,
+		close: closeSupplierModal,
+	};
 
 	document.addEventListener("DOMContentLoaded", init);
 })();

@@ -690,37 +690,60 @@
   }
 
   // ─── Create supplier from distribution ─────────────────────
-  async function createSupplierFromOrder(orderId) {
+  function createSupplierFromOrder(orderId) {
     var order = orders.find(function (o) { return o.id === orderId; });
     if (!order || !order.isSupplier) return;
 
-    if (!order.geocoded || !order.lat || !order.lng) {
-      showToast('Сначала укажите координаты (геокодируйте или поставьте на карту)', 'error');
+    if (!window.SupplierModal || !window.SupplierModal.open) {
+      showToast('Модуль поставщиков не загружен', 'error');
       return;
     }
 
-    try {
-      var newSupplier = {
-        name: order.supplierName || order.address,
-        lat: order.lat,
-        lon: order.lng,
-        address: order.formattedAddress || order.address,
-      };
-      var result = await window.SuppliersDB.add(newSupplier);
-      // Refresh cache
+    // Pre-fill data for the modal
+    var prefill = {
+      name: order.supplierName || stripOrgForm(order.address),
+      address: order.formattedAddress || '',
+      lat: order.lat || '',
+      lon: order.lng || '',
+    };
+
+    // Set callback: after supplier is saved in modal, update the distribution order
+    window._onSupplierSaved = async function (savedSupplier) {
       await loadDbSuppliers();
-      // Update order with DB info
-      var created = dbSuppliers.find(function (s) { return compactName(s.name) === compactName(newSupplier.name); });
+      // Find the created supplier in DB
+      var created = dbSuppliers.find(function (s) {
+        return compactName(s.name) === compactName(savedSupplier.name);
+      });
       if (created) {
         order.supplierDbId = created.id;
         order.supplierData = created;
+        order.supplierName = created.name;
+        order.address = created.name;
+        order.lat = created.lat;
+        order.lng = created.lon;
+        order.formattedAddress = created.address || (created.lat + ', ' + created.lon);
+        order.geocoded = true;
         order.error = null;
       }
+      _fitBoundsNext = true;
       renderAll();
-      showToast('Поставщик «' + newSupplier.name + '» создан в базе');
-    } catch (err) {
-      showToast('Ошибка создания: ' + err.message, 'error');
-    }
+      showToast('Поставщик добавлен на карту');
+    };
+
+    // Open the supplier modal with pre-filled data
+    window.SupplierModal.open(null); // null = new supplier mode
+
+    // Pre-fill fields after modal opens
+    setTimeout(function () {
+      var nameInput = document.getElementById('supplierName');
+      var addrInput = document.getElementById('supplierAddress');
+      var latInput = document.getElementById('supplierLat');
+      var lonInput = document.getElementById('supplierLon');
+      if (nameInput) nameInput.value = prefill.name;
+      if (addrInput) addrInput.value = prefill.address;
+      if (latInput && prefill.lat) latInput.value = prefill.lat;
+      if (lonInput && prefill.lon) lonInput.value = prefill.lon;
+    }, 50);
   }
 
   function distribute() {
