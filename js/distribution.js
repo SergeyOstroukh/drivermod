@@ -96,53 +96,50 @@
     return { name: line, timeSlot: null };
   }
 
-  // Normalize string for fuzzy matching
+  // Normalize for display: lowercase, collapse spaces
   function normalizeName(s) {
     return s.toLowerCase().replace(/ё/g, 'е').replace(/[«»"""''\"\'„"‟❝❞⹂〝〞〟＂]/g, '').replace(/\s+/g, ' ').trim();
   }
 
-  // Normalize for comparison: strip org form + quotes + lowercase
-  function normalizeForSearch(s) {
-    return normalizeName(stripOrgForm(s));
+  // Compact string for comparison: strip org form, quotes, ALL spaces, punctuation → single slug
+  function compactName(s) {
+    var c = s.toLowerCase();
+    // Remove org forms
+    c = c.replace(/^(?:ооо|одо|чуп|уп|ип|зао|оао|чтуп|сооо|иооо|чп|сп)\s*/i, '');
+    // Remove all quotes, punctuation, dashes, spaces
+    c = c.replace(/[«»"""''\"\'„"‟❝❞⹂〝〞〟＂\s\-–—.,;:!?()[\]{}/\\+&]/g, '');
+    // ё → е
+    c = c.replace(/ё/g, 'е');
+    return c;
   }
 
-  // Find supplier in DB by name (smart matching: strips org form, quotes, case-insensitive)
+  // Find supplier in DB by name (compact comparison: no spaces, no quotes, no org form)
   function findSupplierInDb(name) {
-    var n = normalizeForSearch(name);
+    var n = compactName(name);
     if (!n || n.length < 2) return null;
 
-    // 1. Exact match on cleaned names
-    var exact = dbSuppliers.find(function (s) { return normalizeForSearch(s.name) === n; });
+    // 1. Exact compact match
+    var exact = dbSuppliers.find(function (s) { return compactName(s.name) === n; });
     if (exact) return exact;
 
-    // 2. One contains the other (for partial names)
+    // 2. One contains the other
     var partial = dbSuppliers.find(function (s) {
-      var sn = normalizeForSearch(s.name);
+      var sn = compactName(s.name);
       return sn.includes(n) || n.includes(sn);
     });
     if (partial) return partial;
-
-    // 3. Word-based fuzzy: check if all significant words from search appear in DB name
-    var searchWords = n.split(/\s+/).filter(function (w) { return w.length > 2; });
-    if (searchWords.length > 0) {
-      var wordMatch = dbSuppliers.find(function (s) {
-        var sn = normalizeForSearch(s.name);
-        return searchWords.every(function (w) { return sn.includes(w); });
-      });
-      if (wordMatch) return wordMatch;
-    }
 
     return null;
   }
 
   // Search suppliers for autocomplete (returns top N matches)
   function searchSuppliers(query, limit) {
-    var q = normalizeForSearch(query);
+    var q = compactName(query);
     if (!q || q.length < 1) return [];
     var results = [];
     for (var i = 0; i < dbSuppliers.length; i++) {
       var s = dbSuppliers[i];
-      var sn = normalizeForSearch(s.name);
+      var sn = compactName(s.name);
       if (sn.includes(q)) {
         results.push(s);
         if (results.length >= (limit || 8)) break;
@@ -713,7 +710,7 @@
       // Refresh cache
       await loadDbSuppliers();
       // Update order with DB info
-      var created = dbSuppliers.find(function (s) { return normalizeName(s.name) === normalizeName(newSupplier.name); });
+      var created = dbSuppliers.find(function (s) { return compactName(s.name) === compactName(newSupplier.name); });
       if (created) {
         order.supplierDbId = created.id;
         order.supplierData = created;
