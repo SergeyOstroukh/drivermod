@@ -30,6 +30,9 @@
   let isLoadingSuppliers = false;
   // Привязка цвет-индекс → driver_id (driverSlots[0] = driver_id для цвета 0)
   let driverSlots = [];
+  // Collapsed/expanded state for sidebar lists
+  let _supplierListOpen = true;
+  let _addressListOpen = true;
 
   // ─── Fixed POI locations (ПВЗ / склады) ──────────────────
   var POI_DEFS = [
@@ -863,17 +866,75 @@
   }
 
   function clearAll() {
-    orders = []; assignments = null; variants = []; activeVariant = -1; selectedDriver = null;
-    driverSlots = [];
-    clearState();
+    showClearDialog();
+  }
+
+  function showClearDialog() {
+    var existing = document.getElementById('dcClearModal');
+    if (existing) existing.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'dcClearModal';
+    modal.className = 'modal is-open';
+    modal.style.cssText = 'z-index:10000;';
+    modal.innerHTML = '<div class="modal-content" style="max-width:360px;text-align:center;">' +
+      '<h3 class="modal-title" style="margin-bottom:16px;">Что сбросить?</h3>' +
+      '<div style="display:flex;flex-direction:column;gap:8px;">' +
+      '<button class="btn btn-outline dc-clear-opt" data-type="suppliers" style="color:#10b981;border-color:#10b981;">🏢 Поставщики</button>' +
+      '<button class="btn btn-outline dc-clear-opt" data-type="addresses" style="color:#3b82f6;border-color:#3b82f6;">🏠 Адреса доставки</button>' +
+      '<button class="btn btn-outline dc-clear-opt" data-type="all" style="color:var(--danger);border-color:var(--danger);">Сбросить всё</button>' +
+      '<button class="btn btn-outline dc-clear-opt" data-type="cancel" style="margin-top:4px;">Отмена</button>' +
+      '</div></div>';
+
+    document.body.appendChild(modal);
+
+    modal.querySelectorAll('.dc-clear-opt').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        modal.remove();
+        var type = btn.dataset.type;
+        if (type === 'cancel') return;
+        doClear(type);
+      });
+    });
+  }
+
+  function doClear(type) {
+    if (type === 'suppliers') {
+      var keep = []; var keepA = [];
+      for (var i = 0; i < orders.length; i++) {
+        if (!orders[i].isSupplier) {
+          keep.push(orders[i]);
+          if (assignments) keepA.push(assignments[i]);
+        }
+      }
+      orders = keep;
+      assignments = keepA.length > 0 ? keepA : null;
+      variants = []; activeVariant = -1;
+      showToast('Поставщики сброшены');
+    } else if (type === 'addresses') {
+      var keep2 = []; var keepA2 = [];
+      for (var j = 0; j < orders.length; j++) {
+        if (orders[j].isSupplier) {
+          keep2.push(orders[j]);
+          if (assignments) keepA2.push(assignments[j]);
+        }
+      }
+      orders = keep2;
+      assignments = keepA2.length > 0 ? keepA2 : null;
+      variants = []; activeVariant = -1;
+      showToast('Адреса доставки сброшены');
+    } else {
+      orders = []; assignments = null; variants = []; activeVariant = -1; selectedDriver = null;
+      driverSlots = [];
+      clearState();
+      showToast('Все данные сброшены');
+    }
     _fitBoundsNext = true;
-    // Explicitly clear all markers from the map
     if (mapInstance) {
       try { mapInstance.geoObjects.removeAll(); } catch (e) {}
     }
     placemarks = [];
     renderAll();
-    showToast('Данные карты сброшены');
   }
 
   // ─── Finish distribution (publish routes) ──────────────────
@@ -1291,6 +1352,12 @@
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
 
+    // Preserve collapsed/expanded state before re-render
+    var suppDetails = sidebar.querySelector('.dc-details-suppliers');
+    if (suppDetails) _supplierListOpen = suppDetails.open;
+    var addrDetails = sidebar.querySelector('.dc-details-addresses');
+    if (addrDetails) _addressListOpen = addrDetails.open;
+
     const allOrders = orders.map(function (o, i) { return Object.assign({}, o, { globalIndex: i }); });
     const supplierItems = allOrders.filter(function (o) { return o.isSupplier; });
     const addressItems = allOrders.filter(function (o) { return !o.isSupplier; });
@@ -1384,7 +1451,7 @@
     var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) { return getOrderSlotIdx(o.globalIndex) === selectedDriver; }) : supplierItems;
     var supplierListHtml = '';
     if (filteredSuppliers.length > 0) {
-      supplierListHtml = '<div class="dc-section"><details class="dc-list-details" open>' +
+      supplierListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-suppliers"' + (_supplierListOpen ? ' open' : '') + '>' +
         '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Поставщики <span style="font-weight:400;color:#888;">(' + filteredSuppliers.length + ')</span></summary>' +
         '<div class="dc-orders-list">';
       filteredSuppliers.forEach(function (order) {
@@ -1397,7 +1464,7 @@
     var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) { return getOrderSlotIdx(o.globalIndex) === selectedDriver; }) : addressItems;
     var addressListHtml = '';
     if (filteredAddresses.length > 0) {
-      addressListHtml = '<div class="dc-section"><details class="dc-list-details" open>' +
+      addressListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-addresses"' + (_addressListOpen ? ' open' : '') + '>' +
         '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Адреса <span style="font-weight:400;color:#888;">(' + filteredAddresses.length + ')</span></summary>' +
         '<div class="dc-orders-list">';
       filteredAddresses.forEach(function (order) {
