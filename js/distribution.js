@@ -1142,31 +1142,16 @@
   }
 
   function formatTelegramMessage(driverName, routeDate, points) {
-    var d = new Date(routeDate + 'T00:00:00');
-    var days = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-    var months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-    var dateStr = days[d.getDay()] + ', ' + d.getDate() + ' ' + months[d.getMonth()];
-
-    var msg = '📋 <b>Маршрут на ' + dateStr + '</b>\n';
-    msg += '👤 ' + escapeHtml(driverName) + '\n';
-    msg += '🏢 Поставщиков: ' + points.length + '\n';
-    msg += '─────────────────\n\n';
-
+    var msg = '';
     points.forEach(function (p, i) {
-      msg += (i + 1) + '. <b>' + escapeHtml(p.address) + '</b>';
+      msg += (points.length > 1 ? (i + 1) + '. ' : '') + '<b>' + escapeHtml(p.address) + '</b>';
       if (p.timeSlot) msg += ' ⏰ ' + p.timeSlot;
-      // Yandex Maps link for GPS navigation
       if (p.lat && p.lng) {
-        var ymapsUrl = 'https://yandex.ru/maps/?pt=' + p.lng + ',' + p.lat + '&z=17&l=map';
-        msg += '\n   🗺 <a href="' + ymapsUrl + '">Открыть на карте</a>';
+        msg += '\n🗺 <a href="https://yandex.ru/maps/?pt=' + p.lng + ',' + p.lat + '&z=17&l=map">Карта</a>';
       }
-      if (p.formattedAddress) msg += '\n   📍 ' + escapeHtml(p.formattedAddress);
-      if (p.phone) msg += '\n   📞 ' + p.phone;
-      msg += '\n\n';
+      msg += '\n';
     });
-
-    msg += '✅ Хорошего дня!';
-    return msg;
+    return msg.trim();
   }
 
   function escapeHtml(s) {
