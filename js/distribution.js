@@ -148,11 +148,40 @@
     return results;
   }
 
+  // Resolve driver_id for an order: direct assignment takes priority, then slot-based
+  function getOrderDriverId(idx) {
+    var order = orders[idx];
+    if (order && order.assignedDriverId) return order.assignedDriverId;
+    if (assignments && assignments[idx] >= 0) return driverSlots[assignments[idx]] || null;
+    return null;
+  }
+
+  // Get slot index for an order (for color)
+  function getOrderSlotIdx(idx) {
+    var order = orders[idx];
+    if (order && order.assignedDriverId) {
+      // Find or create slot for this driver
+      var existingSlot = driverSlots.indexOf(order.assignedDriverId);
+      if (existingSlot >= 0) return existingSlot;
+      // Assign to a new slot
+      for (var s = 0; s < 20; s++) {
+        if (!driverSlots[s]) { driverSlots[s] = order.assignedDriverId; return s; }
+      }
+      return -1;
+    }
+    return assignments ? assignments[idx] : -1;
+  }
+
   function getDriverName(slotIdx) {
     const driverId = driverSlots[slotIdx];
     if (!driverId) return 'В' + (slotIdx + 1);
     const d = dbDrivers.find(function (dr) { return dr.id === driverId; });
     return d ? d.name.split(' ')[0] : 'В' + (slotIdx + 1);
+  }
+
+  function getDriverNameById(driverId) {
+    var d = dbDrivers.find(function (dr) { return dr.id === driverId; });
+    return d ? d.name.split(' ')[0] : '?';
   }
 
   function getDriverFullName(slotIdx) {
@@ -322,11 +351,12 @@
     var bounds = [];
     geocoded.forEach(function (order) {
       var globalIdx = orders.indexOf(order);
-      var driverIdx = assignments ? assignments[globalIdx] : -1;
-      var isVisible = selectedDriver === null || driverIdx === selectedDriver;
+      var slotIdx = getOrderSlotIdx(globalIdx);
+      var driverIdx = slotIdx; // for balloon color compatibility
+      var isVisible = selectedDriver === null || slotIdx === selectedDriver;
       var isSettlementOnly = order.settlementOnly;
       var defaultColor = isSettlementOnly ? '#f59e0b' : (order.isSupplier ? '#10b981' : '#3b82f6');
-      var color = driverIdx >= 0 ? COLORS[driverIdx % COLORS.length] : defaultColor;
+      var color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : defaultColor;
 
       var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
         (order.isSupplier ? '<br><span style="color:#10b981;font-size:11px;">Поставщик</span>' : '') +
@@ -471,6 +501,34 @@
     }
     assignments = assignments.slice();
     assignments[globalIdx] = (driverIdx != null ? driverIdx : -1);
+    // Clear direct assignment if using slot-based
+    if (orders[globalIdx]) orders[globalIdx].assignedDriverId = null;
+    activeVariant = -1;
+    renderAll();
+  };
+
+  // Direct assignment by driver_id (no distribute needed)
+  window.__dc_assignDirect = function (globalIdx, driverId) {
+    var order = orders[globalIdx];
+    if (!order) return;
+    order.assignedDriverId = driverId || null;
+    // Ensure assignments array exists
+    if (!assignments) {
+      assignments = [];
+      for (var i = 0; i < orders.length; i++) assignments.push(-1);
+    }
+    // Sync slot-based system: find or create slot
+    if (driverId) {
+      var existingSlot = driverSlots.indexOf(driverId);
+      if (existingSlot < 0) {
+        for (var s = 0; s < 20; s++) {
+          if (!driverSlots[s]) { driverSlots[s] = driverId; existingSlot = s; break; }
+        }
+      }
+      if (existingSlot >= 0) assignments[globalIdx] = existingSlot;
+    } else {
+      assignments[globalIdx] = -1;
+    }
     activeVariant = -1;
     renderAll();
   };
@@ -820,30 +878,13 @@
 
   // ─── Finish distribution (publish routes) ──────────────────
   async function finishDistribution() {
-    if (!assignments) { showToast('Сначала распределите точки', 'error'); return; }
-
-    // Check that all slots have drivers assigned
-    const usedSlots = new Set();
-    assignments.forEach(function (a) { if (a >= 0) usedSlots.add(a); });
-
-    let unassignedSlots = [];
-    usedSlots.forEach(function (slot) {
-      if (!driverSlots[slot]) unassignedSlots.push(slot);
-    });
-
-    if (unassignedSlots.length > 0) {
-      showToast('Назначьте водителей для всех цветов (' + unassignedSlots.map(function(s){ return 'В' + (s+1); }).join(', ') + ')', 'error');
-      return;
-    }
-
     // Build routes per driver
     const routeDate = new Date().toISOString().split('T')[0];
     const routesByDriver = {};
 
     orders.forEach(function (order, idx) {
-      const slot = assignments[idx];
-      if (slot < 0 || !order.geocoded) return;
-      const driverId = driverSlots[slot];
+      if (!order.geocoded) return;
+      var driverId = getOrderDriverId(idx);
       if (!driverId) return;
 
       if (!routesByDriver[driverId]) {
@@ -925,79 +966,66 @@
     }
   }
 
-  // ─── Send routes to Telegram ─────────────────────────────
+  // ─── Send all unsent suppliers to Telegram ─────────────
   async function sendToTelegram() {
-    if (!assignments) { showToast('Сначала распределите точки', 'error'); return; }
-
     var botToken = window.TELEGRAM_BOT_TOKEN;
     if (!botToken) {
       showToast('Telegram бот не настроен. Укажите токен в config.js', 'error');
       return;
     }
 
-    // Check that drivers are assigned
-    var usedSlots = new Set();
-    assignments.forEach(function (a) { if (a >= 0) usedSlots.add(a); });
-    var unassignedSlots = [];
-    usedSlots.forEach(function (s) { if (!driverSlots[s]) unassignedSlots.push(s); });
+    // Group unsent suppliers by driver
+    var byDriver = {}; // { driverId: { driver, orderIndices, points } }
+    var noDriver = 0, noTelegram = [];
+    var routeDate = new Date().toISOString().split('T')[0];
 
-    if (unassignedSlots.length > 0) {
-      showToast('Назначьте водителей для всех цветов', 'error');
+    orders.forEach(function (order, idx) {
+      if (!order.isSupplier || !order.geocoded) return;
+      if (order.telegramSent) return; // Skip already sent
+      var drvId = getOrderDriverId(idx);
+      if (!drvId) { noDriver++; return; }
+      if (!byDriver[drvId]) {
+        var drv = dbDrivers.find(function (d) { return d.id === drvId; });
+        byDriver[drvId] = { driver: drv, orderIndices: [], points: [] };
+      }
+      byDriver[drvId].orderIndices.push(idx);
+      byDriver[drvId].points.push({
+        address: order.address,
+        formattedAddress: order.formattedAddress || null,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        orderNum: byDriver[drvId].points.length + 1,
+        isSupplier: true,
+        lat: order.lat || null,
+        lng: order.lng || null,
+      });
+    });
+
+    var driverIds = Object.keys(byDriver);
+    if (driverIds.length === 0) {
+      showToast(noDriver > 0 ? 'Назначьте водителей поставщикам' : 'Нет неотправленных поставщиков', 'error');
       return;
     }
 
-    // Build messages per driver
-    var routeDate = new Date().toISOString().split('T')[0];
-    var messagesSent = 0, messagesFailed = 0, noTelegram = [];
+    var messagesSent = 0, messagesFailed = 0;
+    for (var i = 0; i < driverIds.length; i++) {
+      var entry = byDriver[driverIds[i]];
+      var driver = entry.driver;
+      if (!driver) { messagesFailed++; continue; }
+      if (!driver.telegram_chat_id) { noTelegram.push(driver.name); continue; }
 
-    for (var slot = 0; slot < driverCount; slot++) {
-      var driverId = driverSlots[slot];
-      if (!driverId) continue;
-
-      var driver = dbDrivers.find(function (d) { return d.id === driverId; });
-      if (!driver) continue;
-
-      // Collect only SUPPLIER points for this driver (addresses sent separately in future)
-      var points = [];
-      orders.forEach(function (order, idx) {
-        if (assignments[idx] !== slot || !order.geocoded) return;
-        if (!order.isSupplier) return; // Only suppliers for now
-        points.push({
-          address: order.address,
-          formattedAddress: order.formattedAddress || null,
-          phone: order.phone || null,
-          timeSlot: order.timeSlot || null,
-          orderNum: points.length + 1,
-          isSupplier: true,
-          lat: order.lat || null,
-          lng: order.lng || null,
-        });
-      });
-
-      if (points.length === 0) continue;
-
-      if (!driver.telegram_chat_id) {
-        noTelegram.push(driver.name);
-        continue;
-      }
-
-      // Format message
-      var msg = formatTelegramMessage(driver.name, routeDate, points);
-
-      // Send via Telegram Bot API directly
+      var msg = formatTelegramMessage(driver.name, routeDate, entry.points);
       try {
         var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: driver.telegram_chat_id,
-            text: msg,
-            parse_mode: 'HTML',
-          }),
+          body: JSON.stringify({ chat_id: driver.telegram_chat_id, text: msg, parse_mode: 'HTML' }),
         });
         var data = await resp.json();
         if (data.ok) {
           messagesSent++;
+          // Mark all these orders as sent
+          entry.orderIndices.forEach(function (oi) { orders[oi].telegramSent = true; });
         } else {
           messagesFailed++;
           console.warn('Telegram error for', driver.name, ':', data.description);
@@ -1011,7 +1039,58 @@
     var result = 'Telegram: отправлено ' + messagesSent;
     if (messagesFailed > 0) result += ', ошибок: ' + messagesFailed;
     if (noTelegram.length > 0) result += '\nНет Telegram ID: ' + noTelegram.join(', ');
+    if (noDriver > 0) result += '\nБез водителя: ' + noDriver;
     showToast(result, messagesFailed > 0 || noTelegram.length > 0 ? 'error' : undefined);
+    renderAll();
+  }
+
+  // ─── Send single supplier to Telegram ──────────────────
+  async function sendOneToTelegram(orderId) {
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+    if (!botToken) { showToast('Telegram бот не настроен', 'error'); return; }
+
+    var orderIdx = orders.findIndex(function (o) { return o.id === orderId; });
+    if (orderIdx < 0) return;
+    var order = orders[orderIdx];
+    if (!order.isSupplier || !order.geocoded) { showToast('Поставщик не найден на карте', 'error'); return; }
+
+    var driverId = getOrderDriverId(orderIdx);
+    if (!driverId) { showToast('Сначала назначьте водителя', 'error'); return; }
+
+    var driver = dbDrivers.find(function (d) { return d.id === driverId; });
+    if (!driver) { showToast('Водитель не найден', 'error'); return; }
+    if (!driver.telegram_chat_id) { showToast('У водителя ' + driver.name + ' не указан Telegram', 'error'); return; }
+
+    var routeDate = new Date().toISOString().split('T')[0];
+    var points = [{
+      address: order.address,
+      formattedAddress: order.formattedAddress || null,
+      phone: order.phone || null,
+      timeSlot: order.timeSlot || null,
+      orderNum: 1,
+      isSupplier: true,
+      lat: order.lat || null,
+      lng: order.lng || null,
+    }];
+    var msg = formatTelegramMessage(driver.name, routeDate, points);
+
+    try {
+      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: driver.telegram_chat_id, text: msg, parse_mode: 'HTML' }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        order.telegramSent = true;
+        showToast('Отправлено в Telegram: ' + order.address);
+        renderAll();
+      } else {
+        showToast('Ошибка Telegram: ' + (data.description || '?'), 'error');
+      }
+    } catch (err) {
+      showToast('Ошибка отправки: ' + err.message, 'error');
+    }
   }
 
   function formatTelegramMessage(driverName, routeDate, points) {
@@ -1057,8 +1136,9 @@
   }
 
   function renderOrderItem(order, idx) {
-    const dIdx = assignments ? assignments[idx] : -1;
-    const color = dIdx >= 0 ? COLORS[dIdx % COLORS.length] : '';
+    const driverId = getOrderDriverId(idx);
+    const slotIdx = getOrderSlotIdx(idx);
+    const color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : '';
     const isFailed = !order.geocoded && order.error;
     const isSettlementOnly = order.geocoded && order.settlementOnly;
     const isEditing = editingOrderId === order.id;
@@ -1070,14 +1150,14 @@
     if (isSettlementOnly) itemClass += ' settlement-only';
     if (isPlacing) itemClass += ' placing';
 
-    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (dIdx >= 0 ? 'border-left-color:' + color : '') + '">';
+    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (driverId ? 'border-left-color:' + color : '') + '">';
     var numBg;
     if (order.isPoi) {
-      numBg = 'background:' + (dIdx >= 0 ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
+      numBg = 'background:' + (driverId ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
     } else if (order.isSupplier) {
-      numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
+      numBg = driverId ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
     } else {
-      numBg = dIdx >= 0 ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
+      numBg = driverId ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
     }
     var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (idx + 1));
     html += '<div class="dc-order-num" style="' + numBg + '">' + numLabel + '</div>';
@@ -1097,15 +1177,28 @@
     } else if (order.isSupplier && !order.supplierDbId) {
       html += '<div style="font-size:10px;color:#ef4444;margin-top:1px;">Не найден в базе</div>';
     }
-    // Inline driver assignment
+    // Inline driver assignment — directly from DB drivers list
+    var driverDisplayName = driverId ? getDriverNameById(driverId) : null;
     html += '<div class="dc-order-driver-assign" style="margin-top:3px;">';
-    if (dIdx >= 0) {
-      const driverName = getDriverName(dIdx);
-      html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:' + color + ';cursor:pointer;font-size:12px;font-weight:600;" title="Нажмите чтобы сменить водителя">👤 ' + driverName + ' ▾</span>';
+    if (driverId) {
+      html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:' + color + ';cursor:pointer;font-size:12px;font-weight:600;" title="Нажмите чтобы сменить водителя">👤 ' + driverDisplayName + ' ▾</span>';
     } else if (order.geocoded) {
       html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
     }
     html += '</div>';
+    // Telegram send indicator for suppliers
+    if (order.isSupplier && order.geocoded) {
+      html += '<div class="dc-tg-row" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
+      if (order.telegramSent) {
+        html += '<span style="font-size:11px;color:#229ED9;" title="Отправлено в Telegram">✈️ ✓</span>';
+        html += '<button class="btn btn-outline btn-sm dc-tg-send-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#229ED9;border-color:#229ED9;" title="Отправить повторно">↻</button>';
+      } else if (driverId) {
+        html += '<button class="btn btn-outline btn-sm dc-tg-send-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#229ED9;border-color:#229ED9;" title="Отправить в Telegram">✈️ →</button>';
+      } else {
+        html += '<span style="font-size:10px;color:#ccc;" title="Сначала назначьте водителя">✈️ —</span>';
+      }
+      html += '</div>';
+    }
     if (order.isKbt) {
       var helperName = order.helperDriverSlot != null ? getDriverName(order.helperDriverSlot) : '?';
       var helperColor = order.helperDriverSlot != null ? COLORS[order.helperDriverSlot % COLORS.length] : '#a855f7';
@@ -1230,26 +1323,25 @@
       variantsHtml += '</div>';
     }
 
-    // Finish button
+    // Finish button — show when any order has a driver assigned
     let finishHtml = '';
-    if (assignments) {
-      const usedSlots = new Set();
-      assignments.forEach(function (a) { if (a >= 0) usedSlots.add(a); });
-      let allAssigned = true;
-      usedSlots.forEach(function (s) { if (!driverSlots[s]) allAssigned = false; });
+    var hasAnyDriverAssigned = orders.some(function (o, i) { return getOrderDriverId(i) != null; });
+    if (hasAnyDriverAssigned) {
+      // Count unsent suppliers for Telegram button label
+      var unsentSupplierCount = orders.filter(function (o, i) { return o.isSupplier && o.geocoded && !o.telegramSent && getOrderDriverId(i); }).length;
 
       finishHtml = '<div class="dc-section dc-finish-section">' +
-        '<button class="btn dc-btn-finish' + (allAssigned ? ' ready' : '') + '">' +
+        '<button class="btn dc-btn-finish ready">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> ' +
         'Завершить распределение</button>' +
         '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' +
-        'Поставщики → Telegram</button>' +
+        'Поставщики → Telegram' + (unsentSupplierCount > 0 ? ' (' + unsentSupplierCount + ')' : ' ✓') + '</button>' +
         '</div>';
     }
 
     // ─── Supplier list (collapsible) ─────────────────────────
-    var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) { return assignments && assignments[o.globalIndex] === selectedDriver; }) : supplierItems;
+    var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) { return getOrderSlotIdx(o.globalIndex) === selectedDriver; }) : supplierItems;
     var supplierListHtml = '';
     if (filteredSuppliers.length > 0) {
       supplierListHtml = '<div class="dc-section"><details class="dc-list-details" open>' +
@@ -1262,7 +1354,7 @@
     }
 
     // ─── Address list (collapsible) ──────────────────────────
-    var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) { return assignments && assignments[o.globalIndex] === selectedDriver; }) : addressItems;
+    var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) { return getOrderSlotIdx(o.globalIndex) === selectedDriver; }) : addressItems;
     var addressListHtml = '';
     if (filteredAddresses.length > 0) {
       addressListHtml = '<div class="dc-section"><details class="dc-list-details" open>' +
@@ -1497,44 +1589,45 @@
       });
     });
 
-    // Inline driver assignment on sidebar items
+    // Inline driver assignment on sidebar items — show DB drivers directly
     sidebar.querySelectorAll('.dc-assign-label').forEach(function (label) {
       label.addEventListener('click', function (e) {
         e.stopPropagation();
         var idx = parseInt(label.dataset.idx);
+        var order = orders[idx];
+        if (!order) return;
         // Remove any existing dropdown
         var existing = sidebar.querySelector('.dc-inline-driver-picker');
         if (existing) existing.remove();
-        // Create dropdown
+        // Create dropdown with actual DB drivers
         var picker = document.createElement('div');
         picker.className = 'dc-inline-driver-picker';
         picker.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;padding:6px 0;';
-        var currentD = assignments ? assignments[idx] : -1;
-        for (var d = 0; d < driverCount; d++) {
-          var c = COLORS[d % COLORS.length];
-          var active = d === currentD;
-          var name = getDriverName(d);
+        var currentDriverId = getOrderDriverId(idx);
+        dbDrivers.forEach(function (dr, di) {
+          var c = COLORS[di % COLORS.length];
+          var active = dr.id === currentDriverId;
+          var displayName = dr.name.split(' ')[0];
           var btn = document.createElement('button');
-          btn.dataset.driver = d;
           btn.style.cssText = 'display:flex;align-items:center;gap:3px;padding:3px 8px;border-radius:10px;border:2px solid ' + (active ? '#333' : 'transparent') + ';background:' + c + ';cursor:pointer;color:#fff;font-size:11px;font-weight:600;';
-          btn.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + name;
-          btn.title = name;
-          (function (driverIdx) {
+          btn.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + displayName;
+          btn.title = dr.name;
+          (function (driverId) {
             btn.addEventListener('click', function (ev) {
               ev.stopPropagation();
-              window.__dc_assign(idx, driverIdx);
+              window.__dc_assignDirect(idx, driverId);
             });
-          })(d);
+          })(dr.id);
           picker.appendChild(btn);
-        }
+        });
         // Unassign button
-        if (currentD >= 0) {
+        if (currentDriverId) {
           var unBtn = document.createElement('button');
           unBtn.style.cssText = 'display:flex;align-items:center;gap:3px;padding:3px 8px;border-radius:10px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;color:#999;font-size:11px;';
           unBtn.textContent = '✕ Снять';
           unBtn.addEventListener('click', function (ev) {
             ev.stopPropagation();
-            window.__dc_assign(idx, -1);
+            window.__dc_assignDirect(idx, null);
           });
           picker.appendChild(unBtn);
         }
@@ -1546,6 +1639,13 @@
             document.removeEventListener('click', closePicker);
           }, { once: true });
         }, 10);
+      });
+    });
+
+    // Per-row Telegram send
+    sidebar.querySelectorAll('.dc-tg-send-one').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        sendOneToTelegram(btn.dataset.id);
       });
     });
   }
