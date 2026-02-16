@@ -1285,8 +1285,9 @@
     }
   }
 
-  // ─── Telegram confirmations via Supabase table ──────────
+  // ─── Telegram confirmations ──────────────────────────────
   var _tgPollTimer = null;
+  var _processedCallbacks = JSON.parse(localStorage.getItem('dc_tg_processed_cbs') || '[]');
 
   function getSupabaseClient() {
     var config = window.SUPABASE_CONFIG || {};
@@ -1297,7 +1298,7 @@
     return window._dcSupabase;
   }
 
-  // Save confirmation record to Supabase when sending
+  // Save confirmation record to Supabase when sending (for webhook flow)
   async function saveTelegramConfirmation(orderId, chatId, messageId, driverName, supplierName) {
     var client = getSupabaseClient();
     if (!client) return;
@@ -1311,65 +1312,123 @@
         status: 'sent',
       });
     } catch (e) {
-      console.warn('saveTelegramConfirmation error:', e);
+      console.warn('saveTelegramConfirmation error (table may not exist yet):', e);
     }
   }
 
-  // Poll Supabase table for status updates
+  // Check confirmations — tries Supabase table first, falls back to Telegram getUpdates
   async function checkTelegramConfirmations(silent) {
+    var processed = 0;
+
+    // Collect pending order IDs
+    var pendingIds = [];
+    orders.forEach(function (o) {
+      if (o.isSupplier && o.telegramSent && o.telegramStatus === 'sent') {
+        pendingIds.push(o.id);
+      }
+    });
+    if (pendingIds.length === 0) {
+      if (!silent) showToast('Нет ожидающих ответов');
+      return;
+    }
+
+    // --- Method 1: Try Supabase table (webhook flow) ---
     var client = getSupabaseClient();
-    if (!client) { if (!silent) showToast('Supabase не настроен', 'error'); return; }
-
-    try {
-      // Collect order IDs that are "sent" (waiting for response)
-      var pendingIds = [];
-      orders.forEach(function (o) {
-        if (o.isSupplier && o.telegramSent && o.telegramStatus === 'sent') {
-          pendingIds.push(o.id);
+    if (client) {
+      try {
+        var resp = await client
+          .from('telegram_confirmations')
+          .select('order_id, status, updated_at')
+          .in('order_id', pendingIds)
+          .in('status', ['confirmed', 'rejected']);
+        if (!resp.error && resp.data && resp.data.length > 0) {
+          resp.data.forEach(function (row) {
+            var order = orders.find(function (o) { return o.id === row.order_id; });
+            if (order && order.telegramStatus === 'sent') {
+              order.telegramStatus = row.status;
+              processed++;
+            }
+          });
         }
-      });
-
-      if (pendingIds.length === 0) {
-        if (!silent) showToast('Нет ожидающих ответов');
-        return;
+      } catch (e) {
+        console.warn('Supabase table check failed (table may not exist):', e);
       }
+    }
 
-      // Query the table for these order_ids
-      var { data, error } = await client
-        .from('telegram_confirmations')
-        .select('order_id, status, updated_at')
-        .in('order_id', pendingIds)
-        .in('status', ['confirmed', 'rejected']);
+    // --- Method 2: Direct Telegram getUpdates (fallback, works without webhook) ---
+    if (processed === 0) {
+      var botToken = window.TELEGRAM_BOT_TOKEN;
+      if (botToken) {
+        try {
+          var tgResp = await fetch('https://api.telegram.org/bot' + botToken + '/getUpdates', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timeout: 0, limit: 100, allowed_updates: ['message', 'callback_query'] }),
+          });
+          var tgData = await tgResp.json();
+          if (tgData.ok && tgData.result) {
+            for (var i = 0; i < tgData.result.length; i++) {
+              var update = tgData.result[i];
+              if (!update.callback_query) continue;
+              var cbId = update.callback_query.id;
+              if (_processedCallbacks.indexOf(cbId) !== -1) continue;
 
-      if (error) {
-        if (!silent) showToast('Ошибка проверки: ' + error.message, 'error');
-        return;
-      }
+              var cbParts = (update.callback_query.data || '').split(':');
+              if (cbParts.length < 2) continue;
+              var action = cbParts[0];
+              var orderId = cbParts.slice(1).join(':');
 
-      var processed = 0;
-      if (data && data.length > 0) {
-        data.forEach(function (row) {
-          var order = orders.find(function (o) { return o.id === row.order_id; });
-          if (order && order.telegramStatus === 'sent') {
-            order.telegramStatus = row.status; // 'confirmed' or 'rejected'
-            processed++;
+              var order = orders.find(function (o) { return o.id === orderId; });
+              if (order && (action === 'accept' || action === 'reject')) {
+                order.telegramStatus = action === 'accept' ? 'confirmed' : 'rejected';
+                processed++;
+              }
+
+              // Answer callback — removes spinner for the driver
+              try {
+                await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ callback_query_id: cbId, text: action === 'accept' ? 'Принято ✅' : 'Отклонено ❌' }),
+                });
+              } catch (e) { /* ignore */ }
+
+              // Edit message — remove buttons, show status
+              if (update.callback_query.message) {
+                var chatId = update.callback_query.message.chat.id;
+                var msgId = update.callback_query.message.message_id;
+                var origText = update.callback_query.message.text || '';
+                var statusLine = action === 'accept' ? '\n\n✅ Принято' : '\n\n❌ Отклонено';
+                try {
+                  await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: chatId, message_id: msgId, text: origText + statusLine }),
+                  });
+                } catch (e) { /* ignore */ }
+              }
+
+              _processedCallbacks.push(cbId);
+            }
+            // Persist processed IDs
+            if (_processedCallbacks.length > 500) _processedCallbacks = _processedCallbacks.slice(-500);
+            localStorage.setItem('dc_tg_processed_cbs', JSON.stringify(_processedCallbacks));
           }
-        });
+        } catch (e) {
+          console.warn('getUpdates fallback error:', e);
+        }
       }
+    }
 
-      if (processed > 0) {
-        showToast('Обновлено ответов: ' + processed);
-        renderAll();
-      } else {
-        if (!silent) showToast('Нет новых ответов от водителей');
-      }
-    } catch (err) {
-      if (!silent) showToast('Ошибка проверки: ' + err.message, 'error');
-      console.error('checkTelegramConfirmations error:', err);
+    if (processed > 0) {
+      if (!silent) showToast('Обновлено ответов: ' + processed);
+      renderAll();
+    } else {
+      if (!silent) showToast('Нет новых ответов от водителей');
     }
   }
 
-  // Auto-poll Supabase every 10 seconds when there are pending suppliers
+  // Auto-poll every 10 seconds when there are pending suppliers
   function startTelegramPolling() {
     stopTelegramPolling();
     _tgPollTimer = setInterval(function () {
@@ -1610,8 +1669,8 @@
     if (drvDetails) _driversListOpen = drvDetails.open;
 
     const allOrders = orders.map(function (o, i) { return Object.assign({}, o, { globalIndex: i }); });
-    const supplierItems = allOrders.filter(function (o) { return o.isSupplier; });
-    const addressItems = allOrders.filter(function (o) { return !o.isSupplier; });
+    const supplierItems = allOrders.filter(function (o) { return o.isSupplier; }).reverse();
+    const addressItems = allOrders.filter(function (o) { return !o.isSupplier; }).reverse();
 
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     const failedCount = orders.filter(function (o) { return !o.geocoded && o.error; }).length;
