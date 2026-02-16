@@ -930,9 +930,6 @@
       showToast('Все данные сброшены');
     }
     _fitBoundsNext = true;
-    if (mapInstance) {
-      try { mapInstance.geoObjects.removeAll(); } catch (e) {}
-    }
     placemarks = [];
     renderAll();
   }
@@ -1228,7 +1225,12 @@
   // ─── Render ───────────────────────────────────────────────
   function renderAll() {
     renderSidebar();
-    updatePlacemarks();
+    if (mapInstance && window.ymaps) {
+      updatePlacemarks();
+    } else {
+      // Map not ready yet — wait for it then render placemarks
+      initMap().then(function () { updatePlacemarks(); });
+    }
     saveState();
     var mapContainer = $('#distributionMap');
     if (mapContainer) mapContainer.style.cursor = placingOrderId ? 'crosshair' : '';
