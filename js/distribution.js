@@ -34,6 +34,8 @@
   let _supplierListOpen = true;
   let _addressListOpen = true;
   let _driversListOpen = true;
+  // Hide assigned toggle
+  let _hideAssigned = false;
 
   // ─── Fixed POI locations (ПВЗ / склады) ──────────────────
   var POI_DEFS = [
@@ -394,6 +396,8 @@
       var slotIdx = getOrderSlotIdx(globalIdx);
       var driverIdx = slotIdx; // for balloon color compatibility
       var orderDriverId = getOrderDriverId(globalIdx);
+      // Hide assigned suppliers when toggle is on
+      if (_hideAssigned && order.isSupplier && orderDriverId) return;
       var isVisible = selectedDriver === null || (orderDriverId != null && String(orderDriverId) === String(selectedDriver)) || (selectedDriver === '__unassigned__' && !orderDriverId);
       var isSettlementOnly = order.settlementOnly;
       var isUnassigned = slotIdx < 0;
@@ -1506,18 +1510,32 @@
     }
 
     // ─── Supplier list (collapsible) ─────────────────────────
-    var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) {
-      var did = getOrderDriverId(o.globalIndex);
-      return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
-    }) : supplierItems;
+    var filteredSuppliers = supplierItems;
+    if (selectedDriver !== null) {
+      filteredSuppliers = filteredSuppliers.filter(function (o) {
+        var did = getOrderDriverId(o.globalIndex);
+        return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
+      });
+    }
+    if (_hideAssigned) {
+      filteredSuppliers = filteredSuppliers.filter(function (o) { return !getOrderDriverId(o.globalIndex); });
+    }
+    var assignedSupplierCount = supplierItems.filter(function (o) { return !!getOrderDriverId(o.globalIndex); }).length;
+    var unassignedSupplierCount = supplierItems.length - assignedSupplierCount;
     var supplierListHtml = '';
-    if (filteredSuppliers.length > 0) {
+    if (supplierItems.length > 0) {
+      var toggleBtnHtml = supplierItems.length > 0
+        ? '<button class="dc-toggle-assigned" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_hideAssigned ? 'var(--accent)' : '#555') + ';background:' + (_hideAssigned ? 'rgba(16,185,129,0.15)' : 'transparent') + ';color:' + (_hideAssigned ? 'var(--accent)' : '#999') + ';cursor:pointer;margin-left:8px;white-space:nowrap;">' + (_hideAssigned ? 'Показать всех (' + supplierItems.length + ')' : 'Скрыть распред. (' + assignedSupplierCount + ')') + '</button>'
+        : '';
       supplierListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-suppliers"' + (_supplierListOpen ? ' open' : '') + '>' +
-        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Поставщики <span style="font-weight:400;color:#888;">(' + filteredSuppliers.length + ')</span></summary>' +
+        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;">Поставщики <span style="font-weight:400;color:#888;">(' + ((_hideAssigned ? unassignedSupplierCount : filteredSuppliers.length)) + ')</span>' + toggleBtnHtml + '</summary>' +
         '<div class="dc-orders-list">';
       filteredSuppliers.forEach(function (order) {
         supplierListHtml += renderOrderItem(order, order.globalIndex);
       });
+      if (filteredSuppliers.length === 0) {
+        supplierListHtml += '<div style="padding:12px;color:#888;font-size:12px;text-align:center;">' + (_hideAssigned ? 'Все поставщики распределены' : 'Нет поставщиков') + '</div>';
+      }
       supplierListHtml += '</div></details></div>';
     }
 
@@ -1600,6 +1618,17 @@
   function bindSidebarEvents() {
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
+
+    // Toggle hide/show assigned suppliers
+    var toggleAssignedBtn = sidebar.querySelector('.dc-toggle-assigned');
+    if (toggleAssignedBtn) {
+      toggleAssignedBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _hideAssigned = !_hideAssigned;
+        renderAll();
+      });
+    }
 
     // Supplier load / append
     const loadSuppliersBtn = sidebar.querySelector('.dc-btn-load-suppliers');
