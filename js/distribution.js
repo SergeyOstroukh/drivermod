@@ -1156,25 +1156,53 @@
       if (!driver.telegram_chat_id) { noTelegram.push(driver.name); continue; }
       if (driver.telegram_chat_id < 0) { noTelegram.push(driver.name + ' (групповой ID!)'); continue; }
 
-      var msg = formatTelegramMessage(driver.name, routeDate, entry.points);
-      try {
-        var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: driver.telegram_chat_id, text: msg, parse_mode: 'HTML' }),
-        });
-        var data = await resp.json();
-        if (data.ok) {
-          messagesSent++;
-          // Mark all these orders as sent
-          entry.orderIndices.forEach(function (oi) { orders[oi].telegramSent = true; });
-        } else {
+      // Send each supplier as individual message with confirmation buttons
+      for (var si = 0; si < entry.orderIndices.length; si++) {
+        var oi = entry.orderIndices[si];
+        var supplierOrder = orders[oi];
+        var singlePoints = [{
+          address: supplierOrder.address,
+          formattedAddress: supplierOrder.formattedAddress || null,
+          phone: supplierOrder.phone || null,
+          timeSlot: supplierOrder.timeSlot || null,
+          orderNum: si + 1,
+          isSupplier: true,
+          lat: supplierOrder.lat || null,
+          lng: supplierOrder.lng || null,
+        }];
+        var msg = formatTelegramMessage(driver.name, routeDate, singlePoints);
+        var inlineKeyboard = {
+          inline_keyboard: [[
+            { text: '✅ Принял', callback_data: 'accept:' + supplierOrder.id },
+            { text: '❌ Отклонил', callback_data: 'reject:' + supplierOrder.id },
+          ]]
+        };
+        try {
+          var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: driver.telegram_chat_id,
+              text: msg,
+              parse_mode: 'HTML',
+              reply_markup: inlineKeyboard,
+            }),
+          });
+          var data = await resp.json();
+          if (data.ok) {
+            messagesSent++;
+            supplierOrder.telegramSent = true;
+            supplierOrder.telegramStatus = 'sent';
+            supplierOrder.telegramMessageId = data.result.message_id;
+            supplierOrder.telegramChatId = driver.telegram_chat_id;
+          } else {
+            messagesFailed++;
+            console.warn('Telegram error for', driver.name, ':', data.description);
+          }
+        } catch (err) {
           messagesFailed++;
-          console.warn('Telegram error for', driver.name, ':', data.description);
+          console.error('Telegram send error:', err);
         }
-      } catch (err) {
-        messagesFailed++;
-        console.error('Telegram send error:', err);
       }
     }
 
@@ -1217,15 +1245,31 @@
     }];
     var msg = formatTelegramMessage(driver.name, routeDate, points);
 
+    // Inline keyboard: Принял / Отклонил
+    var inlineKeyboard = {
+      inline_keyboard: [[
+        { text: '✅ Принял', callback_data: 'accept:' + order.id },
+        { text: '❌ Отклонил', callback_data: 'reject:' + order.id },
+      ]]
+    };
+
     try {
       var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: driver.telegram_chat_id, text: msg, parse_mode: 'HTML' }),
+        body: JSON.stringify({
+          chat_id: driver.telegram_chat_id,
+          text: msg,
+          parse_mode: 'HTML',
+          reply_markup: inlineKeyboard,
+        }),
       });
       var data = await resp.json();
       if (data.ok) {
         order.telegramSent = true;
+        order.telegramStatus = 'sent'; // sent | confirmed | rejected
+        order.telegramMessageId = data.result.message_id;
+        order.telegramChatId = driver.telegram_chat_id;
         showToast('Отправлено в Telegram: ' + order.address);
         renderAll();
       } else {
@@ -1233,6 +1277,101 @@
       }
     } catch (err) {
       showToast('Ошибка отправки: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Check Telegram confirmations via getUpdates ──────────
+  // Track processed callback IDs locally to avoid re-processing
+  var _processedCallbacks = JSON.parse(localStorage.getItem('dc_tg_processed_cbs') || '[]');
+
+  async function checkTelegramConfirmations() {
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+    if (!botToken) { showToast('Telegram бот не настроен', 'error'); return; }
+
+    try {
+      // Fetch all pending updates (without offset to avoid consuming message updates used by vehicles.js)
+      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/getUpdates?timeout=0&limit=100');
+      var data = await resp.json();
+      if (!data.ok || !data.result || data.result.length === 0) {
+        showToast('Нет новых ответов от водителей');
+        return;
+      }
+
+      var processed = 0;
+      for (var i = 0; i < data.result.length; i++) {
+        var update = data.result[i];
+        if (!update.callback_query) continue;
+
+        var cbId = update.callback_query.id;
+        // Skip already processed callbacks
+        if (_processedCallbacks.indexOf(cbId) !== -1) continue;
+
+        var cbData = update.callback_query.data || '';
+        var parts = cbData.split(':');
+        if (parts.length < 2) continue;
+
+        var action = parts[0]; // 'accept' or 'reject'
+        var orderId = parts.slice(1).join(':');
+
+        // Find the order
+        var order = orders.find(function (o) { return o.id === orderId; });
+        if (order) {
+          if (action === 'accept') {
+            order.telegramStatus = 'confirmed';
+            processed++;
+          } else if (action === 'reject') {
+            order.telegramStatus = 'rejected';
+            processed++;
+          }
+        }
+
+        // Answer the callback query (removes "loading" state on the button)
+        var answerText = action === 'accept' ? 'Принято ✅' : 'Отклонено ❌';
+        try {
+          await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: cbId, text: answerText }),
+          });
+        } catch (e) { /* ignore */ }
+
+        // Update the message to remove buttons and show status
+        if (order && update.callback_query.message) {
+          var chatId = update.callback_query.message.chat.id;
+          var msgId = update.callback_query.message.message_id;
+          var statusText = action === 'accept' ? '\n\n✅ Водитель подтвердил' : '\n\n❌ Водитель отклонил';
+          try {
+            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                message_id: msgId,
+                text: update.callback_query.message.text + statusText,
+                parse_mode: 'HTML',
+              }),
+            });
+          } catch (e) { /* ignore */ }
+        }
+
+        // Mark this callback as processed
+        _processedCallbacks.push(cbId);
+      }
+
+      // Keep only last 500 IDs to prevent unbounded growth
+      if (_processedCallbacks.length > 500) {
+        _processedCallbacks = _processedCallbacks.slice(-500);
+      }
+      localStorage.setItem('dc_tg_processed_cbs', JSON.stringify(_processedCallbacks));
+
+      if (processed > 0) {
+        showToast('Обновлено ответов: ' + processed);
+        renderAll();
+      } else {
+        showToast('Нет новых ответов от водителей');
+      }
+    } catch (err) {
+      showToast('Ошибка проверки: ' + err.message, 'error');
     }
   }
 
@@ -1275,6 +1414,9 @@
 
     // Reset state: unassign driver, clear sent flag
     order.telegramSent = false;
+    order.telegramStatus = null;
+    order.telegramMessageId = null;
+    order.telegramChatId = null;
     order.assignedDriverId = null;
     if (assignments && assignments[orderIdx] >= 0) {
       assignments[orderIdx] = -1;
@@ -1370,13 +1512,20 @@
       html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
     }
     html += '</div>';
-    // Telegram send indicator + cancel for suppliers
+    // Telegram send indicator + confirmation status for suppliers
     if (order.isSupplier && order.geocoded) {
       html += '<div class="dc-tg-row" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
-      if (order.telegramSent) {
-        html += '<span style="font-size:11px;color:#229ED9;" title="Отправлено в Telegram">✈️ ✓</span>';
+      if (order.telegramSent && order.telegramStatus === 'confirmed') {
+        html += '<span style="font-size:11px;color:#22c55e;" title="Водитель подтвердил">✅ Принял</span>';
+        html += '<button class="btn btn-outline btn-sm dc-tg-cancel-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#ef4444;border-color:#ef4444;" title="Отмена">✕</button>';
+      } else if (order.telegramSent && order.telegramStatus === 'rejected') {
+        html += '<span style="font-size:11px;color:#ef4444;" title="Водитель отклонил">❌ Отклонил</span>';
         html += '<button class="btn btn-outline btn-sm dc-tg-send-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#229ED9;border-color:#229ED9;" title="Отправить повторно">↻</button>';
-        html += '<button class="btn btn-outline btn-sm dc-tg-cancel-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#ef4444;border-color:#ef4444;" title="Отправить отмену водителю и снять назначение">✕ Отмена</button>';
+        html += '<button class="btn btn-outline btn-sm dc-tg-cancel-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#ef4444;border-color:#ef4444;" title="Отмена">✕</button>';
+      } else if (order.telegramSent) {
+        html += '<span style="font-size:11px;color:#f59e0b;" title="Ожидаем ответ водителя">⏳ Ждём</span>';
+        html += '<button class="btn btn-outline btn-sm dc-tg-send-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#229ED9;border-color:#229ED9;" title="Отправить повторно">↻</button>';
+        html += '<button class="btn btn-outline btn-sm dc-tg-cancel-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#ef4444;border-color:#ef4444;" title="Отмена">✕</button>';
       } else if (driverId) {
         html += '<button class="btn btn-outline btn-sm dc-tg-send-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#229ED9;border-color:#229ED9;" title="Отправить в Telegram">✈️ →</button>';
       } else {
@@ -1496,8 +1645,20 @@
     let finishHtml = '';
     var hasAnyDriverAssigned = orders.some(function (o, i) { return getOrderDriverId(i) != null; });
     if (hasAnyDriverAssigned) {
-      // Count unsent suppliers for Telegram button label
+      // Count suppliers by Telegram status
       var unsentSupplierCount = orders.filter(function (o, i) { return o.isSupplier && o.geocoded && !o.telegramSent && getOrderDriverId(i); }).length;
+      var pendingCount = orders.filter(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; }).length;
+      var confirmedCount = orders.filter(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'confirmed'; }).length;
+      var rejectedCount = orders.filter(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'rejected'; }).length;
+
+      var tgStatusLine = '';
+      if (pendingCount > 0 || confirmedCount > 0 || rejectedCount > 0) {
+        tgStatusLine = '<div style="font-size:11px;color:#888;margin-top:4px;display:flex;gap:10px;">';
+        if (confirmedCount > 0) tgStatusLine += '<span style="color:#22c55e;">✅ ' + confirmedCount + '</span>';
+        if (pendingCount > 0) tgStatusLine += '<span style="color:#f59e0b;">⏳ ' + pendingCount + '</span>';
+        if (rejectedCount > 0) tgStatusLine += '<span style="color:#ef4444;">❌ ' + rejectedCount + '</span>';
+        tgStatusLine += '</div>';
+      }
 
       finishHtml = '<div class="dc-section dc-finish-section">' +
         '<button class="btn dc-btn-finish ready">' +
@@ -1506,6 +1667,8 @@
         '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' +
         'Поставщики → Telegram' + (unsentSupplierCount > 0 ? ' (' + unsentSupplierCount + ')' : ' ✓') + '</button>' +
+        ((pendingCount > 0 || confirmedCount > 0 || rejectedCount > 0) ? '<button class="btn dc-btn-check-tg" style="background:' + (pendingCount > 0 ? '#f59e0b' : '#6b7280') + ';color:#fff;border:none;margin-top:4px;font-size:12px;display:flex;align-items:center;gap:6px;">🔄 Обновить ответы' + (pendingCount > 0 ? ' (' + pendingCount + ' ожидает)' : '') + '</button>' : '') +
+        tgStatusLine +
         '</div>';
     }
 
@@ -1703,6 +1866,8 @@
     if (finishBtn) finishBtn.addEventListener('click', finishDistribution);
     const telegramBtn = sidebar.querySelector('.dc-btn-telegram');
     if (telegramBtn) telegramBtn.addEventListener('click', sendToTelegram);
+    const checkTgBtn = sidebar.querySelector('.dc-btn-check-tg');
+    if (checkTgBtn) checkTgBtn.addEventListener('click', checkTelegramConfirmations);
 
     // POI toggles
     sidebar.querySelectorAll('.dc-poi-toggle').forEach(function (btn) {
