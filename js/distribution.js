@@ -541,6 +541,11 @@
     var order = orders[globalIdx];
     if (!order) return;
     order.assignedDriverId = driverId || null;
+    // Also clear algorithm assignment when unassigning
+    if (!driverId && assignments && assignments[globalIdx] >= 0) {
+      assignments = assignments.slice();
+      assignments[globalIdx] = -1;
+    }
     activeVariant = -1;
     renderAll();
   };
