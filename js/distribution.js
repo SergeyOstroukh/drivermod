@@ -1195,6 +1195,7 @@
             supplierOrder.telegramStatus = 'sent';
             supplierOrder.telegramMessageId = data.result.message_id;
             supplierOrder.telegramChatId = driver.telegram_chat_id;
+            saveTelegramConfirmation(supplierOrder.id, driver.telegram_chat_id, data.result.message_id, driver.name, supplierOrder.address);
           } else {
             messagesFailed++;
             console.warn('Telegram error for', driver.name, ':', data.description);
@@ -1211,6 +1212,7 @@
     if (noTelegram.length > 0) result += '\nНет Telegram ID: ' + noTelegram.join(', ');
     if (noDriver > 0) result += '\nБез водителя: ' + noDriver;
     showToast(result, messagesFailed > 0 || noTelegram.length > 0 ? 'error' : undefined);
+    if (messagesSent > 0) startTelegramPolling();
     renderAll();
   }
 
@@ -1267,10 +1269,13 @@
       var data = await resp.json();
       if (data.ok) {
         order.telegramSent = true;
-        order.telegramStatus = 'sent'; // sent | confirmed | rejected
+        order.telegramStatus = 'sent';
         order.telegramMessageId = data.result.message_id;
         order.telegramChatId = driver.telegram_chat_id;
+        // Save to Supabase for webhook tracking
+        saveTelegramConfirmation(order.id, driver.telegram_chat_id, data.result.message_id, driver.name, order.address);
         showToast('Отправлено в Telegram: ' + order.address);
+        startTelegramPolling();
         renderAll();
       } else {
         showToast('Ошибка Telegram: ' + (data.description || '?'), 'error');
@@ -1280,99 +1285,105 @@
     }
   }
 
-  // ─── Check Telegram confirmations via getUpdates ──────────
-  // Track processed callback IDs locally to avoid re-processing
-  var _processedCallbacks = JSON.parse(localStorage.getItem('dc_tg_processed_cbs') || '[]');
+  // ─── Telegram confirmations via Supabase table ──────────
+  var _tgPollTimer = null;
 
-  async function checkTelegramConfirmations() {
-    var botToken = window.TELEGRAM_BOT_TOKEN;
-    if (!botToken) { showToast('Telegram бот не настроен', 'error'); return; }
+  function getSupabaseClient() {
+    var config = window.SUPABASE_CONFIG || {};
+    if (!config.url || !config.anonKey) return null;
+    if (!window._dcSupabase) {
+      window._dcSupabase = supabase.createClient(config.url, config.anonKey);
+    }
+    return window._dcSupabase;
+  }
+
+  // Save confirmation record to Supabase when sending
+  async function saveTelegramConfirmation(orderId, chatId, messageId, driverName, supplierName) {
+    var client = getSupabaseClient();
+    if (!client) return;
+    try {
+      await client.from('telegram_confirmations').insert({
+        order_id: orderId,
+        chat_id: chatId,
+        message_id: messageId,
+        driver_name: driverName || '',
+        supplier_name: supplierName || '',
+        status: 'sent',
+      });
+    } catch (e) {
+      console.warn('saveTelegramConfirmation error:', e);
+    }
+  }
+
+  // Poll Supabase table for status updates
+  async function checkTelegramConfirmations(silent) {
+    var client = getSupabaseClient();
+    if (!client) { if (!silent) showToast('Supabase не настроен', 'error'); return; }
 
     try {
-      // Fetch all pending updates (without offset to avoid consuming message updates used by vehicles.js)
-      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/getUpdates?timeout=0&limit=100');
-      var data = await resp.json();
-      if (!data.ok || !data.result || data.result.length === 0) {
-        showToast('Нет новых ответов от водителей');
+      // Collect order IDs that are "sent" (waiting for response)
+      var pendingIds = [];
+      orders.forEach(function (o) {
+        if (o.isSupplier && o.telegramSent && o.telegramStatus === 'sent') {
+          pendingIds.push(o.id);
+        }
+      });
+
+      if (pendingIds.length === 0) {
+        if (!silent) showToast('Нет ожидающих ответов');
+        return;
+      }
+
+      // Query the table for these order_ids
+      var { data, error } = await client
+        .from('telegram_confirmations')
+        .select('order_id, status, updated_at')
+        .in('order_id', pendingIds)
+        .in('status', ['confirmed', 'rejected']);
+
+      if (error) {
+        if (!silent) showToast('Ошибка проверки: ' + error.message, 'error');
         return;
       }
 
       var processed = 0;
-      for (var i = 0; i < data.result.length; i++) {
-        var update = data.result[i];
-        if (!update.callback_query) continue;
-
-        var cbId = update.callback_query.id;
-        // Skip already processed callbacks
-        if (_processedCallbacks.indexOf(cbId) !== -1) continue;
-
-        var cbData = update.callback_query.data || '';
-        var parts = cbData.split(':');
-        if (parts.length < 2) continue;
-
-        var action = parts[0]; // 'accept' or 'reject'
-        var orderId = parts.slice(1).join(':');
-
-        // Find the order
-        var order = orders.find(function (o) { return o.id === orderId; });
-        if (order) {
-          if (action === 'accept') {
-            order.telegramStatus = 'confirmed';
-            processed++;
-          } else if (action === 'reject') {
-            order.telegramStatus = 'rejected';
+      if (data && data.length > 0) {
+        data.forEach(function (row) {
+          var order = orders.find(function (o) { return o.id === row.order_id; });
+          if (order && order.telegramStatus === 'sent') {
+            order.telegramStatus = row.status; // 'confirmed' or 'rejected'
             processed++;
           }
-        }
-
-        // Answer the callback query (removes "loading" state on the button)
-        var answerText = action === 'accept' ? 'Принято ✅' : 'Отклонено ❌';
-        try {
-          await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ callback_query_id: cbId, text: answerText }),
-          });
-        } catch (e) { /* ignore */ }
-
-        // Update the message to remove buttons and show status
-        if (order && update.callback_query.message) {
-          var chatId = update.callback_query.message.chat.id;
-          var msgId = update.callback_query.message.message_id;
-          var statusText = action === 'accept' ? '\n\n✅ Водитель подтвердил' : '\n\n❌ Водитель отклонил';
-          try {
-            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: chatId,
-                message_id: msgId,
-                text: update.callback_query.message.text + statusText,
-                parse_mode: 'HTML',
-              }),
-            });
-          } catch (e) { /* ignore */ }
-        }
-
-        // Mark this callback as processed
-        _processedCallbacks.push(cbId);
+        });
       }
-
-      // Keep only last 500 IDs to prevent unbounded growth
-      if (_processedCallbacks.length > 500) {
-        _processedCallbacks = _processedCallbacks.slice(-500);
-      }
-      localStorage.setItem('dc_tg_processed_cbs', JSON.stringify(_processedCallbacks));
 
       if (processed > 0) {
         showToast('Обновлено ответов: ' + processed);
         renderAll();
       } else {
-        showToast('Нет новых ответов от водителей');
+        if (!silent) showToast('Нет новых ответов от водителей');
       }
     } catch (err) {
-      showToast('Ошибка проверки: ' + err.message, 'error');
+      if (!silent) showToast('Ошибка проверки: ' + err.message, 'error');
+      console.error('checkTelegramConfirmations error:', err);
     }
+  }
+
+  // Auto-poll Supabase every 10 seconds when there are pending suppliers
+  function startTelegramPolling() {
+    stopTelegramPolling();
+    _tgPollTimer = setInterval(function () {
+      var hasPending = orders.some(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; });
+      if (hasPending) {
+        checkTelegramConfirmations(true);
+      } else {
+        stopTelegramPolling();
+      }
+    }, 10000);
+  }
+
+  function stopTelegramPolling() {
+    if (_tgPollTimer) { clearInterval(_tgPollTimer); _tgPollTimer = null; }
   }
 
   // ─── Cancel supplier — send cancellation to driver, unassign ──
@@ -1420,6 +1431,11 @@
     order.assignedDriverId = null;
     if (assignments && assignments[orderIdx] >= 0) {
       assignments[orderIdx] = -1;
+    }
+    // Remove confirmation record from Supabase
+    var client = getSupabaseClient();
+    if (client) {
+      try { await client.from('telegram_confirmations').delete().eq('order_id', orderId); } catch (e) { /* ignore */ }
     }
     renderAll();
   }
@@ -2028,6 +2044,9 @@
     _fitBoundsNext = true;
     initMap().then(function () { updatePlacemarks(); });
     renderSidebar();
+    // Start auto-polling if there are pending Telegram confirmations
+    var hasPending = orders.some(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; });
+    if (hasPending) startTelegramPolling();
   }
 
   // Expose for navigation
