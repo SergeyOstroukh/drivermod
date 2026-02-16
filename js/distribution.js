@@ -159,18 +159,15 @@
     return null;
   }
 
-  // Get slot index for an order (for color)
+  // Get slot index for an order (for color) — read-only, no side effects
   function getOrderSlotIdx(idx) {
     var order = orders[idx];
     if (order && order.assignedDriverId) {
-      // Find or create slot for this driver
       var existingSlot = driverSlots.indexOf(order.assignedDriverId);
       if (existingSlot >= 0) return existingSlot;
-      // Assign to a new slot
-      for (var s = 0; s < 20; s++) {
-        if (!driverSlots[s]) { driverSlots[s] = order.assignedDriverId; return s; }
-      }
-      return -1;
+      // Find slot by matching dbDrivers index for consistent color
+      var driverIndex = dbDrivers.findIndex(function (d) { return d.id === order.assignedDriverId; });
+      return driverIndex >= 0 ? driverIndex : -1;
     }
     return assignments ? assignments[idx] : -1;
   }
@@ -242,11 +239,15 @@
   }
 
   // ─── Map ──────────────────────────────────────────────────
+  var _mapInitPromise = null;
   async function initMap() {
     const container = $('#distributionMap');
     if (!container || mapInstance) return;
+    if (_mapInitPromise) return _mapInitPromise;
+    _mapInitPromise = (async function () {
     try {
       const ymaps = await window.DistributionGeocoder.loadYmaps();
+      if (mapInstance) return; // double-check after await
       mapInstance = new ymaps.Map(container, {
         center: MINSK_CENTER, zoom: DEFAULT_ZOOM,
         controls: ['zoomControl', 'fullscreenControl'],
@@ -273,6 +274,8 @@
     } catch (err) {
       console.error('Map init error:', err);
     }
+    })();
+    return _mapInitPromise;
   }
 
   var _fitBoundsNext = true;
@@ -353,12 +356,13 @@
 
     var bounds = [];
     geocoded.forEach(function (order) {
+      try {
       var globalIdx = orders.indexOf(order);
       var slotIdx = getOrderSlotIdx(globalIdx);
       var driverIdx = slotIdx; // for balloon color compatibility
       var isVisible = selectedDriver === null || slotIdx === selectedDriver;
       var isSettlementOnly = order.settlementOnly;
-      var defaultColor = isSettlementOnly ? '#f59e0b' : (order.isSupplier ? '#10b981' : '#3b82f6');
+      var defaultColor = isSettlementOnly ? '#f59e0b' : '#ffffff';
       var color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : defaultColor;
 
       var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
@@ -370,7 +374,7 @@
       var pm;
       if (order.isPoi) {
         // POI: filled square marker with short label
-        var sqColor = driverIdx >= 0 ? color : (order.poiColor || '#3b82f6');
+        var sqColor = slotIdx >= 0 ? color : (order.poiColor || '#ffffff');
         var opacity = isVisible ? 1 : 0.25;
         var sqHtml = '<div style="width:24px;height:24px;border-radius:4px;background:' + sqColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.8);opacity:' + opacity + ';">' +
           '<span style="color:#111;font-size:10px;font-weight:800;text-shadow:0 0 3px rgba(255,255,255,.9);">' + (order.poiShort || 'П') + '</span></div>';
@@ -385,10 +389,12 @@
         });
       } else if (order.isSupplier) {
         // Supplier: diamond-shaped marker
-        var supColor = driverIdx >= 0 ? color : '#10b981';
+        var supColor = slotIdx >= 0 ? color : '#ffffff';
         var supOpacity = isVisible ? 1 : 0.25;
-        var supHtml = '<div style="width:26px;height:26px;transform:rotate(45deg);border-radius:4px;background:' + supColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.9);opacity:' + supOpacity + ';">' +
-          '<span style="transform:rotate(-45deg);color:#fff;font-size:10px;font-weight:800;">П</span></div>';
+        var supTextColor = (supColor === '#ffffff') ? '#333' : '#fff';
+        var supBorder = (supColor === '#ffffff') ? '2px solid #aaa' : '2px solid rgba(255,255,255,.9)';
+        var supHtml = '<div style="width:26px;height:26px;transform:rotate(45deg);border-radius:4px;background:' + supColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:' + supBorder + ';opacity:' + supOpacity + ';">' +
+          '<span style="transform:rotate(-45deg);color:' + supTextColor + ';font-size:10px;font-weight:800;">П</span></div>';
         var supLayout = ymaps.templateLayoutFactory.createClass(supHtml);
         pm = new ymaps.Placemark([order.lat, order.lng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
@@ -439,6 +445,7 @@
         mapInstance.geoObjects.add(ring);
         placemarks.push(ring);
       }
+      } catch (e) { console.error('Placemark error for order', order.id, e); }
     });
 
     if (_fitBoundsNext && bounds.length > 0) {
@@ -515,23 +522,6 @@
     var order = orders[globalIdx];
     if (!order) return;
     order.assignedDriverId = driverId || null;
-    // Ensure assignments array exists
-    if (!assignments) {
-      assignments = [];
-      for (var i = 0; i < orders.length; i++) assignments.push(-1);
-    }
-    // Sync slot-based system: find or create slot
-    if (driverId) {
-      var existingSlot = driverSlots.indexOf(driverId);
-      if (existingSlot < 0) {
-        for (var s = 0; s < 20; s++) {
-          if (!driverSlots[s]) { driverSlots[s] = driverId; existingSlot = s; break; }
-        }
-      }
-      if (existingSlot >= 0) assignments[globalIdx] = existingSlot;
-    } else {
-      assignments[globalIdx] = -1;
-    }
     activeVariant = -1;
     renderAll();
   };
@@ -821,12 +811,27 @@
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     if (geocodedCount === 0) { showToast('Нет геокодированных адресов', 'error'); return; }
     driverCount = parseInt($('#dcDriverCount').value) || 3;
-    // Ensure driverSlots array matches driverCount
+
+    // Collect drivers from existing direct assignments (suppliers) to preserve in slots
+    var preAssigned = {};
+    orders.forEach(function (o) {
+      if (o.assignedDriverId) preAssigned[o.assignedDriverId] = true;
+    });
+
+    // Build driverSlots: first fill with pre-assigned drivers, then nulls
+    driverSlots = [];
+    Object.keys(preAssigned).forEach(function (did) {
+      if (driverSlots.length < driverCount) driverSlots.push(did);
+    });
     while (driverSlots.length < driverCount) driverSlots.push(null);
-    if (driverSlots.length > driverCount) driverSlots = driverSlots.slice(0, driverCount);
+
     variants = window.DistributionAlgo.generateVariants(orders, driverCount);
     activeVariant = 0;
     assignments = variants[0].assignments.slice();
+
+    // Clear direct assignments — algorithm takes over, user can re-assign manually after
+    orders.forEach(function (o) { o.assignedDriverId = null; });
+
     selectedDriver = null;
     _fitBoundsNext = true;
     renderAll();
@@ -930,7 +935,6 @@
       showToast('Все данные сброшены');
     }
     _fitBoundsNext = true;
-    placemarks = [];
     renderAll();
   }
 
@@ -1225,12 +1229,15 @@
   // ─── Render ───────────────────────────────────────────────
   function renderAll() {
     renderSidebar();
-    if (mapInstance && window.ymaps) {
-      updatePlacemarks();
-    } else {
-      // Map not ready yet — wait for it then render placemarks
-      initMap().then(function () { updatePlacemarks(); });
-    }
+    try {
+      if (mapInstance && window.ymaps) {
+        updatePlacemarks();
+      } else {
+        initMap().then(function () {
+          try { updatePlacemarks(); } catch (e) { console.error('updatePlacemarks after init:', e); }
+        });
+      }
+    } catch (e) { console.error('renderAll map error:', e); }
     saveState();
     var mapContainer = $('#distributionMap');
     if (mapContainer) mapContainer.style.cursor = placingOrderId ? 'crosshair' : '';
@@ -1251,15 +1258,16 @@
     if (isSettlementOnly) itemClass += ' settlement-only';
     if (isPlacing) itemClass += ' placing';
 
+    var hasSlot = slotIdx >= 0;
     var sentStyle = (order.isSupplier && order.telegramSent) ? 'opacity:0.45;' : '';
-    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + sentStyle + (driverId ? 'border-left-color:' + color : '') + '">';
+    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + sentStyle + (hasSlot ? 'border-left-color:' + color : '') + '">';
     var numBg;
     if (order.isPoi) {
-      numBg = 'background:' + (driverId ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
+      numBg = 'background:' + (hasSlot ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
     } else if (order.isSupplier) {
-      numBg = driverId ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
+      numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
     } else {
-      numBg = driverId ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
+      numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
     }
     var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (idx + 1));
     html += '<div class="dc-order-num" style="' + numBg + '">' + numLabel + '</div>';
@@ -1280,9 +1288,9 @@
       html += '<div style="font-size:10px;color:#ef4444;margin-top:1px;">Не найден в базе</div>';
     }
     // Inline driver assignment — directly from DB drivers list
-    var driverDisplayName = driverId ? getDriverNameById(driverId) : null;
+    var driverDisplayName = driverId ? getDriverNameById(driverId) : (hasSlot ? getDriverName(slotIdx) : null);
     html += '<div class="dc-order-driver-assign" style="margin-top:3px;">';
-    if (driverId) {
+    if (hasSlot || driverId) {
       html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:' + color + ';cursor:pointer;font-size:12px;font-weight:600;" title="Нажмите чтобы сменить водителя">👤 ' + driverDisplayName + ' ▾</span>';
     } else if (order.geocoded) {
       html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
