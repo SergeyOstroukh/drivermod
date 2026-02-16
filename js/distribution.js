@@ -164,10 +164,14 @@
   function getOrderSlotIdx(idx) {
     var order = orders[idx];
     if (order && order.assignedDriverId) {
-      var existingSlot = driverSlots.indexOf(order.assignedDriverId);
+      var aid = String(order.assignedDriverId);
+      var existingSlot = -1;
+      for (var s = 0; s < driverSlots.length; s++) {
+        if (driverSlots[s] != null && String(driverSlots[s]) === aid) { existingSlot = s; break; }
+      }
       if (existingSlot >= 0) return existingSlot;
       // Find slot by matching dbDrivers index for consistent color
-      var driverIndex = dbDrivers.findIndex(function (d) { return d.id === order.assignedDriverId; });
+      var driverIndex = dbDrivers.findIndex(function (d) { return String(d.id) === aid; });
       return driverIndex >= 0 ? driverIndex : -1;
     }
     return assignments ? assignments[idx] : -1;
@@ -181,7 +185,8 @@
   }
 
   function getDriverNameById(driverId) {
-    var d = dbDrivers.find(function (dr) { return dr.id === driverId; });
+    var sid = String(driverId);
+    var d = dbDrivers.find(function (dr) { return String(dr.id) === sid; });
     return d ? d.name.split(' ')[0] : '?';
   }
 
@@ -389,7 +394,7 @@
       var slotIdx = getOrderSlotIdx(globalIdx);
       var driverIdx = slotIdx; // for balloon color compatibility
       var orderDriverId = getOrderDriverId(globalIdx);
-      var isVisible = selectedDriver === null || orderDriverId === selectedDriver || (selectedDriver === '__unassigned__' && !orderDriverId);
+      var isVisible = selectedDriver === null || (orderDriverId != null && String(orderDriverId) === String(selectedDriver)) || (selectedDriver === '__unassigned__' && !orderDriverId);
       var isSettlementOnly = order.settlementOnly;
       var isUnassigned = slotIdx < 0;
       var defaultColor = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
@@ -576,6 +581,11 @@
   window.__dc_assignDirect = function (globalIdx, driverId) {
     var order = orders[globalIdx];
     if (!order) return;
+    // Normalize driverId type to match dbDrivers (balloon passes string, sidebar passes original type)
+    if (driverId != null && dbDrivers.length > 0) {
+      var match = dbDrivers.find(function (d) { return String(d.id) === String(driverId); });
+      driverId = match ? match.id : driverId;
+    }
     order.assignedDriverId = driverId || null;
     // Also clear algorithm assignment when unassigning
     if (!driverId && assignments && assignments[globalIdx] >= 0) {
@@ -1443,10 +1453,10 @@
     if (dbDrivers.length > 0) {
       // Count points per driver (by driver_id)
       var driverPointCounts = {};
-      dbDrivers.forEach(function (dr) { driverPointCounts[dr.id] = 0; });
+      dbDrivers.forEach(function (dr) { driverPointCounts[String(dr.id)] = 0; });
       orders.forEach(function (o, i) {
         var did = getOrderDriverId(i);
-        if (did && driverPointCounts[did] !== undefined) driverPointCounts[did]++;
+        if (did && driverPointCounts[String(did)] !== undefined) driverPointCounts[String(did)]++;
       });
       var totalAssigned = orders.filter(function (o, i) { return getOrderDriverId(i) != null; }).length;
 
@@ -1457,8 +1467,8 @@
       driverListHtml += '<button class="dc-driver-filter-btn' + (selectedDriver === null ? ' active' : '') + '" data-driver-filter="all" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (selectedDriver === null ? 'var(--accent)' : '#333') + ';background:' + (selectedDriver === null ? 'rgba(16,185,129,0.1)' : 'transparent') + ';cursor:pointer;color:#ccc;font-size:12px;font-weight:' + (selectedDriver === null ? '700' : '400') + ';width:100%;">Все точки</button>';
       dbDrivers.forEach(function (dr, di) {
         var c = COLORS[di % COLORS.length];
-        var count = driverPointCounts[dr.id] || 0;
-        var isActive = selectedDriver === dr.id;
+        var count = driverPointCounts[String(dr.id)] || 0;
+        var isActive = selectedDriver != null && String(selectedDriver) === String(dr.id);
         driverListHtml += '<button class="dc-driver-filter-btn' + (isActive ? ' active' : '') + '" data-driver-filter="' + dr.id + '" data-driver-idx="' + di + '" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (isActive ? c : '#333') + ';background:' + (isActive ? 'rgba(255,255,255,0.05)' : 'transparent') + ';cursor:pointer;width:100%;">' +
           '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
           '<span style="flex:1;text-align:left;color:#e0e0e0;font-size:12px;font-weight:' + (isActive ? '700' : '400') + ';">' + dr.name + '</span>' +
@@ -1498,7 +1508,7 @@
     // ─── Supplier list (collapsible) ─────────────────────────
     var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) {
       var did = getOrderDriverId(o.globalIndex);
-      return selectedDriver === '__unassigned__' ? !did : did === selectedDriver;
+      return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
     }) : supplierItems;
     var supplierListHtml = '';
     if (filteredSuppliers.length > 0) {
@@ -1514,7 +1524,7 @@
     // ─── Address list (collapsible) ──────────────────────────
     var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) {
       var did = getOrderDriverId(o.globalIndex);
-      return selectedDriver === '__unassigned__' ? !did : did === selectedDriver;
+      return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
     }) : addressItems;
     var addressListHtml = '';
     if (filteredAddresses.length > 0) {
