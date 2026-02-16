@@ -362,8 +362,9 @@
       var driverIdx = slotIdx; // for balloon color compatibility
       var isVisible = selectedDriver === null || slotIdx === selectedDriver;
       var isSettlementOnly = order.settlementOnly;
-      var defaultColor = isSettlementOnly ? '#f59e0b' : '#ffffff';
-      var color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : defaultColor;
+      var isUnassigned = slotIdx < 0;
+      var defaultColor = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
+      var color = !isUnassigned ? COLORS[slotIdx % COLORS.length] : defaultColor;
 
       var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
         (order.isSupplier ? '<br><span style="color:#10b981;font-size:11px;">Поставщик</span>' : '') +
@@ -374,9 +375,10 @@
       var pm;
       if (order.isPoi) {
         // POI: filled square marker with short label
-        var sqColor = slotIdx >= 0 ? color : (order.poiColor || '#ffffff');
+        var sqColor = !isUnassigned ? color : (order.poiColor || '#e0e0e0');
         var opacity = isVisible ? 1 : 0.25;
-        var sqHtml = '<div style="width:24px;height:24px;border-radius:4px;background:' + sqColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid rgba(255,255,255,.8);opacity:' + opacity + ';">' +
+        var sqBorder = isUnassigned ? '2px solid #888' : '2px solid rgba(255,255,255,.8)';
+        var sqHtml = '<div style="width:24px;height:24px;border-radius:4px;background:' + sqColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:' + sqBorder + ';opacity:' + opacity + ';">' +
           '<span style="color:#111;font-size:10px;font-weight:800;text-shadow:0 0 3px rgba(255,255,255,.9);">' + (order.poiShort || 'П') + '</span></div>';
         var sqLayout = ymaps.templateLayoutFactory.createClass(sqHtml);
         pm = new ymaps.Placemark([order.lat, order.lng], {
@@ -389,10 +391,10 @@
         });
       } else if (order.isSupplier) {
         // Supplier: diamond-shaped marker
-        var supColor = slotIdx >= 0 ? color : '#ffffff';
+        var supColor = !isUnassigned ? color : '#e0e0e0';
         var supOpacity = isVisible ? 1 : 0.25;
-        var supTextColor = (supColor === '#ffffff') ? '#333' : '#fff';
-        var supBorder = (supColor === '#ffffff') ? '2px solid #aaa' : '2px solid rgba(255,255,255,.9)';
+        var supTextColor = isUnassigned ? '#333' : '#fff';
+        var supBorder = isUnassigned ? '2px solid #888' : '2px solid rgba(255,255,255,.9)';
         var supHtml = '<div style="width:26px;height:26px;transform:rotate(45deg);border-radius:4px;background:' + supColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:' + supBorder + ';opacity:' + supOpacity + ';">' +
           '<span style="transform:rotate(-45deg);color:' + supTextColor + ';font-size:10px;font-weight:800;">П</span></div>';
         var supLayout = ymaps.templateLayoutFactory.createClass(supHtml);
@@ -404,8 +406,25 @@
           iconShape: { type: 'Rectangle', coordinates: [[0, 0], [26, 26]] },
           iconOffset: [-13, -13],
         });
+      } else if (isUnassigned) {
+        // Unassigned regular order: custom circle with visible border
+        var uaOpacity = isVisible ? 1 : 0.25;
+        var uaBorder = isSettlementOnly ? '2px solid #d97706' : '2px solid #888';
+        var uaBg = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
+        var uaText = isSettlementOnly ? '#fff' : '#333';
+        var uaHtml = '<div style="width:28px;height:28px;border-radius:50%;background:' + uaBg + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4);border:' + uaBorder + ';opacity:' + uaOpacity + ';">' +
+          '<span style="color:' + uaText + ';font-size:11px;font-weight:800;">' + (globalIdx + 1) + '</span></div>';
+        var uaLayout = ymaps.templateLayoutFactory.createClass(uaHtml);
+        pm = new ymaps.Placemark([order.lat, order.lng], {
+          balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
+          hintContent: hintHtml,
+        }, {
+          iconLayout: uaLayout,
+          iconShape: { type: 'Circle', coordinates: [14, 14], radius: 14 },
+          iconOffset: [-14, -14],
+        });
       } else {
-        // Regular order: circle icon
+        // Assigned regular order: standard circle icon with color
         pm = new ymaps.Placemark([order.lat, order.lng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
           iconContent: String(globalIdx + 1),
@@ -1246,7 +1265,7 @@
   function renderOrderItem(order, idx) {
     const driverId = getOrderDriverId(idx);
     const slotIdx = getOrderSlotIdx(idx);
-    const color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : '';
+    const color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : '#ccc';
     const isFailed = !order.geocoded && order.error;
     const isSettlementOnly = order.geocoded && order.settlementOnly;
     const isEditing = editingOrderId === order.id;
@@ -1267,7 +1286,7 @@
     } else if (order.isSupplier) {
       numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
     } else {
-      numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : ''));
+      numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : 'background:#e0e0e0;color:#333;border:1px solid #999'));
     }
     var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (idx + 1));
     html += '<div class="dc-order-num" style="' + numBg + '">' + numLabel + '</div>';
