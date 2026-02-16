@@ -162,21 +162,13 @@
     return null;
   }
 
-  // Get slot index for an order (for color) — read-only, no side effects
+  // Get color index for an order's driver — always based on dbDrivers position for consistency
   function getOrderSlotIdx(idx) {
-    var order = orders[idx];
-    if (order && order.assignedDriverId) {
-      var aid = String(order.assignedDriverId);
-      var existingSlot = -1;
-      for (var s = 0; s < driverSlots.length; s++) {
-        if (driverSlots[s] != null && String(driverSlots[s]) === aid) { existingSlot = s; break; }
-      }
-      if (existingSlot >= 0) return existingSlot;
-      // Find slot by matching dbDrivers index for consistent color
-      var driverIndex = dbDrivers.findIndex(function (d) { return String(d.id) === aid; });
-      return driverIndex >= 0 ? driverIndex : -1;
-    }
-    return assignments ? assignments[idx] : -1;
+    var driverId = getOrderDriverId(idx);
+    if (!driverId) return -1;
+    var did = String(driverId);
+    var driverIndex = dbDrivers.findIndex(function (d) { return String(d.id) === did; });
+    return driverIndex >= 0 ? driverIndex : -1;
   }
 
   function getDriverName(slotIdx) {
@@ -386,6 +378,13 @@
       }
     });
 
+    // Pre-compute display numbers for address orders (1-based, addresses only)
+    var _addrNum = {};
+    var _addrCounter = 1;
+    orders.forEach(function (o) {
+      if (!o.isSupplier && !o.isPoi) _addrNum[o.id] = _addrCounter++;
+    });
+
     var bounds = [];
     geocoded.forEach(function (order) {
       try {
@@ -405,7 +404,8 @@
       var color = !isUnassigned ? COLORS[slotIdx % COLORS.length] : defaultColor;
 
       var overlapCount = overlapGroups[overlapKey(order)] ? overlapGroups[overlapKey(order)].length : 1;
-      var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
+      var displayNum = order.isSupplier ? 'П' : (_addrNum[order.id] || (globalIdx + 1));
+      var hintHtml = '<b>' + displayNum + '. ' + order.address + '</b>' +
         (overlapCount > 1 ? '<br><span style="color:#f97316;font-size:11px;">📌 ' + overlapCount + ' точки в одном месте</span>' : '') +
         (order.isSupplier ? '<br><span style="color:#10b981;font-size:11px;">Поставщик</span>' : '') +
         (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
@@ -453,7 +453,7 @@
         var uaBg = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
         var uaText = isSettlementOnly ? '#fff' : '#333';
         var uaHtml = '<div style="width:28px;height:28px;border-radius:50%;background:' + uaBg + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4);border:' + uaBorder + ';opacity:' + uaOpacity + ';">' +
-          '<span style="color:' + uaText + ';font-size:11px;font-weight:800;">' + (globalIdx + 1) + '</span></div>';
+          '<span style="color:' + uaText + ';font-size:11px;font-weight:800;">' + displayNum + '</span></div>';
         var uaLayout = ymaps.templateLayoutFactory.createClass(uaHtml);
         pm = new ymaps.Placemark([plat, plng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
@@ -467,7 +467,7 @@
         // Assigned regular order: standard circle icon with color
         pm = new ymaps.Placemark([plat, plng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
-          iconContent: String(globalIdx + 1),
+          iconContent: String(displayNum),
           hintContent: hintHtml,
         }, {
           preset: isSettlementOnly ? 'islands#circleDotIcon' : 'islands#circleIcon',
@@ -1052,10 +1052,9 @@
       if (order.isKbt) {
         pointData.isKbt = true;
         if (order.helperDriverSlot != null) {
-          var helperId = driverSlots[order.helperDriverSlot];
-          var helperDriver = helperId ? dbDrivers.find(function (d) { return d.id === helperId; }) : null;
-          pointData.helperDriverName = helperDriver ? helperDriver.name : getDriverName(order.helperDriverSlot);
-          pointData.helperDriverId = helperId || null;
+          var helperDrv = dbDrivers[order.helperDriverSlot];
+          pointData.helperDriverName = helperDrv ? helperDrv.name : '?';
+          pointData.helperDriverId = helperDrv ? helperDrv.id : null;
         }
       }
 
@@ -1063,7 +1062,7 @@
 
       // KBT: also add this point to the helper driver's route
       if (order.isKbt && order.helperDriverSlot != null) {
-        var helperDriverId = driverSlots[order.helperDriverSlot];
+        var helperDriverId = dbDrivers[order.helperDriverSlot] ? dbDrivers[order.helperDriverSlot].id : null;
         if (helperDriverId && helperDriverId !== driverId) {
           if (!routesByDriver[helperDriverId]) {
             routesByDriver[helperDriverId] = [];
@@ -1556,7 +1555,7 @@
     } else {
       numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : 'background:#e0e0e0;color:#333;border:1px solid #999'));
     }
-    var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (idx + 1));
+    var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (order._displayNum || (idx + 1)));
     html += '<div class="dc-order-num" style="' + numBg + '">' + numLabel + '</div>';
     html += '<div class="dc-order-info"><div class="dc-order-addr">' + order.address + '</div>';
     if (order.timeSlot || order.phone) {
@@ -1605,7 +1604,8 @@
       html += '</div>';
     }
     if (order.isKbt) {
-      var helperName = order.helperDriverSlot != null ? getDriverName(order.helperDriverSlot) : '?';
+      var helperDr = order.helperDriverSlot != null ? dbDrivers[order.helperDriverSlot] : null;
+      var helperName = helperDr ? helperDr.name.split(' ')[0] : '?';
       var helperColor = order.helperDriverSlot != null ? COLORS[order.helperDriverSlot % COLORS.length] : '#a855f7';
       html += '<div class="dc-order-kbt" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
       html += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;">КБТ +1</span>';
@@ -1783,7 +1783,8 @@
       addressListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-addresses"' + (_addressListOpen ? ' open' : '') + '>' +
         '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Адреса <span style="font-weight:400;color:#888;">(' + filteredAddresses.length + ')</span></summary>' +
         '<div class="dc-orders-list">';
-      filteredAddresses.forEach(function (order) {
+      filteredAddresses.forEach(function (order, listPos) {
+        order._displayNum = listPos + 1;
         addressListHtml += renderOrderItem(order, order.globalIndex);
       });
       addressListHtml += '</div></details></div>';
