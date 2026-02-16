@@ -1547,8 +1547,7 @@
     if (isPlacing) itemClass += ' placing';
 
     var hasSlot = slotIdx >= 0;
-    var sentStyle = (order.isSupplier && order.telegramSent) ? 'opacity:0.45;' : '';
-    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + sentStyle + (hasSlot ? 'border-left-color:' + color : '') + '">';
+    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (hasSlot ? 'border-left-color:' + color : '') + '">';
     var numBg;
     if (order.isPoi) {
       numBg = 'background:' + (hasSlot ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
