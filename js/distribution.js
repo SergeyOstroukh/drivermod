@@ -33,6 +33,7 @@
   // Collapsed/expanded state for sidebar lists
   let _supplierListOpen = true;
   let _addressListOpen = true;
+  let _driversListOpen = true;
 
   // ─── Fixed POI locations (ПВЗ / склады) ──────────────────
   var POI_DEFS = [
@@ -360,7 +361,8 @@
       var globalIdx = orders.indexOf(order);
       var slotIdx = getOrderSlotIdx(globalIdx);
       var driverIdx = slotIdx; // for balloon color compatibility
-      var isVisible = selectedDriver === null || slotIdx === selectedDriver;
+      var orderDriverId = getOrderDriverId(globalIdx);
+      var isVisible = selectedDriver === null || orderDriverId === selectedDriver || (selectedDriver === '__unassigned__' && !orderDriverId);
       var isSettlementOnly = order.settlementOnly;
       var isUnassigned = slotIdx < 0;
       var defaultColor = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
@@ -475,12 +477,17 @@
   }
 
   function buildBalloon(order, globalIdx, driverIdx) {
+    var currentDriverId = getOrderDriverId(globalIdx);
     let buttons = '';
-    for (let d = 0; d < driverCount; d++) {
-      const c = COLORS[d % COLORS.length];
-      const active = d === driverIdx;
-      const name = getDriverName(d);
-      buttons += '<button onclick="window.__dc_assign(' + globalIdx + ',' + d + ')" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ' + (active ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;margin:2px;box-shadow:' + (active ? '0 0 0 2px ' + c : 'none') + ';color:#fff;font-size:11px;font-weight:600;" title="' + name + '"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + name + '</button>';
+    dbDrivers.forEach(function (dr, di) {
+      var c = COLORS[di % COLORS.length];
+      var active = dr.id === currentDriverId;
+      var displayName = dr.name.split(' ')[0];
+      buttons += '<button onclick="window.__dc_assignDirect(' + globalIdx + ',\'' + dr.id + '\')" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ' + (active ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;margin:2px;box-shadow:' + (active ? '0 0 0 2px ' + c : 'none') + ';color:#fff;font-size:11px;font-weight:600;" title="' + dr.name + '"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + displayName + '</button>';
+    });
+    // Unassign button
+    if (currentDriverId) {
+      buttons += '<button onclick="window.__dc_assignDirect(' + globalIdx + ',null)" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;margin:2px;color:#999;font-size:11px;">✕ Снять</button>';
     }
     const eid = order.id.replace(/'/g, "\\'");
 
@@ -492,14 +499,14 @@
     if (kbtActive) {
       kbtHtml += '<div style="margin-top:8px;font-size:11px;color:#888;">Помощник (едет вместе):</div>';
       kbtHtml += '<div style="display:flex;flex-wrap:wrap;margin-top:4px;">';
-      for (var h = 0; h < driverCount; h++) {
-        if (h === driverIdx) continue; // can't be helper and main driver
-        var hc = COLORS[h % COLORS.length];
-        var hActive = order.helperDriverSlot === h;
-        var hName = getDriverName(h);
-        kbtHtml += '<button onclick="window.__dc_setHelper(' + globalIdx + ',' + h + ')" style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;border:2px solid ' + (hActive ? '#a855f7' : 'transparent') + ';background:' + (hActive ? 'rgba(168,85,247,0.15)' : '#f5f5f5') + ';cursor:pointer;margin:2px;color:' + (hActive ? '#a855f7' : '#666') + ';font-size:11px;font-weight:' + (hActive ? '700' : '500') + ';">' +
+      dbDrivers.forEach(function (hdr, hi) {
+        if (hdr.id === currentDriverId) return; // can't be helper and main driver
+        var hc = COLORS[hi % COLORS.length];
+        var hActive = order.helperDriverSlot === hi;
+        var hName = hdr.name.split(' ')[0];
+        kbtHtml += '<button onclick="window.__dc_setHelper(' + globalIdx + ',' + hi + ')" style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;border:2px solid ' + (hActive ? '#a855f7' : 'transparent') + ';background:' + (hActive ? 'rgba(168,85,247,0.15)' : '#f5f5f5') + ';cursor:pointer;margin:2px;color:' + (hActive ? '#a855f7' : '#666') + ';font-size:11px;font-weight:' + (hActive ? '700' : '500') + ';">' +
           '<span style="width:8px;height:8px;border-radius:50%;background:' + hc + ';"></span>' + hName + (hActive ? ' ✓' : '') + '</button>';
-      }
+      });
       kbtHtml += '</div>';
     }
     kbtHtml += '</div>';
@@ -1391,6 +1398,8 @@
     if (suppDetails) _supplierListOpen = suppDetails.open;
     var addrDetails = sidebar.querySelector('.dc-details-addresses');
     if (addrDetails) _addressListOpen = addrDetails.open;
+    var drvDetails = sidebar.querySelector('.dc-details-drivers');
+    if (drvDetails) _driversListOpen = drvDetails.open;
 
     const allOrders = orders.map(function (o, i) { return Object.assign({}, o, { globalIndex: i }); });
     const supplierItems = allOrders.filter(function (o) { return o.isSupplier; });
@@ -1400,58 +1409,34 @@
     const failedCount = orders.filter(function (o) { return !o.geocoded && o.error; }).length;
     const settlementOnlyCount = orders.filter(function (o) { return o.geocoded && o.settlementOnly; }).length;
 
-    // Build driver assignment panel (color → driver select)
-    let driverSlotsHtml = '';
-    if (assignments) {
-      driverSlotsHtml = '<div class="dc-section"><div class="dc-section-title">Водители</div><div class="dc-driver-slots">';
-      for (let d = 0; d < driverCount; d++) {
-        const c = COLORS[d % COLORS.length];
-        const currentDriverId = driverSlots[d] || '';
-        const count = assignments.filter(function (a) { return a === d; }).length;
-        if (count === 0) continue;
+    // Build driver list — always show ALL db drivers
+    var driverListHtml = '';
+    if (dbDrivers.length > 0) {
+      // Count points per driver (by driver_id)
+      var driverPointCounts = {};
+      dbDrivers.forEach(function (dr) { driverPointCounts[dr.id] = 0; });
+      orders.forEach(function (o, i) {
+        var did = getOrderDriverId(i);
+        if (did && driverPointCounts[did] !== undefined) driverPointCounts[did]++;
+      });
+      var totalAssigned = orders.filter(function (o, i) { return getOrderDriverId(i) != null; }).length;
 
-        driverSlotsHtml += '<div class="dc-driver-slot">';
-        driverSlotsHtml += '<span class="dc-dot-lg" style="background:' + c + '"></span>';
-        driverSlotsHtml += '<select class="dc-driver-select" data-slot="' + d + '">';
-        driverSlotsHtml += '<option value="">-- Выберите водителя --</option>';
-        dbDrivers.forEach(function (dr) {
-          const sel = dr.id == currentDriverId ? ' selected' : '';
-          const usedInOther = driverSlots.some(function (sid, si) { return si !== d && sid === dr.id; });
-          driverSlotsHtml += '<option value="' + dr.id + '"' + sel + (usedInOther ? ' disabled' : '') + '>' + dr.name + (usedInOther ? ' (занят)' : '') + '</option>';
-        });
-        driverSlotsHtml += '</select>';
-        driverSlotsHtml += '<span class="dc-slot-count">' + count + ' точек</span>';
-        driverSlotsHtml += '</div>';
-      }
-      driverSlotsHtml += '</div></div>';
-    }
-
-    // Build stats
-    let statsHtml = '';
-    if (assignments && variants.length > 0) {
-      const driverRoutes = [];
-      for (let d = 0; d < driverCount; d++) driverRoutes.push([]);
-      orders.forEach(function (o, i) { if (assignments[i] >= 0) driverRoutes[assignments[i]].push(o); });
-
-      statsHtml = '<div class="dc-stats">';
-      for (let d = 0; d < driverCount; d++) {
-        const c = COLORS[d % COLORS.length];
-        const count = driverRoutes[d].length;
-        if (count === 0) continue;
-        let km = 0;
-        for (let j = 0; j < driverRoutes[d].length - 1; j++) {
-          const a = driverRoutes[d][j], b = driverRoutes[d][j + 1];
-          if (a.lat && b.lat) {
-            const R = 6371, dLat = ((b.lat - a.lat) * Math.PI) / 180, dLng = ((b.lng - a.lng) * Math.PI) / 180;
-            const x = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-            km += R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-          }
-        }
-        const name = getDriverName(d);
-        statsHtml += '<button class="dc-driver-tab' + (selectedDriver === d ? ' active' : '') + '" data-driver="' + d + '" style="' + (selectedDriver === d ? 'border-bottom-color:' + c : '') + '"><span class="dc-dot" style="background:' + c + '"></span> ' + name + ' <span class="dc-tab-count">' + count + ' · ' + (Math.round(km * 10) / 10) + ' км</span></button>';
-      }
-      statsHtml += '<button class="dc-driver-tab' + (selectedDriver === null ? ' active' : '') + '" data-driver="all">Все</button>';
-      statsHtml += '</div>';
+      driverListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-drivers"' + (_driversListOpen ? ' open' : '') + '>' +
+        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Водители <span style="font-weight:400;color:#888;">(' + totalAssigned + '/' + orders.length + ' точек)</span></summary>' +
+        '<div class="dc-drivers-list" style="display:flex;flex-direction:column;gap:2px;padding:4px 0;">';
+      // "Show all" button
+      driverListHtml += '<button class="dc-driver-filter-btn' + (selectedDriver === null ? ' active' : '') + '" data-driver-filter="all" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (selectedDriver === null ? 'var(--accent)' : '#333') + ';background:' + (selectedDriver === null ? 'rgba(16,185,129,0.1)' : 'transparent') + ';cursor:pointer;color:#ccc;font-size:12px;font-weight:' + (selectedDriver === null ? '700' : '400') + ';width:100%;">Все точки</button>';
+      dbDrivers.forEach(function (dr, di) {
+        var c = COLORS[di % COLORS.length];
+        var count = driverPointCounts[dr.id] || 0;
+        var isActive = selectedDriver === dr.id;
+        driverListHtml += '<button class="dc-driver-filter-btn' + (isActive ? ' active' : '') + '" data-driver-filter="' + dr.id + '" data-driver-idx="' + di + '" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (isActive ? c : '#333') + ';background:' + (isActive ? 'rgba(255,255,255,0.05)' : 'transparent') + ';cursor:pointer;width:100%;">' +
+          '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
+          '<span style="flex:1;text-align:left;color:#e0e0e0;font-size:12px;font-weight:' + (isActive ? '700' : '400') + ';">' + dr.name + '</span>' +
+          '<span style="color:#888;font-size:11px;">' + count + ' точ.</span>' +
+          '</button>';
+      });
+      driverListHtml += '</div></details></div>';
     }
 
     // Variants
@@ -1482,7 +1467,10 @@
     }
 
     // ─── Supplier list (collapsible) ─────────────────────────
-    var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) { return getOrderSlotIdx(o.globalIndex) === selectedDriver; }) : supplierItems;
+    var filteredSuppliers = selectedDriver !== null ? supplierItems.filter(function (o) {
+      var did = getOrderDriverId(o.globalIndex);
+      return selectedDriver === '__unassigned__' ? !did : did === selectedDriver;
+    }) : supplierItems;
     var supplierListHtml = '';
     if (filteredSuppliers.length > 0) {
       supplierListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-suppliers"' + (_supplierListOpen ? ' open' : '') + '>' +
@@ -1495,7 +1483,10 @@
     }
 
     // ─── Address list (collapsible) ──────────────────────────
-    var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) { return getOrderSlotIdx(o.globalIndex) === selectedDriver; }) : addressItems;
+    var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) {
+      var did = getOrderDriverId(o.globalIndex);
+      return selectedDriver === '__unassigned__' ? !did : did === selectedDriver;
+    }) : addressItems;
     var addressListHtml = '';
     if (filteredAddresses.length > 0) {
       addressListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-addresses"' + (_addressListOpen ? ' open' : '') + '>' +
@@ -1559,8 +1550,8 @@
         return '<button class="dc-poi-toggle" data-poi="' + def.id + '" style="display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:8px;border:2px solid ' + (active ? def.color : '#ddd') + ';background:' + (active ? def.color : '#fff') + ';color:' + (active ? '#fff' : '#666') + ';cursor:pointer;font-size:11px;font-weight:600;transition:all .15s;"><span style="width:14px;height:14px;border-radius:3px;background:' + def.color + ';display:inline-block;flex-shrink:0;"></span>' + def.label + '</button>';
       }).join('') +
       '</div></div>' +
-      variantsHtml + statsHtml +
-      driverSlotsHtml + finishHtml +
+      variantsHtml +
+      driverListHtml + finishHtml +
       supplierListHtml + addressListHtml + emptyHtml;
 
     // Bind events
@@ -1650,12 +1641,15 @@
       btn.addEventListener('click', function () { togglePoi(btn.dataset.poi); });
     });
 
-    // Driver slot selects
-    sidebar.querySelectorAll('.dc-driver-select').forEach(function (sel) {
-      sel.addEventListener('change', function () {
-        const slot = parseInt(sel.dataset.slot);
-        const val = sel.value ? parseInt(sel.value) : null;
-        driverSlots[slot] = val;
+    // Driver filter buttons
+    sidebar.querySelectorAll('.dc-driver-filter-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var filterId = btn.dataset.driverFilter;
+        if (filterId === 'all') {
+          selectedDriver = null;
+        } else {
+          selectedDriver = filterId;
+        }
         renderAll();
       });
     });
@@ -1663,14 +1657,6 @@
     // Variants
     sidebar.querySelectorAll('.dc-variant').forEach(function (btn) {
       btn.addEventListener('click', function () { selectVariant(parseInt(btn.dataset.variant)); });
-    });
-
-    // Driver tabs
-    sidebar.querySelectorAll('.dc-driver-tab').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        selectedDriver = btn.dataset.driver === 'all' ? null : parseInt(btn.dataset.driver);
-        renderAll();
-      });
     });
 
     // Delete buttons
