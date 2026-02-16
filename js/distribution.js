@@ -1288,6 +1288,7 @@
   // ─── Telegram confirmations ──────────────────────────────
   var _tgPollTimer = null;
   var _processedCallbacks = JSON.parse(localStorage.getItem('dc_tg_processed_cbs') || '[]');
+  var _webhookDeleted = false;
 
   function getSupabaseClient() {
     var config = window.SUPABASE_CONFIG || {};
@@ -1298,7 +1299,7 @@
     return window._dcSupabase;
   }
 
-  // Save confirmation record to Supabase when sending (for webhook flow)
+  // Save confirmation record to Supabase when sending (for future webhook flow)
   async function saveTelegramConfirmation(orderId, chatId, messageId, driverName, supplierName) {
     var client = getSupabaseClient();
     if (!client) return;
@@ -1311,14 +1312,23 @@
         supplier_name: supplierName || '',
         status: 'sent',
       });
-    } catch (e) {
-      console.warn('saveTelegramConfirmation error (table may not exist yet):', e);
-    }
+    } catch (e) { /* table may not exist yet — ok */ }
   }
 
-  // Check confirmations — tries Supabase table first, falls back to Telegram getUpdates
+  // Ensure webhook is deleted so getUpdates works
+  async function ensureNoWebhook(botToken) {
+    if (_webhookDeleted) return;
+    try {
+      await fetch('https://api.telegram.org/bot' + botToken + '/deleteWebhook');
+      _webhookDeleted = true;
+      console.log('Telegram webhook deleted, getUpdates enabled');
+    } catch (e) { /* ignore */ }
+  }
+
+  // Check confirmations via direct Telegram getUpdates
   async function checkTelegramConfirmations(silent) {
-    var processed = 0;
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+    if (!botToken) { if (!silent) showToast('Telegram бот не настроен', 'error'); return; }
 
     // Collect pending order IDs
     var pendingIds = [];
@@ -1332,99 +1342,86 @@
       return;
     }
 
-    // --- Method 1: Try Supabase table (webhook flow) ---
-    var client = getSupabaseClient();
-    if (client) {
-      try {
-        var resp = await client
-          .from('telegram_confirmations')
-          .select('order_id, status, updated_at')
-          .in('order_id', pendingIds)
-          .in('status', ['confirmed', 'rejected']);
-        if (!resp.error && resp.data && resp.data.length > 0) {
-          resp.data.forEach(function (row) {
-            var order = orders.find(function (o) { return o.id === row.order_id; });
-            if (order && order.telegramStatus === 'sent') {
-              order.telegramStatus = row.status;
-              processed++;
-            }
-          });
-        }
-      } catch (e) {
-        console.warn('Supabase table check failed (table may not exist):', e);
-      }
-    }
+    // Delete webhook first (one-time) so getUpdates works
+    await ensureNoWebhook(botToken);
 
-    // --- Method 2: Direct Telegram getUpdates (fallback, works without webhook) ---
-    if (processed === 0) {
-      var botToken = window.TELEGRAM_BOT_TOKEN;
-      if (botToken) {
+    var processed = 0;
+    try {
+      var tgResp = await fetch('https://api.telegram.org/bot' + botToken + '/getUpdates?timeout=0&limit=100');
+      var tgData = await tgResp.json();
+
+      if (!tgData.ok) {
+        if (!silent) showToast('Telegram ошибка: ' + (tgData.description || 'unknown'), 'error');
+        console.error('getUpdates error:', tgData);
+        return;
+      }
+
+      var results = tgData.result || [];
+      var callbackCount = 0;
+
+      for (var i = 0; i < results.length; i++) {
+        var update = results[i];
+        if (!update.callback_query) continue;
+        callbackCount++;
+
+        var cbId = update.callback_query.id;
+        if (_processedCallbacks.indexOf(cbId) !== -1) continue;
+
+        var cbParts = (update.callback_query.data || '').split(':');
+        if (cbParts.length < 2) continue;
+        var action = cbParts[0];
+        var orderId = cbParts.slice(1).join(':');
+
+        // Find matching order
+        var order = orders.find(function (o) { return o.id === orderId; });
+        if (order && (action === 'accept' || action === 'reject')) {
+          order.telegramStatus = action === 'accept' ? 'confirmed' : 'rejected';
+          processed++;
+        }
+
+        // Answer callback — driver sees popup "Принято ✅"
         try {
-          var tgResp = await fetch('https://api.telegram.org/bot' + botToken + '/getUpdates', {
+          await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ timeout: 0, limit: 100, allowed_updates: ['message', 'callback_query'] }),
+            body: JSON.stringify({ callback_query_id: cbId, text: action === 'accept' ? 'Принято ✅' : 'Отклонено ❌' }),
           });
-          var tgData = await tgResp.json();
-          if (tgData.ok && tgData.result) {
-            for (var i = 0; i < tgData.result.length; i++) {
-              var update = tgData.result[i];
-              if (!update.callback_query) continue;
-              var cbId = update.callback_query.id;
-              if (_processedCallbacks.indexOf(cbId) !== -1) continue;
+        } catch (e) { /* ignore */ }
 
-              var cbParts = (update.callback_query.data || '').split(':');
-              if (cbParts.length < 2) continue;
-              var action = cbParts[0];
-              var orderId = cbParts.slice(1).join(':');
+        // Edit message — remove buttons, show status
+        if (update.callback_query.message) {
+          var chatId = update.callback_query.message.chat.id;
+          var msgId = update.callback_query.message.message_id;
+          var origText = update.callback_query.message.text || '';
+          var statusLine = action === 'accept' ? '\n\n✅ Принято' : '\n\n❌ Отклонено';
+          try {
+            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, message_id: msgId, text: origText + statusLine }),
+            });
+          } catch (e) { /* ignore */ }
+        }
 
-              var order = orders.find(function (o) { return o.id === orderId; });
-              if (order && (action === 'accept' || action === 'reject')) {
-                order.telegramStatus = action === 'accept' ? 'confirmed' : 'rejected';
-                processed++;
-              }
+        _processedCallbacks.push(cbId);
+      }
 
-              // Answer callback — removes spinner for the driver
-              try {
-                await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ callback_query_id: cbId, text: action === 'accept' ? 'Принято ✅' : 'Отклонено ❌' }),
-                });
-              } catch (e) { /* ignore */ }
+      // Persist processed IDs
+      if (_processedCallbacks.length > 500) _processedCallbacks = _processedCallbacks.slice(-500);
+      localStorage.setItem('dc_tg_processed_cbs', JSON.stringify(_processedCallbacks));
 
-              // Edit message — remove buttons, show status
-              if (update.callback_query.message) {
-                var chatId = update.callback_query.message.chat.id;
-                var msgId = update.callback_query.message.message_id;
-                var origText = update.callback_query.message.text || '';
-                var statusLine = action === 'accept' ? '\n\n✅ Принято' : '\n\n❌ Отклонено';
-                try {
-                  await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chat_id: chatId, message_id: msgId, text: origText + statusLine }),
-                  });
-                } catch (e) { /* ignore */ }
-              }
-
-              _processedCallbacks.push(cbId);
-            }
-            // Persist processed IDs
-            if (_processedCallbacks.length > 500) _processedCallbacks = _processedCallbacks.slice(-500);
-            localStorage.setItem('dc_tg_processed_cbs', JSON.stringify(_processedCallbacks));
-          }
-        } catch (e) {
-          console.warn('getUpdates fallback error:', e);
+      if (processed > 0) {
+        showToast('✅ Обновлено ответов: ' + processed);
+        renderAll();
+      } else {
+        if (!silent) {
+          var detail = 'Всего апдейтов: ' + results.length + ', callback_query: ' + callbackCount + ', уже обработано: ' + _processedCallbacks.length;
+          showToast('Нет новых ответов. ' + detail);
         }
       }
-    }
-
-    if (processed > 0) {
-      if (!silent) showToast('Обновлено ответов: ' + processed);
-      renderAll();
-    } else {
-      if (!silent) showToast('Нет новых ответов от водителей');
+    } catch (err) {
+      if (!silent) showToast('Ошибка: ' + err.message, 'error');
+      console.error('checkTelegramConfirmations error:', err);
     }
   }
 
@@ -1942,7 +1939,13 @@
     const telegramBtn = sidebar.querySelector('.dc-btn-telegram');
     if (telegramBtn) telegramBtn.addEventListener('click', sendToTelegram);
     const checkTgBtn = sidebar.querySelector('.dc-btn-check-tg');
-    if (checkTgBtn) checkTgBtn.addEventListener('click', checkTelegramConfirmations);
+    if (checkTgBtn) checkTgBtn.addEventListener('click', function () {
+      // Clear processed cache on manual click to re-scan all callbacks
+      _processedCallbacks = [];
+      localStorage.removeItem('dc_tg_processed_cbs');
+      _webhookDeleted = false;
+      checkTelegramConfirmations(false);
+    });
 
     // POI toggles
     sidebar.querySelectorAll('.dc-poi-toggle').forEach(function (btn) {
