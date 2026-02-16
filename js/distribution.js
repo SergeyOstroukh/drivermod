@@ -355,10 +355,37 @@
     var geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
     if (geocoded.length === 0) return;
 
+    // Detect overlapping points and compute offsets
+    var overlapKey = function (o) { return o.lat.toFixed(5) + ',' + o.lng.toFixed(5); };
+    var overlapGroups = {};
+    geocoded.forEach(function (o) {
+      var k = overlapKey(o);
+      if (!overlapGroups[k]) overlapGroups[k] = [];
+      overlapGroups[k].push(o.id);
+    });
+    // Build offset map: orderId → [dlat, dlng]
+    var overlapOffsets = {};
+    var OFFSET_PX = 0.00015; // ~15m at ground level, visible at zoom 14+
+    Object.keys(overlapGroups).forEach(function (k) {
+      var group = overlapGroups[k];
+      if (group.length < 2) return;
+      var n = group.length;
+      for (var i = 0; i < n; i++) {
+        var angle = (2 * Math.PI * i) / n - Math.PI / 2;
+        overlapOffsets[group[i]] = [
+          Math.sin(angle) * OFFSET_PX,
+          Math.cos(angle) * OFFSET_PX
+        ];
+      }
+    });
+
     var bounds = [];
     geocoded.forEach(function (order) {
       try {
       var globalIdx = orders.indexOf(order);
+      var ofs = overlapOffsets[order.id];
+      var plat = ofs ? order.lat + ofs[0] : order.lat;
+      var plng = ofs ? order.lng + ofs[1] : order.lng;
       var slotIdx = getOrderSlotIdx(globalIdx);
       var driverIdx = slotIdx; // for balloon color compatibility
       var orderDriverId = getOrderDriverId(globalIdx);
@@ -368,7 +395,9 @@
       var defaultColor = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
       var color = !isUnassigned ? COLORS[slotIdx % COLORS.length] : defaultColor;
 
+      var overlapCount = overlapGroups[overlapKey(order)] ? overlapGroups[overlapKey(order)].length : 1;
       var hintHtml = '<b>' + (globalIdx + 1) + '. ' + order.address + '</b>' +
+        (overlapCount > 1 ? '<br><span style="color:#f97316;font-size:11px;">📌 ' + overlapCount + ' точки в одном месте</span>' : '') +
         (order.isSupplier ? '<br><span style="color:#10b981;font-size:11px;">Поставщик</span>' : '') +
         (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
         (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
@@ -383,7 +412,7 @@
         var sqHtml = '<div style="width:24px;height:24px;border-radius:4px;background:' + sqColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:' + sqBorder + ';opacity:' + opacity + ';">' +
           '<span style="color:#111;font-size:10px;font-weight:800;text-shadow:0 0 3px rgba(255,255,255,.9);">' + (order.poiShort || 'П') + '</span></div>';
         var sqLayout = ymaps.templateLayoutFactory.createClass(sqHtml);
-        pm = new ymaps.Placemark([order.lat, order.lng], {
+        pm = new ymaps.Placemark([plat, plng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
           hintContent: hintHtml,
         }, {
@@ -400,7 +429,7 @@
         var supHtml = '<div style="width:26px;height:26px;transform:rotate(45deg);border-radius:4px;background:' + supColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:' + supBorder + ';opacity:' + supOpacity + ';">' +
           '<span style="transform:rotate(-45deg);color:' + supTextColor + ';font-size:10px;font-weight:800;">П</span></div>';
         var supLayout = ymaps.templateLayoutFactory.createClass(supHtml);
-        pm = new ymaps.Placemark([order.lat, order.lng], {
+        pm = new ymaps.Placemark([plat, plng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
           hintContent: hintHtml,
         }, {
@@ -417,7 +446,7 @@
         var uaHtml = '<div style="width:28px;height:28px;border-radius:50%;background:' + uaBg + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.4);border:' + uaBorder + ';opacity:' + uaOpacity + ';">' +
           '<span style="color:' + uaText + ';font-size:11px;font-weight:800;">' + (globalIdx + 1) + '</span></div>';
         var uaLayout = ymaps.templateLayoutFactory.createClass(uaHtml);
-        pm = new ymaps.Placemark([order.lat, order.lng], {
+        pm = new ymaps.Placemark([plat, plng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
           hintContent: hintHtml,
         }, {
@@ -427,7 +456,7 @@
         });
       } else {
         // Assigned regular order: standard circle icon with color
-        pm = new ymaps.Placemark([order.lat, order.lng], {
+        pm = new ymaps.Placemark([plat, plng], {
           balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
           iconContent: String(globalIdx + 1),
           hintContent: hintHtml,
@@ -452,13 +481,13 @@
 
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
-      bounds.push([order.lat, order.lng]);
+      bounds.push([plat, plng]);
 
       // KBT ring (circle inside circle)
       if (order.isKbt && isVisible) {
         var ringHtml = '<div style="width:44px;height:44px;border-radius:50%;background:' + color + ';opacity:0.3;pointer-events:none;"></div>';
         var ringLayout = ymaps.templateLayoutFactory.createClass(ringHtml);
-        var ring = new ymaps.Placemark([order.lat, order.lng], {}, {
+        var ring = new ymaps.Placemark([plat, plng], {}, {
           iconLayout: ringLayout,
           iconOffset: [-22, -22],
           iconShape: { type: 'Circle', coordinates: [0, 0], radius: 0 },
