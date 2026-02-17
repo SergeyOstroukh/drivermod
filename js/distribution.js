@@ -9,6 +9,7 @@
   const MINSK_CENTER = [53.9006, 27.559];
   const DEFAULT_ZOOM = 12;
   const COLORS = window.DistributionAlgo.DRIVER_COLORS;
+  const ORIGINAL_COLORS = COLORS.slice();
   const STORAGE_KEY = 'dc_distribution_data';
 
   let orders = [];
@@ -36,6 +37,16 @@
   let _driversListOpen = true;
   // Hide assigned toggle
   let _hideAssigned = false;
+  // Custom driver colors
+  let driverCustomColors = {};
+  const DRIVER_COLORS_KEY = 'dc_driver_colors';
+  const COLOR_PALETTE = [
+    '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
+    '#ec4899', '#06b6d4', '#f97316', '#14b8a6', '#6366f1',
+    '#a855f7', '#84cc16', '#e11d48', '#0ea5e9', '#d946ef',
+    '#10b981', '#facc15', '#f43f5e', '#2dd4bf', '#c084fc',
+    '#fb923c', '#4ade80', '#38bdf8', '#a3e635', '#fbbf24',
+  ];
 
   // ─── Fixed POI locations (ПВЗ / склады) ──────────────────
   var POI_DEFS = [
@@ -236,6 +247,89 @@
 
   function clearState() {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+  }
+
+  // ─── Driver custom colors ─────────────────────────────────
+  function loadDriverColors() {
+    try {
+      var raw = localStorage.getItem(DRIVER_COLORS_KEY);
+      if (raw) driverCustomColors = JSON.parse(raw);
+    } catch (e) { driverCustomColors = {}; }
+  }
+
+  function saveDriverColors() {
+    try {
+      localStorage.setItem(DRIVER_COLORS_KEY, JSON.stringify(driverCustomColors));
+    } catch (e) {}
+  }
+
+  function applyCustomColors() {
+    for (var i = 0; i < ORIGINAL_COLORS.length; i++) {
+      COLORS[i] = ORIGINAL_COLORS[i];
+    }
+    dbDrivers.forEach(function (dr, idx) {
+      var customColor = driverCustomColors[String(dr.id)];
+      if (customColor && idx < COLORS.length) {
+        COLORS[idx] = customColor;
+      }
+    });
+  }
+
+  function showColorPalette(anchorEl, driverId, driverIdx) {
+    var existing = document.querySelector('.dc-color-palette');
+    if (existing) existing.remove();
+
+    var palette = document.createElement('div');
+    palette.className = 'dc-color-palette';
+
+    var currentColor = COLORS[driverIdx % COLORS.length];
+
+    COLOR_PALETTE.forEach(function (color) {
+      var swatch = document.createElement('div');
+      swatch.className = 'dc-color-swatch';
+      swatch.style.background = color;
+      if (color === currentColor) swatch.classList.add('active');
+      swatch.title = color;
+      swatch.addEventListener('click', function (e) {
+        e.stopPropagation();
+        driverCustomColors[String(driverId)] = color;
+        saveDriverColors();
+        applyCustomColors();
+        palette.remove();
+        renderAll();
+      });
+      palette.appendChild(swatch);
+    });
+
+    // Reset button
+    var resetBtn = document.createElement('div');
+    resetBtn.className = 'dc-color-swatch dc-color-reset';
+    resetBtn.textContent = '\u21BA';
+    resetBtn.title = 'Сбросить цвет';
+    resetBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      delete driverCustomColors[String(driverId)];
+      saveDriverColors();
+      applyCustomColors();
+      palette.remove();
+      renderAll();
+    });
+    palette.appendChild(resetBtn);
+
+    var rect = anchorEl.getBoundingClientRect();
+    palette.style.left = rect.left + 'px';
+    palette.style.top = (rect.bottom + 4) + 'px';
+
+    document.body.appendChild(palette);
+
+    setTimeout(function () {
+      document.addEventListener('click', function closePalette(e) {
+        if (!palette.contains(e.target)) {
+          palette.remove();
+          document.removeEventListener('click', closePalette);
+        }
+      });
+    }, 10);
   }
 
   // ─── Map ──────────────────────────────────────────────────
@@ -1633,6 +1727,7 @@
     } else {
       html += '<div class="dc-order-actions">';
       html += '<span class="dc-status-ok">✓</span>';
+      html += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
       if (order.isSupplier && !order.supplierDbId) {
         html += '<button class="btn btn-outline btn-sm dc-create-supplier-btn" data-id="' + order.id + '" title="Создать поставщика в базе" style="color:#10b981;border-color:#10b981;font-size:10px;">+ В базу</button>';
       }
@@ -1694,7 +1789,7 @@
         var count = driverPointCounts[String(dr.id)] || 0;
         var isActive = selectedDriver != null && String(selectedDriver) === String(dr.id);
         driverListHtml += '<button class="dc-driver-filter-btn' + (isActive ? ' active' : '') + '" data-driver-filter="' + dr.id + '" data-driver-idx="' + di + '" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (isActive ? c : '#333') + ';background:' + (isActive ? 'rgba(255,255,255,0.05)' : 'transparent') + ';cursor:pointer;width:100%;">' +
-          '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
+          '<span class="dc-driver-color-dot" data-driver-id="' + dr.id + '" data-driver-idx="' + di + '" style="width:14px;height:14px;border-radius:50%;background:' + c + ';flex-shrink:0;border:2px solid rgba(255,255,255,0.2);cursor:pointer;" title="Изменить цвет"></span>' +
           '<span style="flex:1;text-align:left;color:#e0e0e0;font-size:12px;font-weight:' + (isActive ? '700' : '400') + ';">' + dr.name + '</span>' +
           '<span style="color:#888;font-size:11px;">' + count + ' точ.</span>' +
           '</button>';
@@ -1965,6 +2060,14 @@
       });
     });
 
+    // Driver color dots — open palette
+    sidebar.querySelectorAll('.dc-driver-color-dot').forEach(function (dot) {
+      dot.addEventListener('click', function (e) {
+        e.stopPropagation();
+        showColorPalette(dot, dot.dataset.driverId, parseInt(dot.dataset.driverIdx));
+      });
+    });
+
     // Variants
     sidebar.querySelectorAll('.dc-variant').forEach(function (btn) {
       btn.addEventListener('click', function () { selectVariant(parseInt(btn.dataset.variant)); });
@@ -2099,6 +2202,9 @@
   async function onSectionActivated() {
     // Load drivers and suppliers from DB
     await Promise.all([loadDbDrivers(), loadDbSuppliers()]);
+    // Apply custom driver colors
+    loadDriverColors();
+    applyCustomColors();
     // Restore saved data on first activation
     if (orders.length === 0) {
       loadState();

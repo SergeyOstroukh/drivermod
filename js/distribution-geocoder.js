@@ -8,6 +8,7 @@
 
   const YMAPS_SRC = 'https://api-maps.yandex.ru/2.1/?apikey=8c44c726-c732-45f2-94ac-af2cf0bb0181&lang=ru_RU&suggest_apikey=8b2a44b9-d35a-4aed-8e5a-4a1d71d30de8';
   const MINSK_BOUNDS = [[53.75, 27.25], [54.15, 27.90]];
+  const MINSK_CITY_BOUNDS = [[53.82, 27.36], [54.02, 27.72]];
 
   function loadYmaps() {
     return new Promise((resolve, reject) => {
@@ -137,6 +138,13 @@
     return normalizeForCompare(formattedAddress).includes(normalizeForCompare(settlement));
   }
 
+  // ─── Minsk city validation ──────────────────────────────────
+  function isResultInMinskCity(result) {
+    if (!result || !result.lat || !result.lng) return false;
+    return result.lat >= MINSK_CITY_BOUNDS[0][0] && result.lat <= MINSK_CITY_BOUNDS[1][0] &&
+           result.lng >= MINSK_CITY_BOUNDS[0][1] && result.lng <= MINSK_CITY_BOUNDS[1][1];
+  }
+
   // ─── Two-step regional geocoding ────────────────────────────
   async function geocodeRegional(cleanAddress) {
     const settlement = extractSettlement(cleanAddress);
@@ -209,6 +217,63 @@
     };
   }
 
+  // ─── Minsk city geocoding (strict) ─────────────────────────
+  async function geocodeInMinskCity(normalized, cleanAddress, rawAddress) {
+    let streetPart = normalized.replace(/^[,\s]*(?:г\.?\s*)?минск\s*[,\s]*/i, '').trim();
+    if (!streetPart || streetPart.length < 2) streetPart = normalized;
+
+    const queries = [];
+    if (streetPart !== normalized && streetPart.length > 2) {
+      queries.push('Минск, ' + streetPart);
+      queries.push('Беларусь, Минск, ' + streetPart);
+    }
+    queries.push('Минск, ' + normalized);
+    queries.push('Беларусь, Минск, ' + normalized);
+
+    const simplified = simplifyAddress(normalized);
+    if (simplified !== normalized && simplified.length > 2) {
+      queries.push('Минск, ' + simplified);
+    }
+    if (cleanAddress !== normalized) {
+      queries.push('Минск, ' + cleanAddress);
+    }
+
+    const seen = {};
+    const uniqueQueries = queries.filter(function (q) {
+      if (seen[q]) return false;
+      seen[q] = true;
+      return true;
+    });
+
+    // Step 1: strict bounds — only results within Minsk city
+    for (const q of uniqueQueries) {
+      try {
+        const r = await yandexGeocode(q, MINSK_CITY_BOUNDS, true);
+        if (r && isResultInMinskCity(r)) return r;
+      } catch (e) { /* continue */ }
+    }
+
+    // Step 2: soft bounds but validate coordinates are in Minsk
+    for (const q of uniqueQueries) {
+      try {
+        const r = await yandexGeocode(q, MINSK_CITY_BOUNDS, false);
+        if (r && isResultInMinskCity(r)) return r;
+      } catch (e) { /* continue */ }
+    }
+
+    // Step 3: street-only as last resort
+    const streetOnly = extractStreetName(normalized);
+    if (streetOnly) {
+      try {
+        const r = await yandexGeocode('Минск, ' + streetOnly, MINSK_CITY_BOUNDS, true);
+        if (r && isResultInMinskCity(r)) return r;
+      } catch (e) { /* ignore */ }
+    }
+
+    // NOT FOUND in Minsk — do NOT fall through to broader search
+    throw new Error('Адрес не найден в Минске: ' + rawAddress);
+  }
+
   // ─── Address helpers ────────────────────────────────────────
   function simplifyAddress(address) {
     let s = address.replace(/^(минск|беларусь)[,\s]*/i, '').trim();
@@ -229,53 +294,39 @@
   // ─── Main geocoding entry point ─────────────────────────────
   async function geocodeAddress(rawAddress) {
     const cleanAddress = window.DistributionParser.cleanAddressForGeocoding(rawAddress);
-    // Normalize non-standard abbreviations (пр-д → проезд, п-кт → проспект, etc.)
     const normalized = normalizeAddress(cleanAddress);
 
     const isMinskRegion = /минск(ий|ого|ому)/i.test(normalized) ||
       /прилуки|копище|богатырёво|богатырево|лесной|сеница|боровляны|колодищи|заславль|фаниполь|ратомка|тарасово|озерцо|щомыслица|новый\s*двор|атолино|хатежино|дзержинск|столбцы|смолевичи|жодино|логойск|руденск|михановичи|привольный|сосны|зелёный\s*бор|зеленый\s*бор|луговая\s*слобода|лесковка|большевик|мачулищи|гатово|чуриловичи|колядичи|паперня|самохваловичи|fanipol|borovlyany/i.test(normalized);
-    const hasMinsk = /минск/i.test(normalized);
+    // "Минск" as city name (not "Минский", "Минская", "Минского")
+    const hasMinskCity = /минск(?![а-яё])/i.test(normalized) && !isMinskRegion;
+    const settlement = extractSettlement(normalized);
 
-    // For regional addresses: two-step geocoding (settlement first, then street)
+    // 1. Regional addresses (villages, suburbs of Minsk)
     if (isMinskRegion) {
       try {
         const regional = await geocodeRegional(normalized);
         if (regional) return regional;
-      } catch (e) { /* fall through to standard geocoding */ }
+      } catch (e) { /* fall through */ }
+      const queries = [
+        'Беларусь, Минский район, ' + normalized,
+        normalized,
+      ];
+      for (const q of queries) {
+        try { const r = await yandexGeocode(q); if (r) return r; } catch (e) { /* continue */ }
+      }
+      throw new Error('Адрес не найден: ' + rawAddress);
     }
 
-    // Standard geocoding — build query list from most specific to broadest
-    const queries = [];
-    if (isMinskRegion) {
-      queries.push('Беларусь, Минский район, ' + normalized);
-      queries.push(normalized);
-    } else if (hasMinsk) {
-      queries.push('Беларусь, ' + normalized);
-      queries.push(normalized);
-    } else {
-      queries.push('Минск, ' + normalized);
-      queries.push('Беларусь, Минск, ' + normalized);
-    }
-    const simplified = simplifyAddress(normalized);
-    if (simplified !== normalized) queries.push('Минск, ' + simplified);
-
-    // Also try the original cleaned address (before normalization) as fallback
-    if (normalized !== cleanAddress) {
-      queries.push(cleanAddress);
+    // 2. Minsk city: "Минск" explicitly mentioned OR no settlement → default to Minsk
+    if (hasMinskCity || !settlement) {
+      return await geocodeInMinskCity(normalized, cleanAddress, rawAddress);
     }
 
-    // Fallback: raw address without any prefix — lets Yandex use its own
-    // typo tolerance and fuzzy matching to the fullest
-    if (!hasMinsk && !isMinskRegion) {
-      queries.push(normalized);
-    }
-
+    // 3. Other settlements (non-Minsk, non-region)
+    const queries = [normalized, 'Беларусь, ' + normalized];
     for (const q of queries) {
       try { const r = await yandexGeocode(q); if (r) return r; } catch (e) { /* continue */ }
-    }
-    const streetOnly = extractStreetName(normalized);
-    if (streetOnly) {
-      try { const r = await yandexGeocode('Минск, ' + streetOnly); if (r) return r; } catch (e) { /* ignore */ }
     }
     throw new Error('Адрес не найден: ' + rawAddress);
   }
