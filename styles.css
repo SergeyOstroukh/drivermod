@@ -2376,6 +2376,23 @@ body {
 	gap: 0;
 }
 
+/* Trip details (multi-trip) */
+.route-trip-details {
+	border: 1px solid var(--border);
+	border-radius: 10px;
+	overflow: hidden;
+}
+.route-trip-details[open] > summary span:first-child {
+	transform: rotate(90deg);
+}
+.route-trip-details > summary {
+	padding: 10px 14px;
+	background: rgba(255,255,255,0.02);
+}
+.route-trip-details > summary:hover {
+	background: rgba(255,255,255,0.05);
+}
+
 /* Route points */
 .route-point {
 	display: flex;

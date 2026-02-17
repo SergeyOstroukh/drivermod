@@ -975,23 +975,80 @@
     }, 50);
   }
 
-  function distribute() {
+  function showDistributeDialog() {
+    var geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
+    if (geocodedCount === 0) { showToast('Нет геокодированных адресов', 'error'); return; }
+
+    if (dbDrivers.length === 0) {
+      distribute(null);
+      return;
+    }
+
+    var existing = document.getElementById('dcDistributeModal');
+    if (existing) existing.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'dcDistributeModal';
+    modal.className = 'modal is-open';
+    modal.style.cssText = 'z-index:10000;';
+
+    var driverCheckboxes = '';
+    dbDrivers.forEach(function (dr, di) {
+      var c = COLORS[di % COLORS.length];
+      driverCheckboxes += '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid #444;cursor:pointer;width:100%;">' +
+        '<input type="checkbox" class="dc-dist-driver-cb" data-driver-id="' + dr.id + '" checked style="accent-color:' + c + ';width:16px;height:16px;">' +
+        '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
+        '<span style="flex:1;color:#e0e0e0;font-size:13px;">' + escapeHtml(dr.name) + '</span>' +
+        '</label>';
+    });
+
+    modal.innerHTML = '<div class="modal-content" style="max-width:400px;">' +
+      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Распределить маршрут</h3>' +
+      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Выберите водителей для распределения:</div>' +
+      '<div style="display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;">' +
+      driverCheckboxes +
+      '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:12px;">' +
+      '<button class="btn btn-primary dc-dist-run" style="flex:1;">Распределить</button>' +
+      '<button class="btn btn-outline dc-dist-cancel" style="flex:1;">Отмена</button>' +
+      '</div></div>';
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('.dc-dist-cancel').addEventListener('click', function () { modal.remove(); });
+    modal.querySelector('.dc-dist-run').addEventListener('click', function () {
+      var selectedIds = [];
+      modal.querySelectorAll('.dc-dist-driver-cb:checked').forEach(function (cb) {
+        selectedIds.push(cb.dataset.driverId);
+      });
+      modal.remove();
+      if (selectedIds.length === 0) {
+        showToast('Выберите хотя бы одного водителя', 'error');
+        return;
+      }
+      distribute(selectedIds);
+    });
+  }
+
+  function distribute(selectedDriverIds) {
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     if (geocodedCount === 0) { showToast('Нет геокодированных адресов', 'error'); return; }
-    driverCount = parseInt($('#dcDriverCount').value) || 3;
 
-    // Collect drivers from existing direct assignments (suppliers) to preserve in slots
-    var preAssigned = {};
-    orders.forEach(function (o) {
-      if (o.assignedDriverId) preAssigned[o.assignedDriverId] = true;
-    });
-
-    // Build driverSlots: first fill with pre-assigned drivers, then nulls
-    driverSlots = [];
-    Object.keys(preAssigned).forEach(function (did) {
-      if (driverSlots.length < driverCount) driverSlots.push(did);
-    });
-    while (driverSlots.length < driverCount) driverSlots.push(null);
+    if (selectedDriverIds && selectedDriverIds.length > 0) {
+      driverCount = selectedDriverIds.length;
+      driverSlots = selectedDriverIds.slice();
+    } else {
+      driverCount = parseInt($('#dcDriverCount').value) || 3;
+      var preAssigned = {};
+      orders.forEach(function (o) {
+        if (o.assignedDriverId) preAssigned[o.assignedDriverId] = true;
+      });
+      driverSlots = [];
+      Object.keys(preAssigned).forEach(function (did) {
+        if (driverSlots.length < driverCount) driverSlots.push(did);
+      });
+      while (driverSlots.length < driverCount) driverSlots.push(null);
+    }
 
     variants = window.DistributionAlgo.generateVariants(orders, driverCount);
     activeVariant = 0;
@@ -1003,7 +1060,7 @@
     selectedDriver = null;
     _fitBoundsNext = true;
     renderAll();
-    showToast('Создано ' + variants.length + ' вариантов');
+    showToast('Распределено на ' + driverCount + ' водител' + (driverCount === 1 ? 'я' : 'ей'));
   }
 
   function selectVariant(idx) {
@@ -1332,6 +1389,129 @@
       showToast('Маршруты опубликованы! Водители увидят их в своём разделе');
     } catch (err) {
       showToast('Ошибка сохранения: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Finish route per driver (multi-trip) ────────────────
+  function showFinishRouteDialog() {
+    var existing = document.getElementById('dcFinishRouteModal');
+    if (existing) existing.remove();
+
+    // Count address orders (not suppliers, not POI) per driver
+    var driverAddrCounts = {};
+    orders.forEach(function (o, idx) {
+      if (o.isSupplier || o.isPoi || !o.geocoded) return;
+      var did = getOrderDriverId(idx);
+      if (!did) return;
+      var key = String(did);
+      if (!driverAddrCounts[key]) driverAddrCounts[key] = 0;
+      driverAddrCounts[key]++;
+    });
+
+    var modal = document.createElement('div');
+    modal.id = 'dcFinishRouteModal';
+    modal.className = 'modal is-open';
+    modal.style.cssText = 'z-index:10000;';
+
+    var driverBtns = '';
+    dbDrivers.forEach(function (dr, di) {
+      var count = driverAddrCounts[String(dr.id)] || 0;
+      if (count === 0) return;
+      var c = COLORS[di % COLORS.length];
+      var label = dr.name.split(' ')[0];
+      driverBtns += '<button class="btn btn-outline dc-finish-route-driver" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
+        '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
+        '<span style="flex:1;text-align:left;">' + escapeHtml(label) + '</span>' +
+        '<span style="color:#888;font-size:11px;">' + count + ' адр.</span>' +
+        '</button>';
+    });
+
+    if (!driverBtns) {
+      showToast('Нет адресов для завершения маршрута', 'error');
+      return;
+    }
+
+    var totalAddrs = 0;
+    Object.keys(driverAddrCounts).forEach(function (k) { totalAddrs += driverAddrCounts[k]; });
+
+    modal.innerHTML = '<div class="modal-content" style="max-width:400px;">' +
+      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Завершить маршрут</h3>' +
+      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Адреса будут сохранены как выезд в кабинете водителя.<br>Поставщики остаются на карте.</div>' +
+      '<div style="display:flex;flex-direction:column;gap:6px;">' +
+      driverBtns +
+      '<div style="border-top:1px solid #333;margin:4px 0;"></div>' +
+      '<button class="btn btn-outline dc-finish-route-driver" data-driver-id="__all__" style="color:var(--accent);border-color:var(--accent);width:100%;">Все водители (' + totalAddrs + ' адр.)</button>' +
+      '<button class="btn btn-outline dc-finish-route-cancel" style="margin-top:4px;width:100%;">Отмена</button>' +
+      '</div></div>';
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('.dc-finish-route-cancel').addEventListener('click', function () { modal.remove(); });
+
+    modal.querySelectorAll('.dc-finish-route-driver').forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        modal.remove();
+        var driverId = btn.dataset.driverId;
+        if (driverId === '__all__') {
+          var driverIds = Object.keys(driverAddrCounts);
+          for (var i = 0; i < driverIds.length; i++) {
+            await finishDriverRoute(driverIds[i]);
+          }
+        } else {
+          await finishDriverRoute(driverId);
+        }
+      });
+    });
+  }
+
+  async function finishDriverRoute(driverId) {
+    var routeDate = new Date().toISOString().split('T')[0];
+    var driverName = getDriverNameById(driverId);
+
+    // Collect address-only orders for this driver (not suppliers, not POI)
+    var points = [];
+    var orderIndicesToRemove = [];
+
+    orders.forEach(function (order, idx) {
+      if (order.isSupplier || order.isPoi || !order.geocoded) return;
+      var did = getOrderDriverId(idx);
+      if (!did || String(did) !== String(driverId)) return;
+
+      points.push({
+        address: order.address,
+        lat: order.lat,
+        lng: order.lng,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        formattedAddress: order.formattedAddress || null,
+        orderNum: points.length + 1,
+        isKbt: order.isKbt || false,
+        helperDriverName: order.helperDriverSlot != null ? (dbDrivers[order.helperDriverSlot] ? dbDrivers[order.helperDriverSlot].name : '?') : null,
+      });
+      orderIndicesToRemove.push(idx);
+    });
+
+    if (points.length === 0) {
+      showToast('Нет адресов для ' + driverName, 'error');
+      return;
+    }
+
+    try {
+      await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId), routeDate, points);
+
+      // Remove finished orders from map (reverse order to preserve indices)
+      orderIndicesToRemove.sort(function (a, b) { return b - a; });
+      orderIndicesToRemove.forEach(function (idx) {
+        orders.splice(idx, 1);
+        if (assignments) assignments.splice(idx, 1);
+      });
+
+      variants = []; activeVariant = -1;
+      _fitBoundsNext = true;
+      renderAll();
+      showToast('Маршрут для ' + driverName + ' сохранён (' + points.length + ' адр.)');
+    } catch (err) {
+      showToast('Ошибка: ' + err.message, 'error');
     }
   }
 
@@ -1964,7 +2144,7 @@
       finishHtml = '<div class="dc-section dc-finish-section">' +
         '<button class="btn dc-btn-finish ready">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> ' +
-        'Завершить распределение</button>' +
+        'Завершить маршрут</button>' +
         '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' +
         'Поставщики → Telegram' + (unsentSupplierCount > 0 ? ' (' + unsentSupplierCount + ')' : ' ✓') + '</button>' +
@@ -2159,13 +2339,13 @@
     const replaceBtn = sidebar.querySelector('.dc-btn-replace');
     if (replaceBtn) replaceBtn.addEventListener('click', function () { loadAddresses(false); });
     const distBtn = sidebar.querySelector('.dc-btn-distribute');
-    if (distBtn) distBtn.addEventListener('click', distribute);
+    if (distBtn) distBtn.addEventListener('click', showDistributeDialog);
     const clearBtn = sidebar.querySelector('.dc-btn-clear');
     if (clearBtn) clearBtn.addEventListener('click', clearAll);
 
     // Finish distribution
     const finishBtn = sidebar.querySelector('.dc-btn-finish');
-    if (finishBtn) finishBtn.addEventListener('click', finishDistribution);
+    if (finishBtn) finishBtn.addEventListener('click', showFinishRouteDialog);
     const telegramBtn = sidebar.querySelector('.dc-btn-telegram');
     if (telegramBtn) telegramBtn.addEventListener('click', sendToTelegram);
     const checkTgBtn = sidebar.querySelector('.dc-btn-check-tg');

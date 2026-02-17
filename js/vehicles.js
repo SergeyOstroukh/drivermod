@@ -361,14 +361,14 @@
 		const titleEl = document.getElementById("driverRouteTitle");
 		if (titleEl) titleEl.textContent = "Маршрут: " + (driver.name || "Водитель");
 
-		// Load route
+		// Load all routes (multiple trips)
 		const today = new Date().toISOString().split("T")[0];
 		try {
-			const route = await window.VehiclesDB.getDriverRoute(driver.id, today);
-			renderDriverRoute(route);
+			const routes = await window.VehiclesDB.getDriverRoutes(driver.id, today);
+			renderDriverRoutes(routes);
 		} catch (err) {
-			console.error("Ошибка загрузки маршрута:", err);
-			renderDriverRoute(null);
+			console.error("Ошибка загрузки маршрутов:", err);
+			renderDriverRoutes([]);
 		}
 	}
 
@@ -387,160 +387,194 @@
 		currentRouteDriverId = null;
 	}
 
-	let currentRouteData = null; // текущий объект маршрута из БД
+	let currentRoutesData = []; // массив маршрутов (выездов) из БД
 	let showCompletedPoints = false;
 
-	function renderDriverRoute(route) {
+	function renderDriverRoutes(routes) {
 		const listEl = document.getElementById("driverRouteList");
 		const mapEl = document.getElementById("driverRouteMap");
 		if (!listEl) return;
 
-		currentRouteData = route;
+		currentRoutesData = routes || [];
 
-		if (!route || !route.points || route.points.length === 0) {
+		if (currentRoutesData.length === 0) {
 			listEl.innerHTML = '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg><p>На сегодня маршрут не назначен</p></div>';
 			return;
 		}
 
-		const allPoints = route.points.slice();
-		allPoints.sort(function(a, b) { return (a.orderNum || 0) - (b.orderNum || 0); });
+		// Collect suppliers from all routes (separate section)
+		var allSuppliers = [];
+		var trips = []; // { route, points (address-only), tripNum, isCompleted }
+		var allActiveMapPoints = [];
 
-		const activePoints = allPoints.filter(function(pt) { return pt.status !== 'completed'; });
-		const completedPoints = allPoints.filter(function(pt) { return pt.status === 'completed'; });
-		const displayPoints = showCompletedPoints ? allPoints : activePoints;
+		currentRoutesData.forEach(function (route, ri) {
+			var pts = (route.points || []).slice();
+			var suppliers = pts.filter(function (pt) { return pt.isSupplier; });
+			var addresses = pts.filter(function (pt) { return !pt.isSupplier && !pt.isPoi; });
 
-		let html = '';
-
-		// Header with stats and actions
-		html += '<div class="route-header">';
-		html += '<div class="route-header-stats">';
-		html += '<span class="route-stat active-stat">' + activePoints.length + ' активных</span>';
-		if (completedPoints.length > 0) {
-			html += '<span class="route-stat completed-stat">' + completedPoints.length + ' завершённых</span>';
-		}
-		html += '</div>';
-		html += '<div class="route-header-actions">';
-		// Build full route button
-		if (activePoints.length > 0) {
-			html += '<button class="btn btn-primary btn-sm route-build-btn" id="routeBuildAllBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg> Построить маршрут</button>';
-		}
-		if (completedPoints.length > 0) {
-			html += '<button class="btn btn-outline btn-sm route-toggle-completed" id="routeToggleCompleted">' + (showCompletedPoints ? 'Скрыть завершённые' : 'Показать завершённые') + '</button>';
-		}
-		html += '</div>';
-		html += '</div>';
-
-		// Split points into suppliers and orders
-		var supplierPoints = displayPoints.filter(function(pt) { return pt.isSupplier; });
-		var orderPoints = displayPoints.filter(function(pt) { return !pt.isSupplier; });
-
-		function renderRoutePoint(pt, num, isLast) {
-			var isCompleted = pt.status === 'completed';
-			var ptIndex = allPoints.indexOf(pt);
-			var h = '';
-			h += '<div class="route-point' + (isCompleted ? ' route-point-completed' : '') + '">';
-			h += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
-			h += '<div class="route-point-info">';
-			h += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + pt.address + '</div>';
-			if (pt.formattedAddress) {
-				h += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
-			}
-			if (pt.isKbt) {
-				h += '<div class="route-point-kbt" style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
-				h += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:3px;">📦 КБТ</span>';
-				if (pt.isKbtHelper && pt.mainDriverName) {
-					h += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Вы помогаете: ' + pt.mainDriverName + '</span>';
-				} else if (pt.helperDriverName) {
-					h += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Помощник: ' + pt.helperDriverName + '</span>';
-				}
-				h += '</div>';
-			}
-			if (pt.timeSlot) {
-				h += '<div class="route-point-meta">⏰ ' + pt.timeSlot + '</div>';
-			}
-			if (pt.phone) {
-				h += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">📞 ' + pt.phone + '</a></div>';
-			}
-			h += '</div>';
-			h += '<div class="route-point-actions">';
-			if (!isCompleted) {
-				if (pt.lat && pt.lng) {
-					var webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
-					h += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
-				}
-				h += '<button class="btn btn-primary btn-sm route-complete-btn" data-pt-index="' + ptIndex + '" title="Завершить">✓</button>';
-			}
-			h += '</div>';
-			h += '</div>';
-			if (!isLast) h += '<div class="route-connector"></div>';
-			return h;
-		}
-
-		// Suppliers section
-		if (supplierPoints.length > 0) {
-			html += '<div style="margin:12px 0 6px;font-size:13px;font-weight:700;color:#10b981;display:flex;align-items:center;gap:6px;">🏢 Поставщики (' + supplierPoints.length + ')</div>';
-			var sNum = 0;
-			supplierPoints.forEach(function(pt, idx) {
-				if (pt.status !== 'completed') sNum++;
-				html += renderRoutePoint(pt, sNum || '✓', idx === supplierPoints.length - 1);
+			suppliers.forEach(function (s, si) {
+				allSuppliers.push(Object.assign({}, s, { _routeId: route.id, _routeIdx: ri, _ptIdx: pts.indexOf(s) }));
 			});
-		}
 
-		// Orders section
-		if (orderPoints.length > 0) {
-			html += '<div style="margin:12px 0 6px;font-size:13px;font-weight:700;color:#3b82f6;display:flex;align-items:center;gap:6px;">🏠 Заказы (' + orderPoints.length + ')</div>';
-			var oNum = 0;
-			orderPoints.forEach(function(pt, idx) {
-				if (pt.status !== 'completed') oNum++;
-				html += renderRoutePoint(pt, oNum || '✓', idx === orderPoints.length - 1);
+			trips.push({
+				route: route,
+				points: addresses,
+				allPoints: pts,
+				tripNum: ri + 1,
+				isCompleted: route.status === 'completed',
 			});
+
+			// Active points for the map
+			if (route.status !== 'completed') {
+				addresses.forEach(function (pt) {
+					if (pt.status !== 'completed' && pt.lat && pt.lng) {
+						allActiveMapPoints.push(pt);
+					}
+				});
+			}
+		});
+
+		var html = '';
+
+		// ── Suppliers section ──
+		if (allSuppliers.length > 0) {
+			var activeSup = allSuppliers.filter(function (s) { return s.status !== 'completed'; }).length;
+			html += '<details class="route-trip-details" open style="margin-bottom:12px;">';
+			html += '<summary class="route-trip-summary" style="color:#10b981;font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;">';
+			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
+			html += '\uD83C\uDFE2 Поставщики (' + allSuppliers.length + ')';
+			if (activeSup < allSuppliers.length) html += ' <span style="font-weight:400;color:#888;font-size:12px;">' + activeSup + ' активных</span>';
+			html += '</summary>';
+			html += '<div style="padding-left:4px;">';
+			allSuppliers.forEach(function (pt, idx) {
+				html += renderRoutePointHtml(pt, idx + 1, idx === allSuppliers.length - 1, pt._routeId, pt._ptIdx);
+			});
+			html += '</div></details>';
 		}
 
-		if (activePoints.length === 0 && completedPoints.length > 0 && !showCompletedPoints) {
-			html += '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg><p>Все точки завершены!</p></div>';
+		// ── Trips (Выезды) ──
+		trips.forEach(function (trip) {
+			if (trip.points.length === 0 && !trip.isCompleted) return;
+			var activeCount = trip.points.filter(function (pt) { return pt.status !== 'completed'; }).length;
+			var allDone = trip.isCompleted || (trip.points.length > 0 && activeCount === 0);
+			var icon = allDone ? '\u2705' : '\uD83D\uDE97';
+			var statusText = trip.isCompleted ? 'завершён' : (allDone ? 'все точки пройдены' : activeCount + ' из ' + trip.points.length + ' активных');
+
+			html += '<details class="route-trip-details" ' + (allDone ? '' : 'open') + ' style="margin-bottom:8px;">';
+			html += '<summary class="route-trip-summary" style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;">';
+			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
+			html += icon + ' Выезд ' + trip.tripNum + ' <span style="font-weight:400;color:#888;font-size:12px;">(' + statusText + ')</span>';
+			html += '</summary>';
+			html += '<div style="padding-left:4px;">';
+
+			// Actions for active trip
+			if (!allDone) {
+				html += '<div style="display:flex;gap:8px;margin-bottom:8px;padding:4px 0;">';
+				html += '<button class="btn btn-primary btn-sm route-build-trip-btn" data-route-id="' + trip.route.id + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg> Построить маршрут</button>';
+				html += '</div>';
+			}
+
+			var num = 0;
+			trip.points.forEach(function (pt, idx) {
+				if (pt.status !== 'completed') num++;
+				var ptIdx = trip.allPoints.indexOf(pt);
+				html += renderRoutePointHtml(pt, num || '\u2713', idx === trip.points.length - 1, trip.route.id, ptIdx);
+			});
+
+			if (trip.points.length === 0) {
+				html += '<div style="padding:8px;color:#888;font-size:12px;">Нет адресов доставки</div>';
+			}
+
+			html += '</div></details>';
+		});
+
+		if (trips.length === 0 && allSuppliers.length === 0) {
+			html += '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg><p>На сегодня маршрут не назначен</p></div>';
 		}
 
 		listEl.innerHTML = html;
 
-		// Bind events
-		bindRouteEvents(allPoints);
-
-		// Init or update route map (show only active points)
-		initDriverRouteMap(activePoints, mapEl);
-	}
-
-	function bindRouteEvents(allPoints) {
-		// Complete point buttons
-		document.querySelectorAll('.route-complete-btn').forEach(function(btn) {
-			btn.addEventListener('click', async function() {
-				const ptIndex = parseInt(btn.dataset.ptIndex);
-				await completeRoutePoint(ptIndex);
+		// Rotate arrows on details open/close
+		listEl.querySelectorAll('.route-trip-details').forEach(function (det) {
+			var arrow = det.querySelector('summary span');
+			if (arrow) arrow.style.transform = det.open ? 'rotate(90deg)' : '';
+			det.addEventListener('toggle', function () {
+				if (arrow) arrow.style.transform = det.open ? 'rotate(90deg)' : '';
 			});
 		});
 
-		// Build full route
-		const buildBtn = document.getElementById('routeBuildAllBtn');
-		if (buildBtn) {
-			buildBtn.addEventListener('click', function() {
-				buildOptimizedRoute();
-			});
-		}
+		// Bind events
+		bindRouteEvents();
 
-		// Toggle completed visibility
-		const toggleBtn = document.getElementById('routeToggleCompleted');
-		if (toggleBtn) {
-			toggleBtn.addEventListener('click', function() {
-				showCompletedPoints = !showCompletedPoints;
-				renderDriverRoute(currentRouteData);
-			});
-		}
+		// Init or update route map (show only active address points)
+		initDriverRouteMap(allActiveMapPoints, mapEl);
 	}
 
-	async function completeRoutePoint(pointIndex) {
-		if (!currentRouteData || !currentRouteData.points) return;
+	function renderRoutePointHtml(pt, num, isLast, routeId, ptIndex) {
+		var isCompleted = pt.status === 'completed';
+		var h = '';
+		h += '<div class="route-point' + (isCompleted ? ' route-point-completed' : '') + '">';
+		h += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
+		h += '<div class="route-point-info">';
+		h += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + pt.address + '</div>';
+		if (pt.formattedAddress) {
+			h += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
+		}
+		if (pt.isKbt) {
+			h += '<div class="route-point-kbt" style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
+			h += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:3px;">\uD83D\uDCE6 КБТ</span>';
+			if (pt.isKbtHelper && pt.mainDriverName) {
+				h += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Вы помогаете: ' + pt.mainDriverName + '</span>';
+			} else if (pt.helperDriverName) {
+				h += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Помощник: ' + pt.helperDriverName + '</span>';
+			}
+			h += '</div>';
+		}
+		if (pt.timeSlot) {
+			h += '<div class="route-point-meta">\u23F0 ' + pt.timeSlot + '</div>';
+		}
+		if (pt.phone) {
+			h += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">\uD83D\uDCDE ' + pt.phone + '</a></div>';
+		}
+		h += '</div>';
+		h += '<div class="route-point-actions">';
+		if (!isCompleted) {
+			if (pt.lat && pt.lng) {
+				var webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
+				h += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
+			}
+			h += '<button class="btn btn-primary btn-sm route-complete-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" title="Завершить">\u2713</button>';
+		}
+		h += '</div>';
+		h += '</div>';
+		if (!isLast) h += '<div class="route-connector"></div>';
+		return h;
+	}
 
-		// Update point status in the array
-		const updatedPoints = currentRouteData.points.map(function(pt, idx) {
+	function bindRouteEvents() {
+		// Complete point buttons
+		document.querySelectorAll('.route-complete-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var routeId = btn.dataset.routeId;
+				var ptIndex = parseInt(btn.dataset.ptIndex);
+				await completeRoutePointMulti(routeId, ptIndex);
+			});
+		});
+
+		// Build route per trip
+		document.querySelectorAll('.route-build-trip-btn').forEach(function (btn) {
+			btn.addEventListener('click', function () {
+				var routeId = btn.dataset.routeId;
+				buildOptimizedRouteForTrip(routeId);
+			});
+		});
+	}
+
+	async function completeRoutePointMulti(routeId, pointIndex) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points) return;
+
+		var updatedPoints = route.points.map(function (pt, idx) {
 			if (idx === pointIndex) {
 				return Object.assign({}, pt, { status: 'completed' });
 			}
@@ -548,32 +582,30 @@
 		});
 
 		try {
-			const updated = await window.VehiclesDB.updateRoutePoints(currentRouteData.id, updatedPoints);
-			currentRouteData = updated;
-			renderDriverRoute(updated);
+			var updated = await window.VehiclesDB.updateRoutePoints(route.id, updatedPoints);
+			// Replace route in array
+			currentRoutesData = currentRoutesData.map(function (r) {
+				return String(r.id) === String(routeId) ? updated : r;
+			});
+			renderDriverRoutes(currentRoutesData);
 		} catch (err) {
 			console.error("Ошибка обновления статуса точки:", err);
 			alert("Не удалось обновить статус: " + err.message);
 		}
 	}
 
-	function buildOptimizedRoute() {
-		if (!currentRouteData || !currentRouteData.points) return;
+	function buildOptimizedRouteForTrip(routeId) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points) return;
 
-		const activePoints = currentRouteData.points
-			.filter(function(pt) { return pt.status !== 'completed' && pt.lat && pt.lng; });
+		var activePoints = route.points
+			.filter(function (pt) { return pt.status !== 'completed' && !pt.isSupplier && pt.lat && pt.lng; });
 
 		if (activePoints.length === 0) return;
 
-		// Оптимизация порядка (nearest neighbor от ближайшей к центру Минска)
-		const optimized = optimizePointsOrder(activePoints);
-
-		// Строим URL для Яндекс Карт с маршрутом через все точки
-		// Формат: rtext=lat1,lng1~lat2,lng2~lat3,lng3&rtt=auto
-		const rtextParts = optimized.map(function(pt) { return pt.lat + ',' + pt.lng; });
-		const webUrl = 'https://yandex.by/maps/?rtext=' + rtextParts.join('~') + '&rtt=auto';
-
-		// Всегда открываем в новой вкладке, чтобы не уходить из приложения
+		var optimized = optimizePointsOrder(activePoints);
+		var rtextParts = optimized.map(function (pt) { return pt.lat + ',' + pt.lng; });
+		var webUrl = 'https://yandex.by/maps/?rtext=' + rtextParts.join('~') + '&rtt=auto';
 		window.open(webUrl, '_blank');
 	}
 

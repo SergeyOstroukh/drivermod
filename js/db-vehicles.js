@@ -833,6 +833,50 @@
 		}
 	}
 
+	/**
+	 * Сохраняет маршрут (выезд) для одного водителя (INSERT, не удаляет другие)
+	 */
+	async function saveDriverRouteForDriver(driverId, routeDate, points) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.insert({
+					driver_id: driverId,
+					route_date: routeDate,
+					points: points,
+					status: 'active'
+				})
+				.select('*')
+				.single();
+			if (error) throw error;
+			return data;
+		} catch (err) {
+			console.error('Ошибка сохранения маршрута водителя:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Получает ВСЕ маршруты водителя на дату (несколько выездов)
+	 */
+	async function getDriverRoutes(driverId, routeDate) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.select('*')
+				.eq('driver_id', driverId)
+				.eq('route_date', routeDate)
+				.order('created_at', { ascending: true });
+			if (error) throw error;
+			return data || [];
+		} catch (err) {
+			console.error('Ошибка получения маршрутов:', err);
+			throw err;
+		}
+	}
+
 	window.VehiclesDB = {
 		// Водители
 		getAllDrivers,
@@ -861,7 +905,9 @@
 		deleteMaintenanceEntry,
 		// Маршруты водителей
 		saveDriverRoutes,
+		saveDriverRouteForDriver,
 		getDriverRoute,
+		getDriverRoutes,
 		getActiveRoutes,
 		deleteDriverRoute,
 		completeDriverRoute,
