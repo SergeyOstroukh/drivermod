@@ -758,11 +758,13 @@
   window.__dc_delete = function (orderId) {
     var idx = orders.findIndex(function (o) { return o.id === orderId; });
     if (idx === -1) return;
+    var affectedDriverId = getOrderDriverId(idx);
     orders.splice(idx, 1);
     if (assignments) { assignments.splice(idx, 1); }
     variants = []; activeVariant = -1;
     renderAll();
     showToast('Точка удалена');
+    if (affectedDriverId) scheduleSyncDriver(String(affectedDriverId));
   };
 
   window.__dc_toggleKbt = function (globalIdx) {
@@ -1432,6 +1434,21 @@
       var label = type === 'suppliers' ? 'поставщиков' : (type === 'addresses' ? 'адресов' : 'точек');
       var who = isAll ? '' : (' у ' + driverName);
       showToast('Сброшено ' + removed + ' ' + label + who);
+
+      // Sync affected driver(s) to DB
+      if (!isAll && driverId !== '__unassigned__') {
+        scheduleSyncDriver(String(driverId));
+      } else if (isAll) {
+        // Sync all drivers that still have orders
+        var syncedDrivers = {};
+        orders.forEach(function (o, i) {
+          var did = getOrderDriverId(i);
+          if (did && !syncedDrivers[did]) {
+            syncedDrivers[did] = true;
+            scheduleSyncDriver(String(did));
+          }
+        });
+      }
     }
     _fitBoundsNext = true;
     renderAll();
@@ -2696,12 +2713,14 @@
       btn.addEventListener('click', function () {
         const idx = orders.findIndex(function (o) { return o.id === btn.dataset.id; });
         if (idx === -1) return;
+        var affectedDriverId = getOrderDriverId(idx);
         orders.splice(idx, 1);
         if (assignments) {
           assignments.splice(idx, 1);
         }
         variants = []; activeVariant = -1;
         renderAll();
+        if (affectedDriverId) scheduleSyncDriver(String(affectedDriverId));
       });
     });
 
