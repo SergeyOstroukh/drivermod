@@ -230,7 +230,8 @@
   }
 
   function generateVariants(orders, driverCount) {
-    var geocodedOrders = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
+    // Only distribute address orders — suppliers keep their manual assignment
+    var geocodedOrders = orders.filter(function (o) { return o.geocoded && o.lat && o.lng && !o.isSupplier; });
     if (geocodedOrders.length === 0) {
       var empty = { assignments: orders.map(function () { return -1; }), driverRoutes: [], stats: [] };
       for (var d = 0; d < driverCount; d++) { empty.driverRoutes.push([]); empty.stats.push({ count: 0, km: 0 }); }

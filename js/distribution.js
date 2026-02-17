@@ -1120,17 +1120,35 @@
     activeVariant = 0;
     assignments = variants[0].assignments.slice();
 
-    // Clear direct assignments — algorithm takes over, user can re-assign manually after
-    orders.forEach(function (o) { o.assignedDriverId = null; });
+    // Clear direct assignments ONLY for non-supplier orders — suppliers keep their manual assignment
+    orders.forEach(function (o, idx) {
+      if (!o.isSupplier) {
+        o.assignedDriverId = null;
+      } else {
+        // Supplier stays with its manual assignment; mark in assignments as -1 so algorithm doesn't override
+        assignments[idx] = -1;
+      }
+    });
 
     selectedDriver = null;
     _fitBoundsNext = true;
     renderAll();
     showToast('Распределено на ' + driverCount + ' водител' + (driverCount === 1 ? 'я' : 'ей'));
 
-    // Auto-sync all drivers to cabinet DB
+    // Auto-sync all affected drivers to cabinet DB (distributed + supplier drivers)
+    var syncedDriverIds = {};
     driverSlots.forEach(function (did) {
-      if (did) scheduleSyncDriver(String(did));
+      if (did && !syncedDriverIds[did]) {
+        syncedDriverIds[did] = true;
+        scheduleSyncDriver(String(did));
+      }
+    });
+    // Also sync drivers that have suppliers assigned
+    orders.forEach(function (o) {
+      if (o.isSupplier && o.assignedDriverId && !syncedDriverIds[o.assignedDriverId]) {
+        syncedDriverIds[o.assignedDriverId] = true;
+        scheduleSyncDriver(String(o.assignedDriverId));
+      }
     });
   }
 
@@ -2630,11 +2648,13 @@
           return;
         }
         searchTimeout = setTimeout(function () {
+          var normalizeYo = function (s) { return s.replace(/ё/g, 'е').replace(/Ё/g, 'Е'); };
+          var normQuery = normalizeYo(query);
           var matches = [];
           orders.forEach(function (o, idx) {
             if (!o.geocoded) return;
-            var searchText = ((o.address || '') + ' ' + (o.formattedAddress || '') + ' ' + (o.phone || '')).toLowerCase();
-            if (searchText.indexOf(query) !== -1) {
+            var searchText = normalizeYo(((o.address || '') + ' ' + (o.formattedAddress || '') + ' ' + (o.phone || '')).toLowerCase());
+            if (searchText.indexOf(normQuery) !== -1) {
               matches.push({ order: o, idx: idx });
             }
           });
