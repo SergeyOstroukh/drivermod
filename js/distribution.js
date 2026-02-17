@@ -1046,36 +1046,185 @@
     var existing = document.getElementById('dcClearModal');
     if (existing) existing.remove();
 
+    // Count orders per driver
+    var driverCounts = {}; // { driverId: { suppliers: N, addresses: N } }
+    var unassignedCounts = { suppliers: 0, addresses: 0 };
+    orders.forEach(function (o, idx) {
+      var did = getOrderDriverId(idx);
+      if (!did) {
+        if (o.isSupplier) unassignedCounts.suppliers++;
+        else unassignedCounts.addresses++;
+        return;
+      }
+      var key = String(did);
+      if (!driverCounts[key]) driverCounts[key] = { suppliers: 0, addresses: 0 };
+      if (o.isSupplier) driverCounts[key].suppliers++;
+      else driverCounts[key].addresses++;
+    });
+
     var modal = document.createElement('div');
     modal.id = 'dcClearModal';
     modal.className = 'modal is-open';
     modal.style.cssText = 'z-index:10000;';
-    modal.innerHTML = '<div class="modal-content" style="max-width:360px;text-align:center;">' +
-      '<h3 class="modal-title" style="margin-bottom:16px;">Что сбросить?</h3>' +
-      '<div style="display:flex;flex-direction:column;gap:8px;">' +
-      '<button class="btn btn-outline dc-clear-opt" data-type="suppliers" style="color:#10b981;border-color:#10b981;">🏢 Поставщики</button>' +
-      '<button class="btn btn-outline dc-clear-opt" data-type="addresses" style="color:#3b82f6;border-color:#3b82f6;">🏠 Адреса доставки</button>' +
-      '<button class="btn btn-outline dc-clear-opt" data-type="all" style="color:var(--danger);border-color:var(--danger);">Сбросить всё</button>' +
-      '<button class="btn btn-outline dc-clear-opt" data-type="cancel" style="margin-top:4px;">Отмена</button>' +
-      '</div></div>';
+
+    // Step 1: choose driver
+    var driverBtns = '';
+    dbDrivers.forEach(function (dr, di) {
+      var c = COLORS[di % COLORS.length];
+      var counts = driverCounts[String(dr.id)];
+      var total = counts ? counts.suppliers + counts.addresses : 0;
+      if (total === 0) return;
+      var label = dr.name.split(' ')[0];
+      var detail = '';
+      if (counts.suppliers > 0 && counts.addresses > 0) {
+        detail = counts.suppliers + ' пост. + ' + counts.addresses + ' адр.';
+      } else if (counts.suppliers > 0) {
+        detail = counts.suppliers + ' пост.';
+      } else {
+        detail = counts.addresses + ' адр.';
+      }
+      driverBtns += '<button class="btn btn-outline dc-clear-driver" data-driver-id="' + dr.id + '" data-driver-name="' + escapeHtml(label) + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
+        '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
+        '<span style="flex:1;text-align:left;">' + escapeHtml(label) + '</span>' +
+        '<span style="color:#888;font-size:11px;">' + total + ' (' + detail + ')</span>' +
+        '</button>';
+    });
+    // Unassigned
+    var unassignedTotal = unassignedCounts.suppliers + unassignedCounts.addresses;
+    if (unassignedTotal > 0) {
+      var unDetail = '';
+      if (unassignedCounts.suppliers > 0 && unassignedCounts.addresses > 0) {
+        unDetail = unassignedCounts.suppliers + ' пост. + ' + unassignedCounts.addresses + ' адр.';
+      } else if (unassignedCounts.suppliers > 0) {
+        unDetail = unassignedCounts.suppliers + ' пост.';
+      } else {
+        unDetail = unassignedCounts.addresses + ' адр.';
+      }
+      driverBtns += '<button class="btn btn-outline dc-clear-driver" data-driver-id="__unassigned__" data-driver-name="Нераспределённые" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
+        '<span style="width:12px;height:12px;border-radius:50%;background:#888;flex-shrink:0;"></span>' +
+        '<span style="flex:1;text-align:left;">Нераспределённые</span>' +
+        '<span style="color:#888;font-size:11px;">' + unassignedTotal + ' (' + unDetail + ')</span>' +
+        '</button>';
+    }
+
+    modal.innerHTML = '<div class="modal-content" style="max-width:400px;">' +
+      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Сбросить данные</h3>' +
+      '<div class="dc-clear-step dc-clear-step1" style="display:flex;flex-direction:column;gap:6px;">' +
+      '<div style="font-size:12px;color:#888;margin-bottom:4px;">Для какого водителя?</div>' +
+      driverBtns +
+      '<div style="border-top:1px solid #333;margin:6px 0;"></div>' +
+      '<button class="btn btn-outline dc-clear-driver" data-driver-id="__all__" data-driver-name="Все" style="color:var(--danger);border-color:var(--danger);width:100%;">Все водители (' + orders.length + ' точек)</button>' +
+      '<button class="btn btn-outline dc-clear-cancel" style="margin-top:4px;width:100%;">Отмена</button>' +
+      '</div>' +
+      '<div class="dc-clear-step dc-clear-step2" style="display:none;flex-direction:column;gap:8px;">' +
+      '<div class="dc-clear-step2-title" style="font-size:13px;font-weight:600;text-align:center;margin-bottom:4px;"></div>' +
+      '<div class="dc-clear-step2-btns" style="display:flex;flex-direction:column;gap:6px;"></div>' +
+      '<button class="btn btn-outline dc-clear-back" style="margin-top:4px;width:100%;">\u2190 Назад</button>' +
+      '</div>' +
+      '</div>';
 
     document.body.appendChild(modal);
 
-    modal.querySelectorAll('.dc-clear-opt').forEach(function (btn) {
+    // Cancel
+    modal.querySelector('.dc-clear-cancel').addEventListener('click', function () { modal.remove(); });
+
+    // Step 1 → Step 2
+    modal.querySelectorAll('.dc-clear-driver').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var driverId = btn.dataset.driverId;
+        var driverName = btn.dataset.driverName;
+        showClearStep2(modal, driverId, driverName);
+      });
+    });
+
+    // Back
+    modal.querySelector('.dc-clear-back').addEventListener('click', function () {
+      modal.querySelector('.dc-clear-step1').style.display = 'flex';
+      modal.querySelector('.dc-clear-step2').style.display = 'none';
+    });
+  }
+
+  function showClearStep2(modal, driverId, driverName) {
+    modal.querySelector('.dc-clear-step1').style.display = 'none';
+    var step2 = modal.querySelector('.dc-clear-step2');
+    step2.style.display = 'flex';
+
+    var titleEl = modal.querySelector('.dc-clear-step2-title');
+    titleEl.textContent = driverId === '__all__' ? 'Сбросить: все водители' : 'Сбросить: ' + driverName;
+
+    // Count what's available for this driver
+    var supCount = 0, addrCount = 0;
+    orders.forEach(function (o, idx) {
+      var match = false;
+      if (driverId === '__all__') {
+        match = true;
+      } else if (driverId === '__unassigned__') {
+        match = !getOrderDriverId(idx);
+      } else {
+        var did = getOrderDriverId(idx);
+        match = did != null && String(did) === String(driverId);
+      }
+      if (match) {
+        if (o.isSupplier) supCount++;
+        else addrCount++;
+      }
+    });
+
+    var btnsHtml = '';
+    if (supCount > 0) {
+      btnsHtml += '<button class="btn btn-outline dc-clear-exec" data-clear-type="suppliers" style="color:#10b981;border-color:#10b981;width:100%;">\uD83C\uDFE2 Поставщики (' + supCount + ')</button>';
+    }
+    if (addrCount > 0) {
+      btnsHtml += '<button class="btn btn-outline dc-clear-exec" data-clear-type="addresses" style="color:#3b82f6;border-color:#3b82f6;width:100%;">\uD83C\uDFE0 Адреса доставки (' + addrCount + ')</button>';
+    }
+    if (supCount > 0 && addrCount > 0) {
+      btnsHtml += '<button class="btn btn-outline dc-clear-exec" data-clear-type="all" style="color:var(--danger);border-color:var(--danger);width:100%;">Всё (' + (supCount + addrCount) + ')</button>';
+    }
+    if (supCount === 0 && addrCount === 0) {
+      btnsHtml += '<div style="text-align:center;color:#888;padding:12px;">Нет точек</div>';
+    }
+
+    modal.querySelector('.dc-clear-step2-btns').innerHTML = btnsHtml;
+
+    // Bind exec buttons
+    modal.querySelectorAll('.dc-clear-exec').forEach(function (btn) {
       btn.addEventListener('click', function () {
         modal.remove();
-        var type = btn.dataset.type;
-        if (type === 'cancel') return;
-        doClear(type);
+        doClear(btn.dataset.clearType, driverId, driverName);
       });
     });
   }
 
-  function doClear(type) {
-    if (type === 'suppliers') {
+  function doClear(type, driverId, driverName) {
+    var isAll = !driverId || driverId === '__all__';
+
+    function shouldRemove(order, idx) {
+      // Check if order belongs to selected driver
+      if (isAll) return true;
+      if (driverId === '__unassigned__') return !getOrderDriverId(idx);
+      var did = getOrderDriverId(idx);
+      return did != null && String(did) === String(driverId);
+    }
+
+    function filterType(order) {
+      if (type === 'suppliers') return order.isSupplier;
+      if (type === 'addresses') return !order.isSupplier;
+      return true; // 'all'
+    }
+
+    if (isAll && type === 'all') {
+      // Full reset
+      orders = []; assignments = null; variants = []; activeVariant = -1; selectedDriver = null;
+      driverSlots = [];
+      clearState();
+      showToast('Все данные сброшены');
+    } else {
       var keep = []; var keepA = [];
+      var removed = 0;
       for (var i = 0; i < orders.length; i++) {
-        if (!orders[i].isSupplier) {
+        if (shouldRemove(orders[i], i) && filterType(orders[i])) {
+          removed++;
+        } else {
           keep.push(orders[i]);
           if (assignments) keepA.push(assignments[i]);
         }
@@ -1083,24 +1232,10 @@
       orders = keep;
       assignments = keepA.length > 0 ? keepA : null;
       variants = []; activeVariant = -1;
-      showToast('Поставщики сброшены');
-    } else if (type === 'addresses') {
-      var keep2 = []; var keepA2 = [];
-      for (var j = 0; j < orders.length; j++) {
-        if (orders[j].isSupplier) {
-          keep2.push(orders[j]);
-          if (assignments) keepA2.push(assignments[j]);
-        }
-      }
-      orders = keep2;
-      assignments = keepA2.length > 0 ? keepA2 : null;
-      variants = []; activeVariant = -1;
-      showToast('Адреса доставки сброшены');
-    } else {
-      orders = []; assignments = null; variants = []; activeVariant = -1; selectedDriver = null;
-      driverSlots = [];
-      clearState();
-      showToast('Все данные сброшены');
+
+      var label = type === 'suppliers' ? 'поставщиков' : (type === 'addresses' ? 'адресов' : 'точек');
+      var who = isAll ? '' : (' у ' + driverName);
+      showToast('Сброшено ' + removed + ' ' + label + who);
     }
     _fitBoundsNext = true;
     renderAll();
