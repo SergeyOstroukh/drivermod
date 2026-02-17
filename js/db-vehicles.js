@@ -896,7 +896,7 @@
 			if (findErr) throw findErr;
 
 			if (existing) {
-				// Обновляем существующий
+				// Обновляем существующий активный
 				const { data, error } = await client
 					.from('driver_routes')
 					.update({ points: points })
@@ -906,7 +906,7 @@
 				if (error) throw error;
 				return data;
 			} else {
-				// Создаём новый
+				// Создаём новый — с обработкой конфликта unique constraint
 				const { data, error } = await client
 					.from('driver_routes')
 					.insert({
@@ -917,11 +917,64 @@
 					})
 					.select('*')
 					.single();
+
+				if (error && error.code === '23505') {
+					// Unique constraint conflict — find any route for this driver+date and update it
+					const { data: anyRoute, error: findAny } = await client
+						.from('driver_routes')
+						.select('id')
+						.eq('driver_id', driverId)
+						.eq('route_date', routeDate)
+						.order('created_at', { ascending: false })
+						.limit(1)
+						.maybeSingle();
+					if (findAny) throw findAny;
+					if (anyRoute) {
+						const { data: updated, error: upErr } = await client
+							.from('driver_routes')
+							.update({ points: points, status: 'active' })
+							.eq('id', anyRoute.id)
+							.select('*')
+							.single();
+						if (upErr) throw upErr;
+						return updated;
+					}
+				}
+
 				if (error) throw error;
 				return data;
 			}
 		} catch (err) {
 			console.error('Ошибка синхронизации маршрута:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Удаляет последний активный маршрут водителя за дату (когда все точки сняты)
+	 */
+	async function clearActiveRoute(driverId, routeDate) {
+		try {
+			const client = initSupabase();
+			const { data: existing, error: findErr } = await client
+				.from('driver_routes')
+				.select('id')
+				.eq('driver_id', driverId)
+				.eq('route_date', routeDate)
+				.eq('status', 'active')
+				.order('created_at', { ascending: false })
+				.limit(1)
+				.maybeSingle();
+			if (findErr) throw findErr;
+			if (existing) {
+				const { error } = await client
+					.from('driver_routes')
+					.delete()
+					.eq('id', existing.id);
+				if (error) throw error;
+			}
+		} catch (err) {
+			console.error('Ошибка очистки маршрута:', err);
 			throw err;
 		}
 	}
@@ -956,6 +1009,7 @@
 		saveDriverRoutes,
 		saveDriverRouteForDriver,
 		syncDriverRoute,
+		clearActiveRoute,
 		getDriverRoute,
 		getDriverRoutes,
 		getActiveRoutes,

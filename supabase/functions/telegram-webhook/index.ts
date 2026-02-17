@@ -44,7 +44,6 @@ serve(async (req) => {
       const cbId = cb.id;
       const chatId = cb.message?.chat?.id;
       const messageId = cb.message?.message_id;
-      const originalText = cb.message?.text || "";
       const driverName = cb.from?.first_name || cb.from?.username || "Водитель";
 
       // Determine new status
@@ -65,19 +64,29 @@ serve(async (req) => {
         }),
       });
 
-      // 2. Edit message: remove buttons, add status text
+      // 2. Remove inline buttons only — keep original message with clickable map link
       const statusEmoji = action === "accept" ? "✅" : "❌";
       const statusLabel = action === "accept" ? "Принято" : "Отклонено";
-      const newText = originalText + "\n\n" + statusEmoji + " " + statusLabel + " — " + driverName;
 
       if (chatId && messageId) {
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+        // Remove buttons, preserve original HTML message
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: chatId,
             message_id: messageId,
-            text: newText,
+            reply_markup: { inline_keyboard: [] },
+          }),
+        });
+        // Send status as a separate reply
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: statusEmoji + " " + statusLabel + " — " + driverName,
+            reply_to_message_id: messageId,
           }),
         });
       }

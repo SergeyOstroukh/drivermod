@@ -749,6 +749,9 @@
     try {
       if (points.length > 0) {
         await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
+      } else {
+        // No points left — clear the active route from DB
+        await window.VehiclesDB.clearActiveRoute(parseInt(driverId), routeDate);
       }
     } catch (err) {
       console.error('Auto-sync error for driver ' + driverId + ':', err);
@@ -1723,7 +1726,11 @@
     var supCount = points.length - addrCount;
 
     try {
-      await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId), routeDate, points);
+      // First sync latest points to the active route, then mark it completed
+      var savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
+      if (savedRoute && savedRoute.id) {
+        await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+      }
 
       // Remove finished address orders from map (suppliers stay)
       orderIndicesToRemove.sort(function (a, b) { return b - a; });
@@ -1926,6 +1933,7 @@
   var _tgPollTimer = null;
   var _processedCallbacks = JSON.parse(localStorage.getItem('dc_tg_processed_cbs') || '[]');
   var _webhookDeleted = false;
+  var _tgUpdateOffset = parseInt(localStorage.getItem('dc_tg_update_offset') || '0', 10);
 
   function getSupabaseClient() {
     var config = window.SUPABASE_CONFIG || {};
@@ -1956,10 +1964,17 @@
   async function ensureNoWebhook(botToken) {
     if (_webhookDeleted) return;
     try {
-      await fetch('https://api.telegram.org/bot' + botToken + '/deleteWebhook');
-      _webhookDeleted = true;
-      console.log('Telegram webhook deleted, getUpdates enabled');
-    } catch (e) { /* ignore */ }
+      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/deleteWebhook?drop_pending_updates=false');
+      var data = await resp.json();
+      if (data.ok) {
+        _webhookDeleted = true;
+        console.log('Telegram webhook deleted, getUpdates enabled');
+      } else {
+        console.warn('deleteWebhook failed:', data.description);
+      }
+    } catch (e) {
+      console.warn('deleteWebhook error:', e);
+    }
   }
 
   // Check confirmations via direct Telegram getUpdates
@@ -1984,7 +1999,9 @@
 
     var processed = 0;
     try {
-      var tgResp = await fetch('https://api.telegram.org/bot' + botToken + '/getUpdates?timeout=0&limit=100');
+      var getUrl = 'https://api.telegram.org/bot' + botToken + '/getUpdates?timeout=0&limit=100';
+      if (_tgUpdateOffset > 0) getUrl += '&offset=' + _tgUpdateOffset;
+      var tgResp = await fetch(getUrl);
       var tgData = await tgResp.json();
 
       if (!tgData.ok) {
@@ -1995,9 +2012,16 @@
 
       var results = tgData.result || [];
       var callbackCount = 0;
+      var maxUpdateId = _tgUpdateOffset;
 
       for (var i = 0; i < results.length; i++) {
         var update = results[i];
+
+        // Track max update_id to advance offset
+        if (update.update_id >= maxUpdateId) {
+          maxUpdateId = update.update_id + 1;
+        }
+
         if (!update.callback_query) continue;
         callbackCount++;
 
@@ -2005,7 +2029,7 @@
         if (_processedCallbacks.indexOf(cbId) !== -1) continue;
 
         var cbParts = (update.callback_query.data || '').split(':');
-        if (cbParts.length < 2) continue;
+        if (cbParts.length < 2) { _processedCallbacks.push(cbId); continue; }
         var action = cbParts[0];
         var orderId = cbParts.slice(1).join(':');
 
@@ -2042,10 +2066,18 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ chat_id: chatId, text: action === 'accept' ? '✅ Принято' : '❌ Отклонено', reply_to_message_id: msgId }),
             });
-          } catch (e) { /* ignore */ }
+          } catch (e) {
+            console.warn('editMessageReplyMarkup error:', e);
+          }
         }
 
         _processedCallbacks.push(cbId);
+      }
+
+      // Save offset so we don't re-fetch old updates
+      if (maxUpdateId > _tgUpdateOffset) {
+        _tgUpdateOffset = maxUpdateId;
+        localStorage.setItem('dc_tg_update_offset', String(_tgUpdateOffset));
       }
 
       // Persist processed IDs
@@ -2637,7 +2669,9 @@
     if (checkTgBtn) checkTgBtn.addEventListener('click', function () {
       // Clear processed cache on manual click to re-scan all callbacks
       _processedCallbacks = [];
+      _tgUpdateOffset = 0;
       localStorage.removeItem('dc_tg_processed_cbs');
+      localStorage.removeItem('dc_tg_update_offset');
       _webhookDeleted = false;
       checkTelegramConfirmations(false);
     });
