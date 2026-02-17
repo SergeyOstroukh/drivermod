@@ -1078,12 +1078,85 @@
     renderAll();
   }
 
-  function retryGeocode(orderId) {
+  async function retryGeocode(orderId) {
     const input = $('#dcEditInput-' + orderId.replace(/[^a-zA-Z0-9\-]/g, ''));
     if (!input) return;
     const addr = input.value.trim();
     if (!addr) return;
 
+    var order = orders.find(function (o) { return o.id === orderId; });
+
+    // For suppliers: search supplier DB first
+    if (order && order.isSupplier) {
+      input.disabled = true;
+      await loadDbSuppliers(); // refresh DB data
+      var supplier = findSupplierInDb(addr);
+      if (supplier && supplier.lat && supplier.lon) {
+        orders = orders.map(function (o) {
+          if (o.id !== orderId) return o;
+          return Object.assign({}, o, {
+            address: supplier.name,
+            lat: supplier.lat,
+            lng: supplier.lon,
+            formattedAddress: supplier.address || (supplier.lat + ', ' + supplier.lon),
+            geocoded: true,
+            error: null,
+            isSupplier: true,
+            supplierDbId: supplier.id,
+            supplierName: supplier.name,
+            supplierData: supplier,
+          });
+        });
+        editingOrderId = null;
+        renderAll();
+        showToast('Поставщик найден в базе');
+        return;
+      } else if (supplier && (!supplier.lat || !supplier.lon)) {
+        // Found in DB but no coordinates — try geocoding the DB address
+        var geoAddr = supplier.address || addr;
+        try {
+          var geo = await window.DistributionGeocoder.geocodeAddress(geoAddr);
+          orders = orders.map(function (o) {
+            if (o.id !== orderId) return o;
+            return Object.assign({}, o, {
+              address: supplier.name,
+              lat: geo.lat,
+              lng: geo.lng,
+              formattedAddress: geo.formattedAddress,
+              geocoded: true,
+              error: null,
+              isSupplier: true,
+              supplierDbId: supplier.id,
+              supplierName: supplier.name,
+              supplierData: supplier,
+            });
+          });
+          editingOrderId = null;
+          renderAll();
+          showToast('Поставщик найден, адрес геокодирован');
+          return;
+        } catch (e) {
+          orders = orders.map(function (o) {
+            if (o.id !== orderId) return o;
+            return Object.assign({}, o, {
+              address: supplier.name,
+              supplierDbId: supplier.id,
+              supplierName: supplier.name,
+              supplierData: supplier,
+              error: 'Нет координат — поставьте точку на карте',
+            });
+          });
+          editingOrderId = null;
+          renderAll();
+          showToast('Поставщик в базе, но адрес не найден — поставьте на карте', 'error');
+          return;
+        }
+      }
+      // Not found in supplier DB — try geocoding as address
+      input.disabled = false;
+    }
+
+    // Regular geocode (for addresses and suppliers not found in DB)
     input.disabled = true;
     window.DistributionGeocoder.geocodeAddress(addr).then(function (geo) {
       orders = orders.map(function (o) {
