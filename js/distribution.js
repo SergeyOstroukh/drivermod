@@ -687,6 +687,7 @@
   window.__dc_assignDirect = function (globalIdx, driverId) {
     var order = orders[globalIdx];
     if (!order) return;
+    var oldDriverId = getOrderDriverId(globalIdx);
     // Normalize driverId type to match dbDrivers (balloon passes string, sidebar passes original type)
     if (driverId != null && dbDrivers.length > 0) {
       var match = dbDrivers.find(function (d) { return String(d.id) === String(driverId); });
@@ -700,7 +701,59 @@
     }
     activeVariant = -1;
     renderAll();
+
+    // Auto-sync affected drivers to cabinet DB
+    if (driverId) scheduleSyncDriver(String(driverId));
+    if (oldDriverId && String(oldDriverId) !== String(driverId)) scheduleSyncDriver(String(oldDriverId));
   };
+
+  // Debounced auto-sync: batches rapid assignments into one DB call per driver
+  var _syncTimers = {};
+  function scheduleSyncDriver(driverId) {
+    if (_syncTimers[driverId]) clearTimeout(_syncTimers[driverId]);
+    _syncTimers[driverId] = setTimeout(function () {
+      delete _syncTimers[driverId];
+      syncDriverToDb(driverId);
+    }, 1500);
+  }
+
+  async function syncDriverToDb(driverId) {
+    var routeDate = new Date().toISOString().split('T')[0];
+    var points = [];
+    orders.forEach(function (order, idx) {
+      if (!order.geocoded) return;
+      var did = getOrderDriverId(idx);
+      if (!did || String(did) !== String(driverId)) return;
+      var pt = {
+        address: order.address,
+        lat: order.lat,
+        lng: order.lng,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        formattedAddress: order.formattedAddress || null,
+        orderNum: points.length + 1,
+      };
+      if (order.isSupplier) pt.isSupplier = true;
+      if (order.isPoi) { pt.isPoi = true; pt.poiLabel = order.poiLabel || null; }
+      if (order.isKbt) {
+        pt.isKbt = true;
+        if (order.helperDriverSlot != null) {
+          var helperDrv = dbDrivers[order.helperDriverSlot];
+          pt.helperDriverName = helperDrv ? helperDrv.name : '?';
+          pt.helperDriverId = helperDrv ? helperDrv.id : null;
+        }
+      }
+      points.push(pt);
+    });
+
+    try {
+      if (points.length > 0) {
+        await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
+      }
+    } catch (err) {
+      console.error('Auto-sync error for driver ' + driverId + ':', err);
+    }
+  }
 
   window.__dc_delete = function (orderId) {
     var idx = orders.findIndex(function (o) { return o.id === orderId; });
@@ -1069,6 +1122,11 @@
     _fitBoundsNext = true;
     renderAll();
     showToast('Распределено на ' + driverCount + ' водител' + (driverCount === 1 ? 'я' : 'ей'));
+
+    // Auto-sync all drivers to cabinet DB
+    driverSlots.forEach(function (did) {
+      if (did) scheduleSyncDriver(String(did));
+    });
   }
 
   function selectVariant(idx) {
