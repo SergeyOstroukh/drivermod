@@ -18,6 +18,7 @@
   let activeVariant = -1;
   let driverCount = 3;
   let selectedDriver = null;
+  let editingDriverId = null; // режим редактирования маршрута водителя
   let isGeocoding = false;
   let mapInstance = null;
   let placemarks = [];
@@ -491,7 +492,12 @@
       var orderDriverId = getOrderDriverId(globalIdx);
       // Hide assigned suppliers when toggle is on
       if (_hideAssigned && order.isSupplier && orderDriverId) return;
-      var isVisible = selectedDriver === null || (orderDriverId != null && String(orderDriverId) === String(selectedDriver)) || (selectedDriver === '__unassigned__' && !orderDriverId);
+      var isVisible;
+      if (editingDriverId) {
+        isVisible = !orderDriverId || String(orderDriverId) === String(editingDriverId);
+      } else {
+        isVisible = selectedDriver === null || (orderDriverId != null && String(orderDriverId) === String(selectedDriver)) || (selectedDriver === '__unassigned__' && !orderDriverId);
+      }
       var isSettlementOnly = order.settlementOnly;
       var isUnassigned = slotIdx < 0;
       var defaultColor = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
@@ -1987,6 +1993,9 @@
     html += '<div class="dc-order-driver-assign" style="margin-top:3px;">';
     if (hasSlot || driverId) {
       html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:' + color + ';cursor:pointer;font-size:12px;font-weight:600;" title="Нажмите чтобы сменить водителя">👤 ' + driverDisplayName + ' ▾</span>';
+    } else if (order.geocoded && editingDriverId) {
+      var editDrvName = getDriverNameById(editingDriverId);
+      html += '<button class="dc-quick-assign-btn" data-idx="' + idx + '" data-driver-id="' + editingDriverId + '" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px;">+ ' + escapeHtml(editDrvName) + '</button>';
     } else if (order.geocoded) {
       html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
     }
@@ -2094,20 +2103,38 @@
       });
       var totalAssigned = orders.filter(function (o, i) { return getOrderDriverId(i) != null; }).length;
 
-      driverListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-drivers"' + (_driversListOpen ? ' open' : '') + '>' +
+      // Edit mode banner
+      var editBannerHtml = '';
+      if (editingDriverId) {
+        var editDrv = dbDrivers.find(function (d) { return String(d.id) === String(editingDriverId); });
+        var editDi = dbDrivers.indexOf(editDrv);
+        var editColor = editDi >= 0 ? COLORS[editDi % COLORS.length] : '#888';
+        var editName = editDrv ? editDrv.name.split(' ')[0] : '?';
+        editBannerHtml = '<div class="dc-edit-mode-banner" style="background:rgba(59,130,246,0.15);border:1px solid #3b82f6;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">' +
+          '<span style="width:14px;height:14px;border-radius:50%;background:' + editColor + ';flex-shrink:0;"></span>' +
+          '<span style="flex:1;font-size:13px;font-weight:600;color:#e0e0e0;">Редактирование: ' + escapeHtml(editName) + '</span>' +
+          '<button class="btn btn-sm dc-edit-mode-done" style="background:#3b82f6;color:#fff;border:none;font-size:11px;padding:4px 12px;">Готово</button>' +
+          '</div>';
+      }
+
+      driverListHtml = '<div class="dc-section">' + editBannerHtml + '<details class="dc-list-details dc-details-drivers"' + (_driversListOpen ? ' open' : '') + '>' +
         '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Водители <span style="font-weight:400;color:#888;">(' + totalAssigned + '/' + orders.length + ' точек)</span></summary>' +
         '<div class="dc-drivers-list" style="display:flex;flex-direction:column;gap:2px;padding:4px 0;">';
       // "Show all" button
-      driverListHtml += '<button class="dc-driver-filter-btn' + (selectedDriver === null ? ' active' : '') + '" data-driver-filter="all" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (selectedDriver === null ? 'var(--accent)' : '#333') + ';background:' + (selectedDriver === null ? 'rgba(16,185,129,0.1)' : 'transparent') + ';cursor:pointer;color:#ccc;font-size:12px;font-weight:' + (selectedDriver === null ? '700' : '400') + ';width:100%;">Все точки</button>';
+      driverListHtml += '<button class="dc-driver-filter-btn' + (selectedDriver === null && !editingDriverId ? ' active' : '') + '" data-driver-filter="all" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (selectedDriver === null && !editingDriverId ? 'var(--accent)' : '#333') + ';background:' + (selectedDriver === null && !editingDriverId ? 'rgba(16,185,129,0.1)' : 'transparent') + ';cursor:pointer;color:#ccc;font-size:12px;font-weight:' + (selectedDriver === null && !editingDriverId ? '700' : '400') + ';width:100%;">Все точки</button>';
       dbDrivers.forEach(function (dr, di) {
         var c = COLORS[di % COLORS.length];
         var count = driverPointCounts[String(dr.id)] || 0;
-        var isActive = selectedDriver != null && String(selectedDriver) === String(dr.id);
-        driverListHtml += '<button class="dc-driver-filter-btn' + (isActive ? ' active' : '') + '" data-driver-filter="' + dr.id + '" data-driver-idx="' + di + '" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (isActive ? c : '#333') + ';background:' + (isActive ? 'rgba(255,255,255,0.05)' : 'transparent') + ';cursor:pointer;width:100%;">' +
+        var isActive = (selectedDriver != null && String(selectedDriver) === String(dr.id)) || (editingDriverId && String(editingDriverId) === String(dr.id));
+        var isEditing = editingDriverId && String(editingDriverId) === String(dr.id);
+        driverListHtml += '<div style="display:flex;align-items:center;gap:0;">' +
+          '<button class="dc-driver-filter-btn' + (isActive ? ' active' : '') + '" data-driver-filter="' + dr.id + '" data-driver-idx="' + di + '" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px 0 0 8px;border:1px solid ' + (isActive ? c : '#333') + ';background:' + (isActive ? 'rgba(255,255,255,0.05)' : 'transparent') + ';cursor:pointer;flex:1;min-width:0;">' +
           '<span class="dc-driver-color-dot" data-driver-id="' + dr.id + '" data-driver-idx="' + di + '" style="width:14px;height:14px;border-radius:50%;background:' + c + ';flex-shrink:0;border:2px solid rgba(255,255,255,0.2);cursor:pointer;" title="Изменить цвет"></span>' +
-          '<span style="flex:1;text-align:left;color:#e0e0e0;font-size:12px;font-weight:' + (isActive ? '700' : '400') + ';">' + dr.name + '</span>' +
+          '<span style="flex:1;text-align:left;color:#e0e0e0;font-size:12px;font-weight:' + (isActive ? '700' : '400') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + dr.name + '</span>' +
           '<span style="color:#888;font-size:11px;">' + count + ' точ.</span>' +
-          '</button>';
+          '</button>' +
+          '<button class="dc-driver-edit-btn" data-driver-id="' + dr.id + '" title="Редактировать маршрут" style="padding:6px 8px;border-radius:0 8px 8px 0;border:1px solid ' + (isEditing ? '#3b82f6' : '#333') + ';border-left:none;background:' + (isEditing ? 'rgba(59,130,246,0.2)' : 'transparent') + ';cursor:pointer;color:' + (isEditing ? '#3b82f6' : '#888') + ';font-size:13px;display:flex;align-items:center;" >✎</button>' +
+          '</div>';
       });
       driverListHtml += '</div></details></div>';
     }
@@ -2155,7 +2182,12 @@
 
     // ─── Supplier list (collapsible) ─────────────────────────
     var filteredSuppliers = supplierItems;
-    if (selectedDriver !== null) {
+    if (editingDriverId) {
+      filteredSuppliers = filteredSuppliers.filter(function (o) {
+        var did = getOrderDriverId(o.globalIndex);
+        return !did || String(did) === String(editingDriverId);
+      });
+    } else if (selectedDriver !== null) {
       filteredSuppliers = filteredSuppliers.filter(function (o) {
         var did = getOrderDriverId(o.globalIndex);
         return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
@@ -2184,10 +2216,20 @@
     }
 
     // ─── Address list (collapsible) ──────────────────────────
-    var filteredAddresses = selectedDriver !== null ? addressItems.filter(function (o) {
-      var did = getOrderDriverId(o.globalIndex);
-      return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
-    }) : addressItems;
+    var filteredAddresses;
+    if (editingDriverId) {
+      filteredAddresses = addressItems.filter(function (o) {
+        var did = getOrderDriverId(o.globalIndex);
+        return !did || String(did) === String(editingDriverId);
+      });
+    } else if (selectedDriver !== null) {
+      filteredAddresses = addressItems.filter(function (o) {
+        var did = getOrderDriverId(o.globalIndex);
+        return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
+      });
+    } else {
+      filteredAddresses = addressItems;
+    }
     var addressListHtml = '';
     if (filteredAddresses.length > 0) {
       addressListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-addresses"' + (_addressListOpen ? ' open' : '') + '>' +
@@ -2368,10 +2410,48 @@
         var filterId = btn.dataset.driverFilter;
         if (filterId === 'all') {
           selectedDriver = null;
+          editingDriverId = null;
         } else {
           selectedDriver = filterId;
+          editingDriverId = null;
         }
         renderAll();
+      });
+    });
+
+    // Driver edit route buttons
+    sidebar.querySelectorAll('.dc-driver-edit-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var driverId = btn.dataset.driverId;
+        if (editingDriverId && String(editingDriverId) === String(driverId)) {
+          editingDriverId = null;
+          selectedDriver = null;
+        } else {
+          editingDriverId = driverId;
+          selectedDriver = null;
+        }
+        renderAll();
+      });
+    });
+
+    // Edit mode "Done" button
+    var doneBtn = sidebar.querySelector('.dc-edit-mode-done');
+    if (doneBtn) {
+      doneBtn.addEventListener('click', function () {
+        editingDriverId = null;
+        selectedDriver = null;
+        renderAll();
+      });
+    }
+
+    // Quick assign buttons in edit mode
+    sidebar.querySelectorAll('.dc-quick-assign-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var idx = parseInt(btn.dataset.idx);
+        var driverId = btn.dataset.driverId;
+        window.__dc_assignDirect(idx, parseInt(driverId));
       });
     });
 
