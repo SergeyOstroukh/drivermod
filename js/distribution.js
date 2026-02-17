@@ -1566,16 +1566,18 @@
       }
     });
 
-    var addrCount = points.filter(function (p) { return !p.isSupplier; }).length;
-    if (addrCount === 0) {
-      showToast('Нет адресов для ' + driverName, 'error');
+    if (points.length === 0) {
+      showToast('Нет точек для ' + driverName, 'error');
       return;
     }
+
+    var addrCount = points.filter(function (p) { return !p.isSupplier; }).length;
+    var supCount = points.length - addrCount;
 
     try {
       await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId), routeDate, points);
 
-      // Remove finished address orders from map (reverse order to preserve indices)
+      // Remove finished address orders from map (suppliers stay)
       orderIndicesToRemove.sort(function (a, b) { return b - a; });
       orderIndicesToRemove.forEach(function (idx) {
         orders.splice(idx, 1);
@@ -1585,7 +1587,10 @@
       variants = []; activeVariant = -1;
       _fitBoundsNext = true;
       renderAll();
-      showToast('Маршрут для ' + driverName + ' сохранён (' + addrCount + ' адр.)');
+      var parts = [];
+      if (addrCount > 0) parts.push(addrCount + ' адр.');
+      if (supCount > 0) parts.push(supCount + ' пост.');
+      showToast('Маршрут для ' + driverName + ' сохранён (' + parts.join(', ') + ')');
     } catch (err) {
       showToast('Ошибка: ' + err.message, 'error');
     }
