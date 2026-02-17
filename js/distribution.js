@@ -38,6 +38,7 @@
   let _driversListOpen = true;
   // Hide assigned toggle
   let _hideAssigned = false;
+  let _hideConfirmed = false;
   // Custom driver colors
   let driverCustomColors = {};
   const DRIVER_COLORS_KEY = 'dc_driver_colors';
@@ -490,8 +491,9 @@
       var slotIdx = getOrderSlotIdx(globalIdx);
       var driverIdx = slotIdx; // for balloon color compatibility
       var orderDriverId = getOrderDriverId(globalIdx);
-      // Hide assigned suppliers when toggle is on
+      // Hide assigned/confirmed suppliers when toggles are on
       if (_hideAssigned && order.isSupplier && orderDriverId) return;
+      if (_hideConfirmed && order.isSupplier && order.telegramStatus === 'confirmed') return;
       var isVisible;
       if (editingDriverId) {
         isVisible = !orderDriverId || String(orderDriverId) === String(editingDriverId);
@@ -2269,21 +2271,26 @@
     if (_hideAssigned) {
       filteredSuppliers = filteredSuppliers.filter(function (o) { return !getOrderDriverId(o.globalIndex); });
     }
+    if (_hideConfirmed) {
+      filteredSuppliers = filteredSuppliers.filter(function (o) { return o.telegramStatus !== 'confirmed'; });
+    }
     var assignedSupplierCount = supplierItems.filter(function (o) { return !!getOrderDriverId(o.globalIndex); }).length;
-    var unassignedSupplierCount = supplierItems.length - assignedSupplierCount;
+    var confirmedSupplierCount = supplierItems.filter(function (o) { return o.telegramStatus === 'confirmed'; }).length;
     var supplierListHtml = '';
     if (supplierItems.length > 0) {
-      var toggleBtnHtml = supplierItems.length > 0
-        ? '<button class="dc-toggle-assigned" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_hideAssigned ? 'var(--accent)' : '#555') + ';background:' + (_hideAssigned ? 'rgba(16,185,129,0.15)' : 'transparent') + ';color:' + (_hideAssigned ? 'var(--accent)' : '#999') + ';cursor:pointer;margin-left:8px;white-space:nowrap;">' + (_hideAssigned ? 'Показать всех (' + supplierItems.length + ')' : 'Скрыть распред. (' + assignedSupplierCount + ')') + '</button>'
+      var toggleBtnHtml = '<button class="dc-toggle-assigned" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_hideAssigned ? 'var(--accent)' : '#555') + ';background:' + (_hideAssigned ? 'rgba(16,185,129,0.15)' : 'transparent') + ';color:' + (_hideAssigned ? 'var(--accent)' : '#999') + ';cursor:pointer;margin-left:8px;white-space:nowrap;">' + (_hideAssigned ? 'Показать всех (' + supplierItems.length + ')' : 'Скрыть распред. (' + assignedSupplierCount + ')') + '</button>';
+      var confirmToggleHtml = confirmedSupplierCount > 0
+        ? '<button class="dc-toggle-confirmed" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_hideConfirmed ? '#22c55e' : '#555') + ';background:' + (_hideConfirmed ? 'rgba(34,197,94,0.15)' : 'transparent') + ';color:' + (_hideConfirmed ? '#22c55e' : '#999') + ';cursor:pointer;margin-left:4px;white-space:nowrap;">' + (_hideConfirmed ? 'Показать ✅ (' + confirmedSupplierCount + ')' : 'Скрыть ✅ (' + confirmedSupplierCount + ')') + '</button>'
         : '';
       supplierListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-suppliers"' + (_supplierListOpen ? ' open' : '') + '>' +
-        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;">Поставщики <span style="font-weight:400;color:#888;">(' + ((_hideAssigned ? unassignedSupplierCount : filteredSuppliers.length)) + ')</span>' + toggleBtnHtml + '</summary>' +
+        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">Поставщики <span style="font-weight:400;color:#888;">(' + filteredSuppliers.length + ')</span>' + toggleBtnHtml + confirmToggleHtml + '</summary>' +
         '<div class="dc-orders-list">';
       filteredSuppliers.forEach(function (order) {
         supplierListHtml += renderOrderItem(order, order.globalIndex);
       });
       if (filteredSuppliers.length === 0) {
-        supplierListHtml += '<div style="padding:12px;color:#888;font-size:12px;text-align:center;">' + (_hideAssigned ? 'Все поставщики распределены' : 'Нет поставщиков') + '</div>';
+        var reason = _hideAssigned && _hideConfirmed ? 'Все поставщики распределены/подтверждены' : (_hideAssigned ? 'Все поставщики распределены' : (_hideConfirmed ? 'Все подтверждённые скрыты' : 'Нет поставщиков'));
+        supplierListHtml += '<div style="padding:12px;color:#888;font-size:12px;text-align:center;">' + reason + '</div>';
       }
       supplierListHtml += '</div></details></div>';
     }
@@ -2386,6 +2393,16 @@
         e.preventDefault();
         e.stopPropagation();
         _hideAssigned = !_hideAssigned;
+        renderAll();
+      });
+    }
+    // Toggle hide/show confirmed suppliers
+    var toggleConfirmedBtn = sidebar.querySelector('.dc-toggle-confirmed');
+    if (toggleConfirmedBtn) {
+      toggleConfirmedBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _hideConfirmed = !_hideConfirmed;
         renderAll();
       });
     }
