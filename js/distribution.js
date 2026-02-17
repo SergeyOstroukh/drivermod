@@ -1149,6 +1149,44 @@
 
     var order = orders.find(function (o) { return o.id === orderId; });
 
+    // Check if input is GPS coordinates (e.g. "53.938485, 27.563798" or "53.938485 27.563798")
+    var coordMatch = addr.match(/^(-?\d+[\.,]\d+)[,;\s]+(-?\d+[\.,]\d+)$/);
+    if (coordMatch) {
+      var lat = parseFloat(coordMatch[1].replace(',', '.'));
+      var lng = parseFloat(coordMatch[2].replace(',', '.'));
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+        input.disabled = true;
+        try {
+          var geo = await window.DistributionGeocoder.reverseGeocode(lat, lng);
+          orders = orders.map(function (o) {
+            if (o.id !== orderId) return o;
+            return Object.assign({}, o, {
+              lat: lat,
+              lng: lng,
+              formattedAddress: geo.formattedAddress,
+              geocoded: true,
+              error: null,
+              settlementOnly: false,
+            });
+          });
+          editingOrderId = null;
+          renderAll();
+          showToast('Координаты: ' + geo.formattedAddress);
+          // Auto-sync if assigned to a driver
+          var oi = orders.findIndex(function (o) { return o.id === orderId; });
+          if (oi >= 0) {
+            var did = getOrderDriverId(oi);
+            if (did) scheduleSyncDriver(String(did));
+          }
+          return;
+        } catch (e) {
+          showToast('Адрес по координатам не найден', 'error');
+          input.disabled = false;
+          return;
+        }
+      }
+    }
+
     // For suppliers: search supplier DB first
     if (order && order.isSupplier) {
       input.disabled = true;
@@ -2323,7 +2361,7 @@
 
     // Edit row
     if (isEditing) {
-      html += '<div class="dc-edit-row"><input class="dc-edit-input" id="dcEditInput-' + safeId + '" value="' + order.address.replace(/"/g, '&quot;') + '" placeholder="Новый адрес..."><button class="btn btn-primary btn-sm dc-retry-btn" data-id="' + order.id + '">Найти</button><button class="btn btn-outline btn-sm dc-cancel-edit" data-id="' + order.id + '">✕</button></div>';
+      html += '<div class="dc-edit-row"><input class="dc-edit-input" id="dcEditInput-' + safeId + '" value="' + order.address.replace(/"/g, '&quot;') + '" placeholder="Адрес или координаты (53.93, 27.56)"><button class="btn btn-primary btn-sm dc-retry-btn" data-id="' + order.id + '">Найти</button><button class="btn btn-outline btn-sm dc-cancel-edit" data-id="' + order.id + '">✕</button></div>';
     }
     if (isPlacing) {
       html += '<div class="dc-edit-row" style="color:var(--accent);font-size:12px;">👆 Кликните на карту для установки точки <button class="btn btn-outline btn-sm dc-cancel-place">Отмена</button></div>';
@@ -2561,6 +2599,13 @@
       '</div></div>' +
       variantsHtml +
       driverListHtml + finishHtml +
+      // ─── Search through loaded points ───────────────────────
+      (orders.length > 0 ? '<div class="dc-section dc-search-section" style="position:relative;">' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+        '<input type="text" id="dcPointSearch" class="dc-search-input" placeholder="🔍 Поиск по точкам на карте..." autocomplete="off" style="flex:1;padding:7px 10px;border:1px solid #444;border-radius:8px;font-size:13px;background:#1a1a2e;color:#e0e0e0;" />' +
+        '</div>' +
+        '<div id="dcPointSearchResults" style="display:none;margin-top:4px;max-height:200px;overflow-y:auto;border:1px solid #444;border-radius:8px;background:#1e1e2e;"></div>' +
+        '</div>' : '') +
       supplierListHtml + addressListHtml + emptyHtml;
 
     // Bind events
@@ -2570,6 +2615,91 @@
   function bindSidebarEvents() {
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
+
+    // ─── Point search ─────────────────────────────────────────
+    var pointSearchInput = sidebar.querySelector('#dcPointSearch');
+    var pointSearchResults = sidebar.querySelector('#dcPointSearchResults');
+    if (pointSearchInput && pointSearchResults) {
+      var searchTimeout = null;
+      pointSearchInput.addEventListener('input', function () {
+        clearTimeout(searchTimeout);
+        var query = pointSearchInput.value.trim().toLowerCase();
+        if (query.length < 2) {
+          pointSearchResults.style.display = 'none';
+          pointSearchResults.innerHTML = '';
+          return;
+        }
+        searchTimeout = setTimeout(function () {
+          var matches = [];
+          orders.forEach(function (o, idx) {
+            if (!o.geocoded) return;
+            var searchText = ((o.address || '') + ' ' + (o.formattedAddress || '') + ' ' + (o.phone || '')).toLowerCase();
+            if (searchText.indexOf(query) !== -1) {
+              matches.push({ order: o, idx: idx });
+            }
+          });
+          if (matches.length === 0) {
+            pointSearchResults.innerHTML = '<div style="padding:10px;color:#888;font-size:12px;text-align:center;">Ничего не найдено</div>';
+            pointSearchResults.style.display = 'block';
+            return;
+          }
+          var html = '';
+          matches.slice(0, 20).forEach(function (m) {
+            var o = m.order;
+            var did = getOrderDriverId(m.idx);
+            var drvInfo = '';
+            if (did) {
+              var drv = dbDrivers.find(function (d) { return d.id == did; });
+              var di = dbDrivers.indexOf(drv);
+              var c = di >= 0 ? COLORS[di % COLORS.length] : '#888';
+              drvInfo = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + ';margin-right:4px;"></span>';
+            }
+            var icon = o.isSupplier ? '📦' : '📍';
+            var addr = escapeHtml(o.address);
+            var fAddr = o.formattedAddress ? '<div style="font-size:10px;color:#888;margin-top:1px;">' + escapeHtml(o.formattedAddress) + '</div>' : '';
+            html += '<div class="dc-point-search-item" data-order-id="' + o.id + '" data-lat="' + (o.lat || '') + '" data-lng="' + (o.lng || '') + '" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #333;transition:background .15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.05)\'" onmouseout="this.style.background=\'transparent\'">' +
+              '<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#e0e0e0;">' + drvInfo + icon + ' ' + addr + '</div>' +
+              fAddr + '</div>';
+          });
+          if (matches.length > 20) {
+            html += '<div style="padding:6px;color:#888;font-size:11px;text-align:center;">... ещё ' + (matches.length - 20) + '</div>';
+          }
+          pointSearchResults.innerHTML = html;
+          pointSearchResults.style.display = 'block';
+
+          // Click on search result → center map + highlight sidebar item
+          pointSearchResults.querySelectorAll('.dc-point-search-item').forEach(function (item) {
+            item.addEventListener('click', function () {
+              var lat = parseFloat(item.dataset.lat);
+              var lng = parseFloat(item.dataset.lng);
+              var oid = item.dataset.orderId;
+              if (lat && lng && mapInstance) {
+                mapInstance.setCenter([lat, lng], 17, { duration: 300 });
+                // Open balloon on the placemark at this location
+                mapInstance.balloon.open([lat, lng]);
+                setTimeout(function () { mapInstance.balloon.close(); }, 3000);
+              }
+              // Flash sidebar item
+              var sidebarItem = document.querySelector('.dc-order-item[data-order-id="' + oid + '"]');
+              if (sidebarItem) {
+                sidebarItem.classList.add('dc-order-highlighted');
+                sidebarItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                setTimeout(function () { sidebarItem.classList.remove('dc-order-highlighted'); }, 2000);
+              }
+              pointSearchResults.style.display = 'none';
+              pointSearchInput.value = '';
+            });
+          });
+        }, 200);
+      });
+
+      // Close search results when clicking outside
+      document.addEventListener('click', function (e) {
+        if (!pointSearchInput.contains(e.target) && !pointSearchResults.contains(e.target)) {
+          pointSearchResults.style.display = 'none';
+        }
+      });
+    }
 
     // Toggle hide/show assigned suppliers
     var toggleAssignedBtn = sidebar.querySelector('.dc-toggle-assigned');

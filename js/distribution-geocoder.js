@@ -355,9 +355,25 @@
     return results;
   }
 
+  // ─── Reverse geocode: coordinates → address ──────────────
+  async function reverseGeocode(lat, lng) {
+    const ymaps = await loadYmaps();
+    const result = await ymaps.geocode([lat, lng], { results: 1, kind: 'house' });
+    var geoObject = result.geoObjects.get(0);
+    if (!geoObject) {
+      // Fallback without kind restriction
+      const result2 = await ymaps.geocode([lat, lng], { results: 1 });
+      geoObject = result2.geoObjects.get(0);
+    }
+    if (!geoObject) throw new Error('Адрес не найден по координатам');
+    var formattedAddress = geoObject.getAddressLine();
+    return { lat: lat, lng: lng, formattedAddress: formattedAddress };
+  }
+
   window.DistributionGeocoder = {
     loadYmaps: loadYmaps,
     geocodeAddress: geocodeAddress,
     geocodeOrders: geocodeOrders,
+    reverseGeocode: reverseGeocode,
   };
 })();
