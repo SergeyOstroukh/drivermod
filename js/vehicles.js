@@ -402,8 +402,9 @@
 			return;
 		}
 
-		// Collect suppliers from all routes (separate section)
+		// Collect suppliers from all routes (separate section, deduplicated)
 		var allSuppliers = [];
+		var seenSupplierKeys = {};
 		var trips = []; // { route, points (address-only), tripNum, isCompleted }
 		var allActiveMapPoints = [];
 
@@ -412,7 +413,10 @@
 			var suppliers = pts.filter(function (pt) { return pt.isSupplier; });
 			var addresses = pts.filter(function (pt) { return !pt.isSupplier && !pt.isPoi; });
 
-			suppliers.forEach(function (s, si) {
+			suppliers.forEach(function (s) {
+				var key = (s.address || '') + '|' + (s.lat || '') + '|' + (s.lng || '');
+				if (seenSupplierKeys[key]) return; // skip duplicates across routes
+				seenSupplierKeys[key] = true;
 				allSuppliers.push(Object.assign({}, s, { _routeId: route.id, _routeIdx: ri, _ptIdx: pts.indexOf(s) }));
 			});
 

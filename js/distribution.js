@@ -1525,16 +1525,16 @@
     var routeDate = new Date().toISOString().split('T')[0];
     var driverName = getDriverNameById(driverId);
 
-    // Collect address-only orders for this driver (not suppliers, not POI)
+    // Collect ALL orders for this driver: addresses (will be removed) + suppliers (stay on map)
     var points = [];
-    var orderIndicesToRemove = [];
+    var orderIndicesToRemove = []; // only addresses get removed
 
     orders.forEach(function (order, idx) {
-      if (order.isSupplier || order.isPoi || !order.geocoded) return;
+      if (order.isPoi || !order.geocoded) return;
       var did = getOrderDriverId(idx);
       if (!did || String(did) !== String(driverId)) return;
 
-      points.push({
+      var pt = {
         address: order.address,
         lat: order.lat,
         lng: order.lng,
@@ -1542,13 +1542,30 @@
         timeSlot: order.timeSlot || null,
         formattedAddress: order.formattedAddress || null,
         orderNum: points.length + 1,
-        isKbt: order.isKbt || false,
-        helperDriverName: order.helperDriverSlot != null ? (dbDrivers[order.helperDriverSlot] ? dbDrivers[order.helperDriverSlot].name : '?') : null,
-      });
-      orderIndicesToRemove.push(idx);
+      };
+
+      if (order.isSupplier) {
+        pt.isSupplier = true;
+      }
+      if (order.isKbt) {
+        pt.isKbt = true;
+        if (order.helperDriverSlot != null) {
+          var helperDrv = dbDrivers[order.helperDriverSlot];
+          pt.helperDriverName = helperDrv ? helperDrv.name : '?';
+          pt.helperDriverId = helperDrv ? helperDrv.id : null;
+        }
+      }
+
+      points.push(pt);
+
+      // Only remove addresses from the map (suppliers stay for continued management)
+      if (!order.isSupplier) {
+        orderIndicesToRemove.push(idx);
+      }
     });
 
-    if (points.length === 0) {
+    var addrCount = points.filter(function (p) { return !p.isSupplier; }).length;
+    if (addrCount === 0) {
       showToast('Нет адресов для ' + driverName, 'error');
       return;
     }
@@ -1556,7 +1573,7 @@
     try {
       await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId), routeDate, points);
 
-      // Remove finished orders from map (reverse order to preserve indices)
+      // Remove finished address orders from map (reverse order to preserve indices)
       orderIndicesToRemove.sort(function (a, b) { return b - a; });
       orderIndicesToRemove.forEach(function (idx) {
         orders.splice(idx, 1);
@@ -1566,7 +1583,7 @@
       variants = []; activeVariant = -1;
       _fitBoundsNext = true;
       renderAll();
-      showToast('Маршрут для ' + driverName + ' сохранён (' + points.length + ' адр.)');
+      showToast('Маршрут для ' + driverName + ' сохранён (' + addrCount + ' адр.)');
     } catch (err) {
       showToast('Ошибка: ' + err.message, 'error');
     }
@@ -1853,17 +1870,22 @@
           });
         } catch (e) { /* ignore */ }
 
-        // Edit message — remove buttons, show status
+        // Remove inline buttons but keep original message (with clickable map link)
         if (update.callback_query.message) {
           var chatId = update.callback_query.message.chat.id;
           var msgId = update.callback_query.message.message_id;
-          var origText = update.callback_query.message.text || '';
-          var statusLine = action === 'accept' ? '\n\n✅ Принято' : '\n\n❌ Отклонено';
           try {
-            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
+            // Remove buttons — original message with map link stays intact
+            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, message_id: msgId, text: origText + statusLine }),
+              body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }),
+            });
+            // Send status as a reply so the driver sees confirmation
+            await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chat_id: chatId, text: action === 'accept' ? '✅ Принято' : '❌ Отклонено', reply_to_message_id: msgId }),
             });
           } catch (e) { /* ignore */ }
         }
