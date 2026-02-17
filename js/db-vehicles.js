@@ -877,6 +877,55 @@
 		}
 	}
 
+	/**
+	 * Синхронизирует маршрут водителя: обновляет последний активный или создаёт новый
+	 */
+	async function syncDriverRoute(driverId, routeDate, points) {
+		try {
+			const client = initSupabase();
+			// Ищем последний активный маршрут для этого водителя за дату
+			const { data: existing, error: findErr } = await client
+				.from('driver_routes')
+				.select('id')
+				.eq('driver_id', driverId)
+				.eq('route_date', routeDate)
+				.eq('status', 'active')
+				.order('created_at', { ascending: false })
+				.limit(1)
+				.maybeSingle();
+			if (findErr) throw findErr;
+
+			if (existing) {
+				// Обновляем существующий
+				const { data, error } = await client
+					.from('driver_routes')
+					.update({ points: points })
+					.eq('id', existing.id)
+					.select('*')
+					.single();
+				if (error) throw error;
+				return data;
+			} else {
+				// Создаём новый
+				const { data, error } = await client
+					.from('driver_routes')
+					.insert({
+						driver_id: driverId,
+						route_date: routeDate,
+						points: points,
+						status: 'active'
+					})
+					.select('*')
+					.single();
+				if (error) throw error;
+				return data;
+			}
+		} catch (err) {
+			console.error('Ошибка синхронизации маршрута:', err);
+			throw err;
+		}
+	}
+
 	window.VehiclesDB = {
 		// Водители
 		getAllDrivers,
@@ -906,6 +955,7 @@
 		// Маршруты водителей
 		saveDriverRoutes,
 		saveDriverRouteForDriver,
+		syncDriverRoute,
 		getDriverRoute,
 		getDriverRoutes,
 		getActiveRoutes,

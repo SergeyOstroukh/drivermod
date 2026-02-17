@@ -1398,6 +1398,57 @@
     }
   }
 
+  // ─── Sync edited route to driver cabinet ─────────────────
+  async function finishEditing() {
+    var driverId = editingDriverId;
+    editingDriverId = null;
+    selectedDriver = null;
+    if (!driverId) { renderAll(); return; }
+
+    // Collect ALL orders for this driver (addresses + suppliers)
+    var routeDate = new Date().toISOString().split('T')[0];
+    var driverName = getDriverNameById(driverId);
+    var points = [];
+
+    orders.forEach(function (order, idx) {
+      if (!order.geocoded) return;
+      var did = getOrderDriverId(idx);
+      if (!did || String(did) !== String(driverId)) return;
+
+      var pt = {
+        address: order.address,
+        lat: order.lat,
+        lng: order.lng,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        formattedAddress: order.formattedAddress || null,
+        orderNum: points.length + 1,
+      };
+      if (order.isSupplier) pt.isSupplier = true;
+      if (order.isPoi) { pt.isPoi = true; pt.poiLabel = order.poiLabel || null; }
+      if (order.isKbt) {
+        pt.isKbt = true;
+        if (order.helperDriverSlot != null) {
+          var helperDrv = dbDrivers[order.helperDriverSlot];
+          pt.helperDriverName = helperDrv ? helperDrv.name : '?';
+          pt.helperDriverId = helperDrv ? helperDrv.id : null;
+        }
+      }
+      points.push(pt);
+    });
+
+    renderAll();
+
+    if (points.length === 0) return;
+
+    try {
+      await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
+      showToast('Маршрут ' + driverName + ' обновлён');
+    } catch (err) {
+      showToast('Ошибка синхронизации: ' + err.message, 'error');
+    }
+  }
+
   // ─── Finish route per driver (multi-trip) ────────────────
   function showFinishRouteDialog() {
     var existing = document.getElementById('dcFinishRouteModal');
@@ -2407,13 +2458,12 @@
     // Driver filter buttons
     sidebar.querySelectorAll('.dc-driver-filter-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        if (editingDriverId) finishEditing();
         var filterId = btn.dataset.driverFilter;
         if (filterId === 'all') {
           selectedDriver = null;
-          editingDriverId = null;
         } else {
           selectedDriver = filterId;
-          editingDriverId = null;
         }
         renderAll();
       });
@@ -2425,13 +2475,13 @@
         e.stopPropagation();
         var driverId = btn.dataset.driverId;
         if (editingDriverId && String(editingDriverId) === String(driverId)) {
-          editingDriverId = null;
-          selectedDriver = null;
+          finishEditing();
         } else {
+          if (editingDriverId) finishEditing();
           editingDriverId = driverId;
           selectedDriver = null;
+          renderAll();
         }
-        renderAll();
       });
     });
 
@@ -2439,9 +2489,7 @@
     var doneBtn = sidebar.querySelector('.dc-edit-mode-done');
     if (doneBtn) {
       doneBtn.addEventListener('click', function () {
-        editingDriverId = null;
-        selectedDriver = null;
-        renderAll();
+        finishEditing();
       });
     }
 
