@@ -2283,9 +2283,12 @@
 			backFromDistributedBtn.addEventListener("click", closeDistributedSuppliers);
 		}
 
-		const distributedDateInput = document.getElementById("distributedDateInput");
-		if (distributedDateInput) {
-			distributedDateInput.addEventListener("change", loadDistributedSuppliers);
+		const distributedDriverFilter = document.getElementById("distributedDriverFilter");
+		if (distributedDriverFilter) {
+			distributedDriverFilter.addEventListener("change", function () {
+				_distributedFilterDriverId = this.value;
+				renderDistributedSuppliers();
+			});
 		}
 
 		// Восстановление сессии при загрузке страницы
@@ -3059,36 +3062,29 @@
 	}
 
 	// ============================================
-	// РАСПРЕДЕЛЁННЫЕ ПОСТАВЩИКИ
+	// РАСПРЕДЕЛЁННЫЕ ПОСТАВЩИКИ (real-time)
 	// ============================================
 
-	function getTodayStr() {
-		const d = new Date();
-		return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-	}
+	let _distributedSectionOpen = false;
+	let _distributedFilterDriverId = '';
 
 	function openDistributedSuppliers() {
 		const section = document.getElementById("distributedSuppliersSection");
 		const driversSection = document.getElementById("driversSection");
-		const dateInput = document.getElementById("distributedDateInput");
-
 		if (!section) return;
 
 		if (driversSection) driversSection.style.display = "none";
-
 		section.style.display = "block";
 		section.classList.add("active");
+		_distributedSectionOpen = true;
 
-		if (dateInput && !dateInput.value) {
-			dateInput.value = getTodayStr();
-		}
-
-		loadDistributedSuppliers();
+		renderDistributedSuppliers();
 	}
 
 	function closeDistributedSuppliers() {
 		const section = document.getElementById("distributedSuppliersSection");
 		const driversSection = document.getElementById("driversSection");
+		_distributedSectionOpen = false;
 
 		if (section) {
 			section.style.display = "none";
@@ -3100,109 +3096,107 @@
 		}
 	}
 
-	async function loadDistributedSuppliers() {
+	function renderDistributedSuppliers() {
 		const tbody = document.getElementById("distributedTableBody");
-		const dateInput = document.getElementById("distributedDateInput");
+		const filterSelect = document.getElementById("distributedDriverFilter");
 		if (!tbody) return;
 
-		const routeDate = (dateInput && dateInput.value) || getTodayStr();
-
-		tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Загрузка...</td></tr>';
-
-		try {
-			const routes = await window.VehiclesDB.getActiveRoutes(routeDate);
-
-			if (!routes || routes.length === 0) {
-				tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Нет распределённых маршрутов на эту дату</td></tr>';
-				return;
-			}
-
-			const rows = [];
-			for (const route of routes) {
-				const driverName = route.driver ? route.driver.name : ('Водитель #' + route.driver_id);
-				const points = route.points || [];
-				for (const point of points) {
-					rows.push({
-						address: point.address || point.formattedAddress || '—',
-						driver: driverName,
-						timeSlot: point.timeSlot || '',
-						phone: point.phone || '',
-						isSupplier: point.isSupplier,
-						orderNum: point.orderNum
-					});
-				}
-			}
-
-			if (rows.length === 0) {
-				tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Маршруты пусты</td></tr>';
-				return;
-			}
-
-			rows.sort((a, b) => {
-				if (a.driver < b.driver) return -1;
-				if (a.driver > b.driver) return 1;
-				return (a.orderNum || 0) - (b.orderNum || 0);
-			});
-
-			tbody.innerHTML = '';
-			let num = 0;
-			let currentDriver = null;
-
-			for (const row of rows) {
-				if (row.driver !== currentDriver) {
-					currentDriver = row.driver;
-					const sep = document.createElement('tr');
-					sep.className = 'distributed-driver-row';
-					sep.innerHTML = '<td colspan="5"><strong>' + escapeHtml(currentDriver) + '</strong></td>';
-					tbody.appendChild(sep);
-					num = 0;
-				}
-
-				num++;
-				const tr = document.createElement('tr');
-
-				const tdNum = document.createElement('td');
-				tdNum.textContent = num;
-
-				const tdAddr = document.createElement('td');
-				tdAddr.textContent = row.address;
-				if (row.isSupplier) {
-					tdAddr.style.fontWeight = '500';
-				}
-
-				const tdDriver = document.createElement('td');
-				tdDriver.textContent = row.driver;
-
-				const tdTime = document.createElement('td');
-				tdTime.textContent = row.timeSlot;
-
-				const tdPhone = document.createElement('td');
-				if (row.phone) {
-					const link = document.createElement('a');
-					link.href = 'tel:' + row.phone.replace(/[^\d+]/g, '');
-					link.textContent = row.phone;
-					link.style.color = 'var(--primary)';
-					tdPhone.appendChild(link);
-				}
-
-				tr.appendChild(tdNum);
-				tr.appendChild(tdAddr);
-				tr.appendChild(tdDriver);
-				tr.appendChild(tdTime);
-				tr.appendChild(tdPhone);
-				tbody.appendChild(tr);
-			}
-		} catch (err) {
-			console.error('Ошибка загрузки распределённых поставщиков:', err);
-			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--danger);">Ошибка загрузки: ' + (err.message || err) + '</td></tr>';
+		if (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers) {
+			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Откройте раздел «Распределение» и загрузите поставщиков</td></tr>';
+			return;
 		}
+
+		const allSuppliers = window.DistributionUI.getDistributedSuppliers();
+		const allDrivers = window.DistributionUI.getDistributionDrivers();
+
+		// Update driver filter dropdown (preserve selection)
+		if (filterSelect) {
+			const prev = _distributedFilterDriverId;
+			filterSelect.innerHTML = '<option value="">Все</option>';
+			allDrivers.forEach(function (d) {
+				const opt = document.createElement('option');
+				opt.value = d.id;
+				opt.textContent = d.name;
+				if (String(d.id) === String(prev)) opt.selected = true;
+				filterSelect.appendChild(opt);
+			});
+		}
+
+		// Filter
+		const filterId = _distributedFilterDriverId;
+		let rows = allSuppliers;
+		if (filterId) {
+			rows = rows.filter(function (r) { return String(r.driverId) === String(filterId); });
+		}
+
+		// Sort by driver name, then by supplier name
+		rows.sort(function (a, b) {
+			const da = (a.driverName || 'яяя').toLowerCase();
+			const db = (b.driverName || 'яяя').toLowerCase();
+			if (da < db) return -1;
+			if (da > db) return 1;
+			return (a.supplierName || '').localeCompare(b.supplierName || '', 'ru');
+		});
+
+		if (rows.length === 0) {
+			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">' +
+				(allSuppliers.length === 0 ? 'Нет распределённых поставщиков' : 'Нет поставщиков для этого водителя') +
+				'</td></tr>';
+			return;
+		}
+
+		tbody.innerHTML = '';
+		rows.forEach(function (row, i) {
+			const tr = document.createElement('tr');
+
+			const tdNum = document.createElement('td');
+			tdNum.textContent = i + 1;
+			tdNum.style.color = 'var(--muted)';
+
+			const tdName = document.createElement('td');
+			tdName.textContent = row.supplierName || row.address;
+			tdName.style.fontWeight = '500';
+			if (!row.inDb) {
+				tdName.style.color = '#ef4444';
+				tdName.title = 'Не найден в базе';
+			}
+
+			const tdDriver = document.createElement('td');
+			if (row.driverName) {
+				tdDriver.textContent = row.driverName;
+			} else {
+				tdDriver.textContent = '—';
+				tdDriver.style.color = 'var(--muted)';
+			}
+
+			const tdTime = document.createElement('td');
+			tdTime.textContent = row.timeSlot;
+			if (!row.timeSlot) tdTime.style.color = 'var(--muted)';
+
+			const tdPhone = document.createElement('td');
+			if (row.phone) {
+				const link = document.createElement('a');
+				link.href = 'tel:' + row.phone.replace(/[^\d+]/g, '');
+				link.textContent = row.phone;
+				link.style.color = 'var(--primary)';
+				tdPhone.appendChild(link);
+			}
+
+			tr.appendChild(tdNum);
+			tr.appendChild(tdName);
+			tr.appendChild(tdDriver);
+			tr.appendChild(tdTime);
+			tr.appendChild(tdPhone);
+			tbody.appendChild(tr);
+		});
 	}
 
-	function escapeHtml(str) {
-		const div = document.createElement('div');
-		div.textContent = str;
-		return div.innerHTML;
-	}
+	// Real-time: distribution module calls this on every change
+	window._onDistributionChanged = function () {
+		if (_distributedSectionOpen) {
+			renderDistributedSuppliers();
+		}
+	};
 
 	// Expose functions needed by inline HTML handlers
 	window.closeDriverRoute = closeDriverRoute;

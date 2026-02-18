@@ -1045,49 +1045,63 @@
     }, 50);
   }
 
-  // ─── Search & link supplier from DB ───────────────────────
-  var _activeSupplierSearch = null;
+  // ─── Search & link supplier from DB (modal) ────────────────
+  var _supplierSearchOrderId = null;
 
   function openSupplierSearch(orderId) {
     closeSupplierSearch();
     var order = orders.find(function (o) { return o.id === orderId; });
     if (!order || !order.isSupplier) return;
+    _supplierSearchOrderId = orderId;
 
-    var trigger = document.querySelector('.dc-supplier-not-found[data-id="' + orderId + '"]');
-    if (!trigger) return;
+    var overlay = document.createElement('div');
+    overlay.id = 'dcSupplierSearchModal';
+    overlay.className = 'dc-search-modal-overlay';
 
-    var wrapper = trigger.parentElement;
-    var dropdown = document.createElement('div');
-    dropdown.className = 'dc-supplier-search-dropdown';
-    dropdown.innerHTML =
-      '<input class="dc-supplier-search-input" type="text" placeholder="Введите название поставщика..." autofocus />' +
-      '<div class="dc-supplier-search-results"></div>';
+    var modal = document.createElement('div');
+    modal.className = 'dc-search-modal';
 
-    wrapper.appendChild(dropdown);
-    _activeSupplierSearch = { orderId: orderId, dropdown: dropdown };
+    var header = document.createElement('div');
+    header.className = 'dc-search-modal-header';
+    header.innerHTML = '<h3>Поиск поставщика</h3>' +
+      '<button class="dc-search-modal-close" title="Закрыть">&times;</button>';
 
-    var input = dropdown.querySelector('.dc-supplier-search-input');
-    var resultsEl = dropdown.querySelector('.dc-supplier-search-results');
+    var searchName = order.supplierName || stripOrgForm(order.address) || '';
+    var body = document.createElement('div');
+    body.className = 'dc-search-modal-body';
+    body.innerHTML =
+      '<div class="dc-search-modal-query">Ищем: <strong>' + escapeHtml(order.address) + '</strong></div>' +
+      '<input class="dc-search-modal-input" type="text" placeholder="Введите название поставщика..." value="' + escapeHtml(searchName).replace(/"/g, '&quot;') + '" />' +
+      '<div class="dc-search-modal-results"></div>';
 
-    input.value = order.supplierName || stripOrgForm(order.address) || '';
+    modal.appendChild(header);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    var input = body.querySelector('.dc-search-modal-input');
+    var resultsEl = body.querySelector('.dc-search-modal-results');
 
     function doSearch() {
       var q = input.value.trim();
       if (q.length < 1) {
-        resultsEl.innerHTML = '<div class="dc-search-hint">Начните вводить название</div>';
+        resultsEl.innerHTML = '<div class="dc-search-modal-hint">Начните вводить название</div>';
         return;
       }
-      var matches = searchSuppliers(q, 10);
+      var matches = searchSuppliers(q, 15);
       if (matches.length === 0) {
-        resultsEl.innerHTML = '<div class="dc-search-hint">Ничего не найдено</div>';
+        resultsEl.innerHTML = '<div class="dc-search-modal-hint">Ничего не найдено по запросу &laquo;' + escapeHtml(q) + '&raquo;</div>';
         return;
       }
       resultsEl.innerHTML = '';
       matches.forEach(function (s) {
         var item = document.createElement('div');
-        item.className = 'dc-search-result-item';
-        item.innerHTML = '<strong>' + escapeHtml(s.name) + '</strong>' +
-          (s.address ? '<br><span style="font-size:11px;color:var(--muted);">' + escapeHtml(s.address) + '</span>' : '');
+        item.className = 'dc-search-modal-item';
+        var hasCoords = s.lat && s.lon;
+        item.innerHTML =
+          '<div class="dc-search-modal-item-name">' + escapeHtml(s.name) + '</div>' +
+          (s.address ? '<div class="dc-search-modal-item-addr">' + escapeHtml(s.address) + '</div>' : '') +
+          '<div class="dc-search-modal-item-status">' + (hasCoords ? '📍 Есть координаты' : '⚠ Нет координат') + '</div>';
         item.addEventListener('click', function () {
           linkSupplierToOrder(orderId, s);
         });
@@ -1100,27 +1114,19 @@
       if (e.key === 'Escape') closeSupplierSearch();
     });
 
-    setTimeout(function () { input.focus(); input.select(); }, 30);
+    header.querySelector('.dc-search-modal-close').addEventListener('click', closeSupplierSearch);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) closeSupplierSearch();
+    });
+
+    setTimeout(function () { input.focus(); input.select(); }, 50);
     doSearch();
-
-    // Close on outside click
-    setTimeout(function () {
-      document.addEventListener('click', _onOutsideClickSearch);
-    }, 50);
-  }
-
-  function _onOutsideClickSearch(e) {
-    if (_activeSupplierSearch && _activeSupplierSearch.dropdown && !_activeSupplierSearch.dropdown.contains(e.target)) {
-      closeSupplierSearch();
-    }
   }
 
   function closeSupplierSearch() {
-    if (_activeSupplierSearch && _activeSupplierSearch.dropdown) {
-      _activeSupplierSearch.dropdown.remove();
-    }
-    _activeSupplierSearch = null;
-    document.removeEventListener('click', _onOutsideClickSearch);
+    var el = document.getElementById('dcSupplierSearchModal');
+    if (el) el.remove();
+    _supplierSearchOrderId = null;
   }
 
   function linkSupplierToOrder(orderId, supplier) {
@@ -3159,8 +3165,60 @@
   }
 
   // Expose for navigation
+  function getDistributedSuppliers() {
+    var result = [];
+    for (var i = 0; i < orders.length; i++) {
+      var o = orders[i];
+      if (!o.isSupplier) continue;
+      var driverId = getOrderDriverId(i);
+      var driverName = null;
+      if (driverId) {
+        var d = dbDrivers.find(function (dr) { return String(dr.id) === String(driverId); });
+        driverName = d ? d.name : null;
+      }
+      result.push({
+        address: o.address,
+        supplierName: o.supplierName || o.address,
+        driverName: driverName,
+        driverId: driverId,
+        timeSlot: o.timeSlot || '',
+        phone: o.phone || '',
+        geocoded: o.geocoded,
+        inDb: !!o.supplierDbId,
+      });
+    }
+    return result;
+  }
+
+  function getDistributionDrivers() {
+    var driverIds = {};
+    var result = [];
+    for (var i = 0; i < orders.length; i++) {
+      var o = orders[i];
+      if (!o.isSupplier) continue;
+      var did = getOrderDriverId(i);
+      if (did && !driverIds[did]) {
+        driverIds[did] = true;
+        var d = dbDrivers.find(function (dr) { return String(dr.id) === String(did); });
+        if (d) result.push({ id: d.id, name: d.name });
+      }
+    }
+    result.sort(function (a, b) { return a.name.localeCompare(b.name, 'ru'); });
+    return result;
+  }
+
+  var _origRenderAll = renderAll;
+  renderAll = function () {
+    _origRenderAll();
+    if (window._onDistributionChanged) {
+      try { window._onDistributionChanged(); } catch (e) { console.warn(e); }
+    }
+  };
+
   window.DistributionUI = {
     onSectionActivated: onSectionActivated,
+    getDistributedSuppliers: getDistributedSuppliers,
+    getDistributionDrivers: getDistributionDrivers,
   };
 
   // Auto-init if section is already visible

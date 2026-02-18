@@ -125,8 +125,10 @@
 			</button>
 			<h2 style="margin:0;font-size:1.1rem;">Распределённые поставщики</h2>
 			<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-				<label for="distributedDateInput" style="font-size:0.85rem;color:var(--muted);">Дата:</label>
-				<input type="date" id="distributedDateInput" class="form-input" style="width:auto;padding:4px 8px;font-size:0.85rem;" />
+				<label for="distributedDriverFilter" style="font-size:0.85rem;color:var(--muted);">Водитель:</label>
+				<select id="distributedDriverFilter" class="form-input" style="width:auto;padding:4px 8px;font-size:0.85rem;">
+					<option value="">Все</option>
+				</select>
 			</div>
 		</section>
 		<section class="distributed-content">
@@ -134,8 +136,8 @@
 				<table class="distributed-table" id="distributedTable">
 					<thead>
 						<tr>
-							<th>№</th>
-							<th>Поставщик / Адрес</th>
+							<th style="width:40px;">№</th>
+							<th>Поставщик</th>
 							<th>Водитель</th>
 							<th>Время</th>
 							<th>Телефон</th>
@@ -143,7 +145,7 @@
 					</thead>
 					<tbody id="distributedTableBody">
 						<tr>
-							<td colspan="5" style="text-align:center;color:var(--muted);">Загрузка...</td>
+							<td colspan="5" style="text-align:center;color:var(--muted);">Нет данных</td>
 						</tr>
 					</tbody>
 				</table>
