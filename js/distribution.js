@@ -152,8 +152,15 @@
   // Compact string for comparison: strip org form, quotes, ALL spaces, punctuation → single slug
   function compactName(s) {
     var c = s.toLowerCase();
-    // Remove org forms
-    c = c.replace(/^(?:ооо|одо|чуп|уп|ип|зао|оао|чтуп|сооо|иооо|чп|сп)\s*/i, '');
+    // Remove full org forms first ("Общество с ограниченной ответственностью" etc.)
+    c = c.replace(/^общество\s+с\s+ограниченной\s+ответственностью\s*/i, '');
+    c = c.replace(/^индивидуальный\s+предприниматель\s*/i, '');
+    c = c.replace(/^закрытое\s+акционерное\s+общество\s*/i, '');
+    c = c.replace(/^открытое\s+акционерное\s+общество\s*/i, '');
+    c = c.replace(/^публичное\s+акционерное\s+общество\s*/i, '');
+    c = c.replace(/^акционерное\s+общество\s*/i, '');
+    // Remove short org forms
+    c = c.replace(/^(?:ооо|одо|чуп|уп|ип|зао|оао|пао|ао|чтуп|сооо|иооо|чп|сп|фгуп|муп)\s*/i, '');
     // Remove all quotes, punctuation, dashes, spaces
     c = c.replace(/[«»"""''\"\'„"‟❝❞⹂〝〞〟＂\s\-–—.,;:!?()[\]{}/\\+&]/g, '');
     // ё → е

@@ -71,73 +71,41 @@ serve(async (req) => {
 /**
  * Parse a message from the 1C bot.
  *
- * This function tries multiple common formats. Adjust patterns to match
- * the actual format of messages from your 1C bot.
+ * Real format from 1C:
+ *   ООО "Термостудия"
+ *   7724115505 Радиатор VK-Profil 22/500/500 1 шт
  *
- * Supported formats:
+ * First line = supplier name (often with org form: ООО, ОАО, ЗАО, ИП, etc.)
+ * Remaining lines = items to pick up.
  *
- * Format 1 — "Поставщик: ООО ОМА\nТовар: Холодильник Samsung, 2 шт"
- * Format 2 — "ООО ОМА\nХолодильник Samsung, 2 шт\nМикроволновка LG, 1 шт"
- * Format 3 — "ООО ОМА — Холодильник Samsung, 2 шт"
- * Format 4 — "Заявка №123\nПоставщик: ООО ОМА\nТовар: ..."
- *
- * Returns { supplierName, items } or null if not recognized.
+ * If Telegram includes the header "Информация из 1С, [...]" in the text,
+ * it is stripped automatically.
  */
 function parseSupplierMessage(text: string): { supplierName: string; items: string } | null {
-  // Format: explicit "Поставщик:" and "Товар:" labels
-  const supplierMatch = text.match(/поставщик[:\s]+(.+)/i);
-  const itemsMatch = text.match(/товар[ыи]?[:\s]+(.+)/is);
+  let lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
 
-  if (supplierMatch && itemsMatch) {
-    const supplierName = supplierMatch[1].trim().split("\n")[0].trim();
-    const items = itemsMatch[1].trim();
-    if (supplierName && items) {
-      return { supplierName, items };
-    }
+  // Strip "Информация из 1С" header if present
+  if (lines.length > 0 && /^информация\s+из\s+1с/i.test(lines[0])) {
+    lines = lines.slice(1);
   }
 
-  // Format: "Заявка" with supplier on one line, items on next lines
-  const orderMatch = text.match(/заявк[аи]\s*[№#]?\s*\d*/i);
-  if (orderMatch) {
-    const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
-    let supplierName = "";
-    const itemLines: string[] = [];
+  if (lines.length < 2) return null;
 
-    for (const line of lines) {
-      if (/^заявк/i.test(line)) continue;
-      if (/^поставщик/i.test(line)) {
-        supplierName = line.replace(/^поставщик[:\s]*/i, "").trim();
-        continue;
-      }
-      if (/^товар/i.test(line)) {
-        itemLines.push(line.replace(/^товар[ыи]?[:\s]*/i, "").trim());
-        continue;
-      }
-      if (!supplierName) {
-        supplierName = line;
-      } else {
-        itemLines.push(line);
-      }
-    }
+  const firstLine = lines[0];
 
-    if (supplierName && itemLines.length > 0) {
-      return { supplierName, items: itemLines.join("\n") };
-    }
-  }
+  // Check if first line looks like a company name:
+  // - contains org form (ООО, ОАО, ЗАО, ИП, Общество, etc.)
+  // - or is short and doesn't contain quantities
+  const orgFormPattern = /^(ООО|ОАО|ЗАО|ПАО|АО|ИП|Общество|ФГУП|МУП|ЧУП)/i;
+  const looksLikeCompany = orgFormPattern.test(firstLine)
+    || (firstLine.length < 80 && !/\d+\s*(шт|кг|л|уп|м\b|мм|см)/i.test(firstLine));
 
-  // Format: first line = supplier, rest = items (simple multiline)
-  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
-  if (lines.length >= 2) {
-    const firstLine = lines[0];
-    // Heuristic: first line looks like a company name (short, no quantities)
-    if (firstLine.length < 80 && !/\d+\s*(шт|кг|л|уп)/i.test(firstLine)) {
-      const supplierName = firstLine.replace(/^[\d.)\-\s]+/, "").trim();
-      const items = lines.slice(1).join("\n");
-      if (supplierName && items) {
-        return { supplierName, items };
-      }
-    }
-  }
+  if (!looksLikeCompany) return null;
 
-  return null;
+  const supplierName = firstLine;
+  const items = lines.slice(1).join("\n");
+
+  if (!supplierName || !items) return null;
+
+  return { supplierName, items };
 }
