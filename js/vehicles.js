@@ -3111,7 +3111,7 @@
 		if (!tbody) return;
 
 		if (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers) {
-			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Откройте раздел «Распределение» и загрузите поставщиков</td></tr>';
+			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">Откройте раздел «Распределение» и загрузите поставщиков</td></tr>';
 			return;
 		}
 
@@ -3162,7 +3162,7 @@
 		var pickedCount = allSuppliers.filter(function (r) { return r.telegramStatus === 'picked_up'; }).length;
 
 		if (rows.length === 0) {
-			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">' +
+			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">' +
 				(allSuppliers.length === 0 ? 'Нет распределённых поставщиков' : 'Нет поставщиков по фильтру') +
 				'</td></tr>';
 			return;
@@ -3173,7 +3173,7 @@
 		// Summary row
 		var summaryTr = document.createElement('tr');
 		summaryTr.style.background = 'rgba(99,102,241,0.08)';
-		summaryTr.innerHTML = '<td colspan="5" style="padding:8px 12px;font-size:13px;color:var(--muted);">' +
+		summaryTr.innerHTML = '<td colspan="6" style="padding:8px 12px;font-size:13px;color:var(--muted);">' +
 			'Всего: <strong style="color:var(--text);">' + totalCount + '</strong>' +
 			' &nbsp;|&nbsp; Забрали: <strong style="color:#22c55e;">' + pickedCount + '</strong>' +
 			' &nbsp;|&nbsp; Ожидают: <strong style="color:#f59e0b;">' + (totalCount - pickedCount) + '</strong>' +
@@ -3225,8 +3225,25 @@
 			tdTime.textContent = row.timeSlot;
 			if (!row.timeSlot) tdTime.style.color = 'var(--muted)';
 
+			const tdItems = document.createElement('td');
+			var itemsText = row.items1c || '';
+			if (!itemsText && window.DistributionUI.getSupplierItems) {
+				var found = window.DistributionUI.getSupplierItems(row.supplierName || row.address);
+				if (found && found.length) itemsText = found.join('\n');
+			}
+			if (itemsText) {
+				tdItems.style.fontSize = '11px';
+				tdItems.style.whiteSpace = 'pre-line';
+				tdItems.style.color = '#a78bfa';
+				tdItems.textContent = itemsText;
+			} else {
+				tdItems.textContent = '—';
+				tdItems.style.color = 'var(--muted)';
+			}
+
 			tr.appendChild(tdNum);
 			tr.appendChild(tdName);
+			tr.appendChild(tdItems);
 			tr.appendChild(tdDriver);
 			tr.appendChild(tdStatus);
 			tr.appendChild(tdTime);

@@ -94,6 +94,35 @@
     }
   }
 
+  // ─── Load supplier orders (items from 1C) ─────────────────
+  var _supplierOrdersCache = {};
+
+  async function loadSupplierOrders() {
+    var client = getSupabaseClient();
+    if (!client) return;
+    var today = new Date().toISOString().split('T')[0];
+    try {
+      var resp = await client
+        .from('supplier_orders')
+        .select('supplier_name, items')
+        .eq('order_date', today);
+      if (resp.error) { console.warn('supplier_orders load error:', resp.error); return; }
+      _supplierOrdersCache = {};
+      (resp.data || []).forEach(function (row) {
+        var key = compactName(row.supplier_name);
+        if (!_supplierOrdersCache[key]) _supplierOrdersCache[key] = [];
+        _supplierOrdersCache[key].push(row.items);
+      });
+    } catch (e) {
+      console.warn('Failed to load supplier orders:', e);
+    }
+  }
+
+  function getSupplierItems(supplierName) {
+    var key = compactName(supplierName);
+    return _supplierOrdersCache[key] || [];
+  }
+
   // Strip organizational form and quotes: ООО "Название" → Название
   function stripOrgForm(s) {
     // Remove org form prefixes: ООО, ОДО, ЧУП, УП, ИП, ЗАО, ОАО, ЧТУП, СООО, ИООО, etc.
@@ -856,6 +885,7 @@
     isLoadingSuppliers = true;
     renderAll();
     await loadDbSuppliers();
+    await loadSupplierOrders();
 
     var prevAssignments = append ? assignments : null;
     if (!append) {
@@ -892,6 +922,9 @@
       orderCounter++;
       var supplier = findSupplierInDb(name);
 
+      var items1c = getSupplierItems(name);
+      if (!items1c.length && supplier) items1c = getSupplierItems(supplier.name);
+
       if (supplier && supplier.lat && supplier.lon) {
         // Found in DB with coordinates
         found++;
@@ -909,6 +942,7 @@
           supplierDbId: supplier.id,
           supplierName: supplier.name,
           supplierData: supplier,
+          items1c: items1c.length > 0 ? items1c.join('\n') : null,
         });
       } else if (supplier && (!supplier.lat || !supplier.lon)) {
         // Found but no coordinates — needs geocoding
@@ -927,6 +961,7 @@
           supplierDbId: supplier.id,
           supplierName: supplier.name,
           supplierData: supplier,
+          items1c: items1c.length > 0 ? items1c.join('\n') : null,
         });
         needGeocode.push(supplierOrders[supplierOrders.length - 1]);
       } else {
@@ -946,6 +981,7 @@
           supplierDbId: null,
           supplierName: cleanName || name,
           supplierData: null,
+          items1c: items1c.length > 0 ? items1c.join('\n') : null,
         });
       }
     }
@@ -1987,6 +2023,7 @@
           isSupplier: true,
           lat: supplierOrder.lat || null,
           lng: supplierOrder.lng || null,
+          items1c: supplierOrder.items1c || null,
         }];
         var msg = formatTelegramMessage(driver.name, routeDate, singlePoints);
         var inlineKeyboard = {
@@ -2062,6 +2099,7 @@
       isSupplier: true,
       lat: order.lat || null,
       lng: order.lng || null,
+      items1c: order.items1c || null,
     }];
     var msg = formatTelegramMessage(driver.name, routeDate, points);
 
@@ -2368,6 +2406,9 @@
       if (p.lat && p.lng) {
         msg += '\n🗺 <a href="https://yandex.ru/maps/?pt=' + p.lng + ',' + p.lat + '&z=17&l=map">Карта</a>';
       }
+      if (p.items1c) {
+        msg += '\n📋 <b>Товар:</b>\n' + escapeHtml(p.items1c);
+      }
       msg += '\n';
     });
     return msg.trim();
@@ -2437,6 +2478,9 @@
       html += '<div style="font-size:10px;color:#10b981;margin-top:1px;">В базе</div>';
     } else if (order.isSupplier && !order.supplierDbId) {
       html += '<div class="dc-supplier-not-found" data-id="' + order.id + '" style="font-size:10px;color:#ef4444;margin-top:1px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;" title="Нажмите чтобы найти в базе">🔍 Не найден — нажмите для поиска</div>';
+    }
+    if (order.items1c) {
+      html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;white-space:pre-line;">📋 ' + escapeHtml(order.items1c) + '</div>';
     }
     // Inline driver assignment — directly from DB drivers list
     var driverDisplayName = driverId ? getDriverNameById(driverId) : (hasSlot ? getDriverName(slotIdx) : null);
@@ -3240,6 +3284,7 @@
     onSectionActivated: onSectionActivated,
     getDistributedSuppliers: getDistributedSuppliers,
     getDistributionDrivers: getDistributionDrivers,
+    getSupplierItems: getSupplierItems,
   };
 
   // Auto-init if section is already visible
