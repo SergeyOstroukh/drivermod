@@ -2156,10 +2156,10 @@
     var botToken = window.TELEGRAM_BOT_TOKEN;
     if (!botToken) { if (!silent) showToast('Telegram бот не настроен', 'error'); return; }
 
-    // Collect pending order IDs
+    // Collect pending order IDs (sent = waiting for accept, confirmed = waiting for pickup)
     var pendingIds = [];
     orders.forEach(function (o) {
-      if (o.isSupplier && o.telegramSent && o.telegramStatus === 'sent') {
+      if (o.isSupplier && o.telegramSent && (o.telegramStatus === 'sent' || o.telegramStatus === 'confirmed')) {
         pendingIds.push(o.id);
       }
     });
@@ -2209,37 +2209,53 @@
 
         // Find matching order
         var order = orders.find(function (o) { return o.id === orderId; });
-        if (order && (action === 'accept' || action === 'reject')) {
-          order.telegramStatus = action === 'accept' ? 'confirmed' : 'rejected';
+        if (order && (action === 'accept' || action === 'reject' || action === 'pickup')) {
+          if (action === 'accept') order.telegramStatus = 'confirmed';
+          else if (action === 'reject') order.telegramStatus = 'rejected';
+          else if (action === 'pickup') order.telegramStatus = 'picked_up';
           processed++;
         }
 
-        // Answer callback — driver sees popup "Принято ✅"
+        // Answer callback
+        var answerText = action === 'accept' ? 'Принято ✅' : action === 'pickup' ? '📦 Забрал!' : 'Отклонено ❌';
         try {
           await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ callback_query_id: cbId, text: action === 'accept' ? 'Принято ✅' : 'Отклонено ❌' }),
+            body: JSON.stringify({ callback_query_id: cbId, text: answerText }),
           });
         } catch (e) { /* ignore */ }
 
-        // Remove inline buttons but keep original message (with clickable map link)
+        // Update inline buttons
         if (update.callback_query.message) {
           var chatId = update.callback_query.message.chat.id;
           var msgId = update.callback_query.message.message_id;
           try {
-            // Remove buttons — original message with map link stays intact
-            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }),
-            });
-            // Send status as a reply so the driver sees confirmation
-            await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ chat_id: chatId, text: action === 'accept' ? '✅ Принято' : '❌ Отклонено', reply_to_message_id: msgId }),
-            });
+            if (action === 'accept') {
+              // Replace with "Забрал" button
+              await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [[{ text: '📦 Забрал', callback_data: 'pickup:' + orderId }]] } }),
+              });
+              await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, text: '✅ Принято\nНажмите «📦 Забрал» когда заберёте товар', reply_to_message_id: msgId }),
+              });
+            } else {
+              // Pickup or reject: remove all buttons
+              await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }),
+              });
+              await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, text: action === 'pickup' ? '📦 Забрал' : '❌ Отклонено', reply_to_message_id: msgId }),
+              });
+            }
           } catch (e) {
             console.warn('editMessageReplyMarkup error:', e);
           }
@@ -2277,7 +2293,7 @@
   function startTelegramPolling() {
     stopTelegramPolling();
     _tgPollTimer = setInterval(function () {
-      var hasPending = orders.some(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; });
+      var hasPending = orders.some(function (o) { return o.isSupplier && o.telegramSent && (o.telegramStatus === 'sent' || o.telegramStatus === 'confirmed'); });
       if (hasPending) {
         checkTelegramConfirmations(true);
       } else {
@@ -2437,8 +2453,11 @@
     // Telegram send indicator + confirmation status for suppliers
     if (order.isSupplier && order.geocoded) {
       html += '<div class="dc-tg-row" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
-      if (order.telegramSent && order.telegramStatus === 'confirmed') {
-        html += '<span style="font-size:11px;color:#22c55e;" title="Водитель подтвердил">✅ Принял</span>';
+      if (order.telegramSent && order.telegramStatus === 'picked_up') {
+        html += '<span style="font-size:11px;color:#22c55e;font-weight:600;" title="Водитель забрал товар">📦 Забрал</span>';
+        html += '<button class="btn btn-outline btn-sm dc-tg-cancel-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#ef4444;border-color:#ef4444;" title="Отмена">✕</button>';
+      } else if (order.telegramSent && order.telegramStatus === 'confirmed') {
+        html += '<span style="font-size:11px;color:#22c55e;" title="Водитель принял, ждём забор">✅ Принял</span>';
         html += '<button class="btn btn-outline btn-sm dc-tg-cancel-one" data-id="' + order.id + '" style="font-size:10px;padding:1px 6px;color:#ef4444;border-color:#ef4444;" title="Отмена">✕</button>';
       } else if (order.telegramSent && order.telegramStatus === 'rejected') {
         html += '<span style="font-size:11px;color:#ef4444;" title="Водитель отклонил">❌ Отклонил</span>';
@@ -3185,6 +3204,8 @@
         phone: o.phone || '',
         geocoded: o.geocoded,
         inDb: !!o.supplierDbId,
+        telegramStatus: o.telegramStatus || null,
+        telegramSent: !!o.telegramSent,
       });
     }
     return result;

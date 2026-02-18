@@ -2291,6 +2291,14 @@
 			});
 		}
 
+		const distributedStatusFilter = document.getElementById("distributedStatusFilter");
+		if (distributedStatusFilter) {
+			distributedStatusFilter.addEventListener("change", function () {
+				_distributedFilterStatus = this.value;
+				renderDistributedSuppliers();
+			});
+		}
+
 		// Восстановление сессии при загрузке страницы
 		restoreSession();
 	}
@@ -3067,6 +3075,7 @@
 
 	let _distributedSectionOpen = false;
 	let _distributedFilterDriverId = '';
+	let _distributedFilterStatus = '';
 
 	function openDistributedSuppliers() {
 		const section = document.getElementById("distributedSuppliersSection");
@@ -3122,15 +3131,25 @@
 			});
 		}
 
-		// Filter
+		// Filter by driver
 		const filterId = _distributedFilterDriverId;
 		let rows = allSuppliers;
 		if (filterId) {
 			rows = rows.filter(function (r) { return String(r.driverId) === String(filterId); });
 		}
 
-		// Sort by driver name, then by supplier name
+		// Filter by status
+		if (_distributedFilterStatus === 'completed') {
+			rows = rows.filter(function (r) { return r.telegramStatus === 'picked_up'; });
+		} else if (_distributedFilterStatus === 'pending') {
+			rows = rows.filter(function (r) { return r.telegramStatus !== 'picked_up'; });
+		}
+
+		// Sort: picked_up last, then by driver name, then by supplier name
 		rows.sort(function (a, b) {
+			var pa = a.telegramStatus === 'picked_up' ? 1 : 0;
+			var pb = b.telegramStatus === 'picked_up' ? 1 : 0;
+			if (pa !== pb) return pa - pb;
 			const da = (a.driverName || 'яяя').toLowerCase();
 			const db = (b.driverName || 'яяя').toLowerCase();
 			if (da < db) return -1;
@@ -3138,16 +3157,33 @@
 			return (a.supplierName || '').localeCompare(b.supplierName || '', 'ru');
 		});
 
+		// Stats
+		var totalCount = allSuppliers.length;
+		var pickedCount = allSuppliers.filter(function (r) { return r.telegramStatus === 'picked_up'; }).length;
+
 		if (rows.length === 0) {
 			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">' +
-				(allSuppliers.length === 0 ? 'Нет распределённых поставщиков' : 'Нет поставщиков для этого водителя') +
+				(allSuppliers.length === 0 ? 'Нет распределённых поставщиков' : 'Нет поставщиков по фильтру') +
 				'</td></tr>';
 			return;
 		}
 
 		tbody.innerHTML = '';
+
+		// Summary row
+		var summaryTr = document.createElement('tr');
+		summaryTr.style.background = 'rgba(99,102,241,0.08)';
+		summaryTr.innerHTML = '<td colspan="5" style="padding:8px 12px;font-size:13px;color:var(--muted);">' +
+			'Всего: <strong style="color:var(--text);">' + totalCount + '</strong>' +
+			' &nbsp;|&nbsp; Забрали: <strong style="color:#22c55e;">' + pickedCount + '</strong>' +
+			' &nbsp;|&nbsp; Ожидают: <strong style="color:#f59e0b;">' + (totalCount - pickedCount) + '</strong>' +
+			'</td>';
+		tbody.appendChild(summaryTr);
+
 		rows.forEach(function (row, i) {
 			const tr = document.createElement('tr');
+			var isPickedUp = row.telegramStatus === 'picked_up';
+			if (isPickedUp) tr.style.opacity = '0.55';
 
 			const tdNum = document.createElement('td');
 			tdNum.textContent = i + 1;
@@ -3160,6 +3196,7 @@
 				tdName.style.color = '#ef4444';
 				tdName.title = 'Не найден в базе';
 			}
+			if (isPickedUp) tdName.style.textDecoration = 'line-through';
 
 			const tdDriver = document.createElement('td');
 			if (row.driverName) {
@@ -3169,24 +3206,30 @@
 				tdDriver.style.color = 'var(--muted)';
 			}
 
+			const tdStatus = document.createElement('td');
+			if (isPickedUp) {
+				tdStatus.innerHTML = '<span style="color:#22c55e;font-weight:600;">📦 Забрал</span>';
+			} else if (row.telegramStatus === 'confirmed') {
+				tdStatus.innerHTML = '<span style="color:#3b82f6;">✅ Принял</span>';
+			} else if (row.telegramStatus === 'rejected') {
+				tdStatus.innerHTML = '<span style="color:#ef4444;">❌ Отклонил</span>';
+			} else if (row.telegramSent) {
+				tdStatus.innerHTML = '<span style="color:#f59e0b;">⏳ Ждём</span>';
+			} else if (row.driverId) {
+				tdStatus.innerHTML = '<span style="color:var(--muted);">—</span>';
+			} else {
+				tdStatus.innerHTML = '<span style="color:var(--muted);">Не назначен</span>';
+			}
+
 			const tdTime = document.createElement('td');
 			tdTime.textContent = row.timeSlot;
 			if (!row.timeSlot) tdTime.style.color = 'var(--muted)';
 
-			const tdPhone = document.createElement('td');
-			if (row.phone) {
-				const link = document.createElement('a');
-				link.href = 'tel:' + row.phone.replace(/[^\d+]/g, '');
-				link.textContent = row.phone;
-				link.style.color = 'var(--primary)';
-				tdPhone.appendChild(link);
-			}
-
 			tr.appendChild(tdNum);
 			tr.appendChild(tdName);
 			tr.appendChild(tdDriver);
+			tr.appendChild(tdStatus);
 			tr.appendChild(tdTime);
-			tr.appendChild(tdPhone);
 			tbody.appendChild(tr);
 		});
 	}

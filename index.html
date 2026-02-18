@@ -124,10 +124,14 @@
 				Назад
 			</button>
 			<h2 style="margin:0;font-size:1.1rem;">Распределённые поставщики</h2>
-			<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-				<label for="distributedDriverFilter" style="font-size:0.85rem;color:var(--muted);">Водитель:</label>
+			<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
 				<select id="distributedDriverFilter" class="form-input" style="width:auto;padding:4px 8px;font-size:0.85rem;">
-					<option value="">Все</option>
+					<option value="">Все водители</option>
+				</select>
+				<select id="distributedStatusFilter" class="form-input" style="width:auto;padding:4px 8px;font-size:0.85rem;">
+					<option value="">Все статусы</option>
+					<option value="pending">Ожидают</option>
+					<option value="completed">Забранные</option>
 				</select>
 			</div>
 		</section>
@@ -139,8 +143,8 @@
 							<th style="width:40px;">№</th>
 							<th>Поставщик</th>
 							<th>Водитель</th>
+							<th>Статус</th>
 							<th>Время</th>
-							<th>Телефон</th>
 						</tr>
 					</thead>
 					<tbody id="distributedTableBody">

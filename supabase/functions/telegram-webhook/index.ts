@@ -47,13 +47,18 @@ serve(async (req) => {
       const driverName = cb.from?.first_name || cb.from?.username || "Водитель";
 
       // Determine new status
-      const newStatus = action === "accept" ? "confirmed" : action === "reject" ? "rejected" : null;
+      const newStatus = action === "accept" ? "confirmed"
+        : action === "reject" ? "rejected"
+        : action === "pickup" ? "picked_up"
+        : null;
       if (!newStatus) {
         return new Response("OK", { status: 200 });
       }
 
       // 1. Answer callback query immediately (driver sees popup)
-      const answerText = action === "accept" ? "✅ Принято!" : "❌ Отклонено";
+      const answerText = action === "accept" ? "✅ Принято!"
+        : action === "pickup" ? "📦 Отмечено как забранное!"
+        : "❌ Отклонено";
       await fetch(`https://api.telegram.org/bot${botToken}/answerCallbackQuery`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -64,31 +69,71 @@ serve(async (req) => {
         }),
       });
 
-      // 2. Remove inline buttons only — keep original message with clickable map link
-      const statusEmoji = action === "accept" ? "✅" : "❌";
-      const statusLabel = action === "accept" ? "Принято" : "Отклонено";
-
+      // 2. Update inline buttons based on action
       if (chatId && messageId) {
-        // Remove buttons, preserve original HTML message
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            reply_markup: { inline_keyboard: [] },
-          }),
-        });
-        // Send status as a separate reply
-        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: statusEmoji + " " + statusLabel + " — " + driverName,
-            reply_to_message_id: messageId,
-          }),
-        });
+        if (action === "accept") {
+          // Replace with "Забрал" button
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: messageId,
+              reply_markup: {
+                inline_keyboard: [[{ text: "📦 Забрал", callback_data: "pickup:" + orderId }]],
+              },
+            }),
+          });
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "✅ Принято — " + driverName + "\nНажмите «📦 Забрал» когда заберёте товар",
+              reply_to_message_id: messageId,
+            }),
+          });
+        } else if (action === "pickup") {
+          // Remove all buttons
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: messageId,
+              reply_markup: { inline_keyboard: [] },
+            }),
+          });
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "📦 Забрал — " + driverName,
+              reply_to_message_id: messageId,
+            }),
+          });
+        } else {
+          // Reject: remove buttons
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: messageId,
+              reply_markup: { inline_keyboard: [] },
+            }),
+          });
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "❌ Отклонено — " + driverName,
+              reply_to_message_id: messageId,
+            }),
+          });
+        }
       }
 
       // 3. Save confirmation to database
