@@ -141,9 +141,13 @@
     var exact = dbSuppliers.find(function (s) { return compactName(s.name) === n; });
     if (exact) return exact;
 
-    // 2. One contains the other
+    // 2. Strict partial: only match when lengths are similar (within 30%) to avoid false positives
     var partial = dbSuppliers.find(function (s) {
       var sn = compactName(s.name);
+      if (!sn) return false;
+      var longer = Math.max(sn.length, n.length);
+      var shorter = Math.min(sn.length, n.length);
+      if (shorter / longer < 0.7) return false;
       return sn.includes(n) || n.includes(sn);
     });
     if (partial) return partial;
@@ -1039,6 +1043,114 @@
       if (latInput && prefill.lat) latInput.value = prefill.lat;
       if (lonInput && prefill.lon) lonInput.value = prefill.lon;
     }, 50);
+  }
+
+  // ─── Search & link supplier from DB ───────────────────────
+  var _activeSupplierSearch = null;
+
+  function openSupplierSearch(orderId) {
+    closeSupplierSearch();
+    var order = orders.find(function (o) { return o.id === orderId; });
+    if (!order || !order.isSupplier) return;
+
+    var trigger = document.querySelector('.dc-supplier-not-found[data-id="' + orderId + '"]');
+    if (!trigger) return;
+
+    var wrapper = trigger.parentElement;
+    var dropdown = document.createElement('div');
+    dropdown.className = 'dc-supplier-search-dropdown';
+    dropdown.innerHTML =
+      '<input class="dc-supplier-search-input" type="text" placeholder="Введите название поставщика..." autofocus />' +
+      '<div class="dc-supplier-search-results"></div>';
+
+    wrapper.appendChild(dropdown);
+    _activeSupplierSearch = { orderId: orderId, dropdown: dropdown };
+
+    var input = dropdown.querySelector('.dc-supplier-search-input');
+    var resultsEl = dropdown.querySelector('.dc-supplier-search-results');
+
+    input.value = order.supplierName || stripOrgForm(order.address) || '';
+
+    function doSearch() {
+      var q = input.value.trim();
+      if (q.length < 1) {
+        resultsEl.innerHTML = '<div class="dc-search-hint">Начните вводить название</div>';
+        return;
+      }
+      var matches = searchSuppliers(q, 10);
+      if (matches.length === 0) {
+        resultsEl.innerHTML = '<div class="dc-search-hint">Ничего не найдено</div>';
+        return;
+      }
+      resultsEl.innerHTML = '';
+      matches.forEach(function (s) {
+        var item = document.createElement('div');
+        item.className = 'dc-search-result-item';
+        item.innerHTML = '<strong>' + escapeHtml(s.name) + '</strong>' +
+          (s.address ? '<br><span style="font-size:11px;color:var(--muted);">' + escapeHtml(s.address) + '</span>' : '');
+        item.addEventListener('click', function () {
+          linkSupplierToOrder(orderId, s);
+        });
+        resultsEl.appendChild(item);
+      });
+    }
+
+    input.addEventListener('input', doSearch);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeSupplierSearch();
+    });
+
+    setTimeout(function () { input.focus(); input.select(); }, 30);
+    doSearch();
+
+    // Close on outside click
+    setTimeout(function () {
+      document.addEventListener('click', _onOutsideClickSearch);
+    }, 50);
+  }
+
+  function _onOutsideClickSearch(e) {
+    if (_activeSupplierSearch && _activeSupplierSearch.dropdown && !_activeSupplierSearch.dropdown.contains(e.target)) {
+      closeSupplierSearch();
+    }
+  }
+
+  function closeSupplierSearch() {
+    if (_activeSupplierSearch && _activeSupplierSearch.dropdown) {
+      _activeSupplierSearch.dropdown.remove();
+    }
+    _activeSupplierSearch = null;
+    document.removeEventListener('click', _onOutsideClickSearch);
+  }
+
+  function linkSupplierToOrder(orderId, supplier) {
+    var order = orders.find(function (o) { return o.id === orderId; });
+    if (!order) return;
+
+    order.supplierDbId = supplier.id;
+    order.supplierData = supplier;
+    order.supplierName = supplier.name;
+    order.address = supplier.name;
+    if (supplier.lat && supplier.lon) {
+      order.lat = supplier.lat;
+      order.lng = supplier.lon;
+      order.formattedAddress = supplier.address || (supplier.lat + ', ' + supplier.lon);
+      order.geocoded = true;
+      order.error = null;
+    }
+
+    closeSupplierSearch();
+    _fitBoundsNext = true;
+    saveState();
+    renderAll();
+    showToast('Поставщик привязан: ' + supplier.name);
+
+    // Sync to DB if driver assigned
+    var orderIdx = orders.findIndex(function (o) { return o.id === orderId; });
+    if (orderIdx >= 0) {
+      var driverId = getOrderDriverId(orderIdx);
+      if (driverId) scheduleSyncDriver(String(driverId));
+    }
   }
 
   function showDistributeDialog() {
@@ -2302,7 +2414,7 @@
     if (order.isSupplier && order.supplierDbId) {
       html += '<div style="font-size:10px;color:#10b981;margin-top:1px;">В базе</div>';
     } else if (order.isSupplier && !order.supplierDbId) {
-      html += '<div style="font-size:10px;color:#ef4444;margin-top:1px;">Не найден в базе</div>';
+      html += '<div class="dc-supplier-not-found" data-id="' + order.id + '" style="font-size:10px;color:#ef4444;margin-top:1px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;" title="Нажмите чтобы найти в базе">🔍 Не найден — нажмите для поиска</div>';
     }
     // Inline driver assignment — directly from DB drivers list
     var driverDisplayName = driverId ? getDriverNameById(driverId) : (hasSlot ? getDriverName(slotIdx) : null);
@@ -2939,6 +3051,14 @@
     // Create supplier from order
     sidebar.querySelectorAll('.dc-create-supplier-btn').forEach(function (btn) {
       btn.addEventListener('click', function () { createSupplierFromOrder(btn.dataset.id); });
+    });
+
+    // Search supplier in DB (for not-found suppliers)
+    sidebar.querySelectorAll('.dc-supplier-not-found').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openSupplierSearch(el.dataset.id);
+      });
     });
 
     // Enter in edit inputs

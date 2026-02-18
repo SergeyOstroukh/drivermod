@@ -51,7 +51,7 @@
 		const allSections = [
 			"suppliersSection", "driversSection", "vehiclesSection",
 			"historySection", "mileageSection", "maintenanceSection",
-			"distributionSection", "driverRouteSection"
+			"distributionSection", "driverRouteSection", "distributedSuppliersSection"
 		];
 		allSections.forEach(sectionId => {
 			const sec = document.getElementById(sectionId);
@@ -2272,6 +2272,22 @@
 			});
 		}
 
+		// ---- Распределённые поставщики ----
+		const openDistributedBtn = document.getElementById("openDistributedBtn");
+		if (openDistributedBtn) {
+			openDistributedBtn.addEventListener("click", openDistributedSuppliers);
+		}
+
+		const backFromDistributedBtn = document.getElementById("backFromDistributedBtn");
+		if (backFromDistributedBtn) {
+			backFromDistributedBtn.addEventListener("click", closeDistributedSuppliers);
+		}
+
+		const distributedDateInput = document.getElementById("distributedDateInput");
+		if (distributedDateInput) {
+			distributedDateInput.addEventListener("change", loadDistributedSuppliers);
+		}
+
 		// Восстановление сессии при загрузке страницы
 		restoreSession();
 	}
@@ -3040,6 +3056,152 @@
 			fuelLevelGroup.style.display = "block";
 			fuelLevelInput.required = true;
 		}
+	}
+
+	// ============================================
+	// РАСПРЕДЕЛЁННЫЕ ПОСТАВЩИКИ
+	// ============================================
+
+	function getTodayStr() {
+		const d = new Date();
+		return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+	}
+
+	function openDistributedSuppliers() {
+		const section = document.getElementById("distributedSuppliersSection");
+		const driversSection = document.getElementById("driversSection");
+		const dateInput = document.getElementById("distributedDateInput");
+
+		if (!section) return;
+
+		if (driversSection) driversSection.style.display = "none";
+
+		section.style.display = "block";
+		section.classList.add("active");
+
+		if (dateInput && !dateInput.value) {
+			dateInput.value = getTodayStr();
+		}
+
+		loadDistributedSuppliers();
+	}
+
+	function closeDistributedSuppliers() {
+		const section = document.getElementById("distributedSuppliersSection");
+		const driversSection = document.getElementById("driversSection");
+
+		if (section) {
+			section.style.display = "none";
+			section.classList.remove("active");
+		}
+		if (driversSection) {
+			driversSection.style.display = "block";
+			driversSection.classList.add("active");
+		}
+	}
+
+	async function loadDistributedSuppliers() {
+		const tbody = document.getElementById("distributedTableBody");
+		const dateInput = document.getElementById("distributedDateInput");
+		if (!tbody) return;
+
+		const routeDate = (dateInput && dateInput.value) || getTodayStr();
+
+		tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Загрузка...</td></tr>';
+
+		try {
+			const routes = await window.VehiclesDB.getActiveRoutes(routeDate);
+
+			if (!routes || routes.length === 0) {
+				tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Нет распределённых маршрутов на эту дату</td></tr>';
+				return;
+			}
+
+			const rows = [];
+			for (const route of routes) {
+				const driverName = route.driver ? route.driver.name : ('Водитель #' + route.driver_id);
+				const points = route.points || [];
+				for (const point of points) {
+					rows.push({
+						address: point.address || point.formattedAddress || '—',
+						driver: driverName,
+						timeSlot: point.timeSlot || '',
+						phone: point.phone || '',
+						isSupplier: point.isSupplier,
+						orderNum: point.orderNum
+					});
+				}
+			}
+
+			if (rows.length === 0) {
+				tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);">Маршруты пусты</td></tr>';
+				return;
+			}
+
+			rows.sort((a, b) => {
+				if (a.driver < b.driver) return -1;
+				if (a.driver > b.driver) return 1;
+				return (a.orderNum || 0) - (b.orderNum || 0);
+			});
+
+			tbody.innerHTML = '';
+			let num = 0;
+			let currentDriver = null;
+
+			for (const row of rows) {
+				if (row.driver !== currentDriver) {
+					currentDriver = row.driver;
+					const sep = document.createElement('tr');
+					sep.className = 'distributed-driver-row';
+					sep.innerHTML = '<td colspan="5"><strong>' + escapeHtml(currentDriver) + '</strong></td>';
+					tbody.appendChild(sep);
+					num = 0;
+				}
+
+				num++;
+				const tr = document.createElement('tr');
+
+				const tdNum = document.createElement('td');
+				tdNum.textContent = num;
+
+				const tdAddr = document.createElement('td');
+				tdAddr.textContent = row.address;
+				if (row.isSupplier) {
+					tdAddr.style.fontWeight = '500';
+				}
+
+				const tdDriver = document.createElement('td');
+				tdDriver.textContent = row.driver;
+
+				const tdTime = document.createElement('td');
+				tdTime.textContent = row.timeSlot;
+
+				const tdPhone = document.createElement('td');
+				if (row.phone) {
+					const link = document.createElement('a');
+					link.href = 'tel:' + row.phone.replace(/[^\d+]/g, '');
+					link.textContent = row.phone;
+					link.style.color = 'var(--primary)';
+					tdPhone.appendChild(link);
+				}
+
+				tr.appendChild(tdNum);
+				tr.appendChild(tdAddr);
+				tr.appendChild(tdDriver);
+				tr.appendChild(tdTime);
+				tr.appendChild(tdPhone);
+				tbody.appendChild(tr);
+			}
+		} catch (err) {
+			console.error('Ошибка загрузки распределённых поставщиков:', err);
+			tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--danger);">Ошибка загрузки: ' + (err.message || err) + '</td></tr>';
+		}
+	}
+
+	function escapeHtml(str) {
+		const div = document.createElement('div');
+		div.textContent = str;
+		return div.innerHTML;
 	}
 
 	// Expose functions needed by inline HTML handlers
