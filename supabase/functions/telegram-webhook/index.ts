@@ -11,6 +11,21 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
+function getStatusTitle(action: string): string {
+  if (action === "accept") return "✅ Принято";
+  if (action === "pickup") return "📦 Забрал";
+  if (action === "reject") return "❌ Отклонено";
+  return "";
+}
+
+function buildUpdatedMessage(currentText: string, action: string): string {
+  const base = (currentText || "")
+    .trim()
+    .replace(/^(?:✅ Принято|📦 Забрал|❌ Отклонено)(?:\s+—[^\n]*)?\n+/u, "");
+  const title = getStatusTitle(action);
+  return title ? `${title}\n${base}` : base;
+}
+
 serve(async (req) => {
   // Only accept POST
   if (req.method !== "POST") {
@@ -69,71 +84,24 @@ serve(async (req) => {
         }),
       });
 
-      // 2. Update inline buttons based on action
+      // 2. Update one existing message: status line + buttons (no extra messages)
       if (chatId && messageId) {
-        if (action === "accept") {
-          // Replace with "Забрал" button
-          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chatId,
-              message_id: messageId,
-              reply_markup: {
-                inline_keyboard: [[{ text: "📦 Забрал", callback_data: "pickup:" + orderId }]],
-              },
-            }),
-          });
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: "✅ Принято — " + driverName + "\nНажмите «📦 Забрал» когда заберёте товар",
-              reply_to_message_id: messageId,
-            }),
-          });
-        } else if (action === "pickup") {
-          // Remove all buttons
-          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chatId,
-              message_id: messageId,
-              reply_markup: { inline_keyboard: [] },
-            }),
-          });
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: "📦 Забрал — " + driverName,
-              reply_to_message_id: messageId,
-            }),
-          });
-        } else {
-          // Reject: remove buttons
-          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chatId,
-              message_id: messageId,
-              reply_markup: { inline_keyboard: [] },
-            }),
-          });
-          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              chat_id: chatId,
-              text: "❌ Отклонено — " + driverName,
-              reply_to_message_id: messageId,
-            }),
-          });
-        }
+        const currentText = cb.message?.text || "";
+        const updatedText = buildUpdatedMessage(currentText, action);
+        const replyMarkup = action === "accept"
+          ? { inline_keyboard: [[{ text: "📦 Забрал", callback_data: "pickup:" + orderId }]] }
+          : { inline_keyboard: [] };
+
+        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            message_id: messageId,
+            text: updatedText,
+            reply_markup: replyMarkup,
+          }),
+        });
       }
 
       // 3. Save confirmation to database

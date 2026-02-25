@@ -34,6 +34,9 @@
   let dbSuppliers = [];
   // Локальные алиасы: введенное имя (compact) -> supplier.id
   let supplierAliases = {};
+  // Черновики полей вставки (чтобы не терялись при авто-обновлениях)
+  let supplierInputDraft = '';
+  let addressInputDraft = '';
   let isLoadingSuppliers = false;
   // Привязка цвет-индекс → driver_id (driverSlots[0] = driver_id для цвета 0)
   let driverSlots = [];
@@ -950,6 +953,7 @@
     const textarea = $('#dcAddressInput');
     if (!textarea) return;
     const text = textarea.value;
+    addressInputDraft = text;
     const parsed = window.DistributionParser.parseOrders(text);
     if (parsed.length === 0) { showToast('Не найдено адресов', 'error'); return; }
 
@@ -992,6 +996,7 @@
     } finally {
       isGeocoding = false;
       textarea.value = '';
+      addressInputDraft = '';
       renderAll();
     }
   }
@@ -1001,6 +1006,7 @@
     const textarea = $('#dcSupplierInput');
     if (!textarea) return;
     const text = textarea.value.trim();
+    supplierInputDraft = textarea.value;
     if (!text) { showToast('Вставьте названия поставщиков', 'error'); return; }
     try {
 
@@ -1145,6 +1151,7 @@
 
     _fitBoundsNext = true;
     textarea.value = '';
+    supplierInputDraft = '';
     showToast('Поставщики: найдено ' + found + (notFound > 0 ? ', не найдено: ' + notFound : ''), notFound > 0 ? 'error' : undefined);
     } catch (err) {
       console.error('loadSuppliers error:', err);
@@ -2447,38 +2454,28 @@
           });
         } catch (e) { /* ignore */ }
 
-        // Update inline buttons
+        // Update one existing message: status line + buttons (no new messages)
         if (update.callback_query.message) {
           var chatId = update.callback_query.message.chat.id;
           var msgId = update.callback_query.message.message_id;
+          var currentText = update.callback_query.message.text || '';
+          var updatedText = buildTelegramUpdatedMessage(currentText, action);
+          var replyMarkup = action === 'accept'
+            ? { inline_keyboard: [[{ text: '📦 Забрал', callback_data: 'pickup:' + orderId }]] }
+            : { inline_keyboard: [] };
           try {
-            if (action === 'accept') {
-              // Replace with "Забрал" button
-              await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [[{ text: '📦 Забрал', callback_data: 'pickup:' + orderId }]] } }),
-              });
-              await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, text: '✅ Принято\nНажмите «📦 Забрал» когда заберёте товар', reply_to_message_id: msgId }),
-              });
-            } else {
-              // Pickup or reject: remove all buttons
-              await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }),
-              });
-              await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, text: action === 'pickup' ? '📦 Забрал' : '❌ Отклонено', reply_to_message_id: msgId }),
-              });
-            }
+            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: chatId,
+                message_id: msgId,
+                text: updatedText,
+                reply_markup: replyMarkup,
+              }),
+            });
           } catch (e) {
-            console.warn('editMessageReplyMarkup error:', e);
+            console.warn('editMessageText error:', e);
           }
         }
 
@@ -2595,6 +2592,21 @@
       msg += '\n';
     });
     return msg.trim();
+  }
+
+  function getTelegramStatusTitle(action) {
+    if (action === 'accept') return '✅ Принято';
+    if (action === 'pickup') return '📦 Забрал';
+    if (action === 'reject') return '❌ Отклонено';
+    return '';
+  }
+
+  function buildTelegramUpdatedMessage(currentText, action) {
+    var base = String(currentText || '').trim();
+    // Remove previous status header if message was already updated before
+    base = base.replace(/^(?:✅ Принято|📦 Забрал|❌ Отклонено)(?:\s+—[^\n]*)?\n+/u, '');
+    var title = getTelegramStatusTitle(action);
+    return (title ? title + '\n' : '') + base;
   }
 
   function escapeHtml(s) {
@@ -2759,6 +2771,12 @@
   function renderSidebar() {
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
+
+    // Keep unsent textarea content across any sidebar re-render (e.g. Telegram status updates)
+    var supplierInputEl = sidebar.querySelector('#dcSupplierInput');
+    if (supplierInputEl) supplierInputDraft = supplierInputEl.value;
+    var addressInputEl = sidebar.querySelector('#dcAddressInput');
+    if (addressInputEl) addressInputDraft = addressInputEl.value;
 
     // Preserve collapsed/expanded state before re-render
     var suppDetails = sidebar.querySelector('.dc-details-suppliers');
@@ -2949,7 +2967,7 @@
       '<input id="dcSupplierSearch" class="dc-search-input" type="text" placeholder="Поиск поставщика по базе..." autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;" />' +
       '<div id="dcSupplierSuggest" class="dc-suggest-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e1e2e;color:#e0e0e0;border:1px solid #444;border-top:none;border-radius:0 0 6px 6px;max-height:200px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.4);"></div>' +
       '</div>' +
-      '<textarea id="dcSupplierInput" class="dc-textarea" placeholder="Вставьте названия поставщиков, каждый с новой строки\\nФормат: ООО «Название» до 14" ' + (isLoadingSuppliers ? 'disabled' : '') + '></textarea>' +
+      '<textarea id="dcSupplierInput" class="dc-textarea" placeholder="Вставьте названия поставщиков, каждый с новой строки\\nФормат: ООО «Название» до 14" ' + (isLoadingSuppliers ? 'disabled' : '') + '>' + escapeHtml(supplierInputDraft) + '</textarea>' +
       '<div class="dc-buttons" style="margin-top:6px;">' +
       (!hasSupplierOrders
         ? '<button class="btn btn-primary dc-btn-load-suppliers" ' + (isLoadingSuppliers ? 'disabled' : '') + '>' + (isLoadingSuppliers ? '<span id="dcSupplierProgress">...</span>' : 'Найти') + '</button>'
@@ -2960,7 +2978,7 @@
       '<div class="dc-section dc-bulk-section">' +
       '<details class="dc-bulk-details"' + (!hasAddressOrders && !hasSupplierOrders ? ' open' : '') + '>' +
       '<summary class="dc-section-title dc-bulk-toggle">Вставить список адресов</summary>' +
-      '<textarea id="dcAddressInput" class="dc-textarea" placeholder="Вставьте адреса, каждый с новой строки\\nФормат: адрес [TAB] телефон [TAB] время" ' + (isGeocoding ? 'disabled' : '') + '></textarea>' +
+      '<textarea id="dcAddressInput" class="dc-textarea" placeholder="Вставьте адреса, каждый с новой строки\\nФормат: адрес [TAB] телефон [TAB] время" ' + (isGeocoding ? 'disabled' : '') + '>' + escapeHtml(addressInputDraft) + '</textarea>' +
       '<div class="dc-buttons" style="margin-top:6px;">' +
       (!hasAddressOrders
         ? '<button class="btn btn-primary dc-btn-load" ' + (isGeocoding ? 'disabled' : '') + '>' + (isGeocoding ? '<span id="dcProgress">...</span>' : 'На карту') + '</button>'
@@ -3002,6 +3020,20 @@
   function bindSidebarEvents() {
     const sidebar = $('#dcSidebar');
     if (!sidebar) return;
+
+    // Keep draft text in memory while user types
+    var supplierInput = sidebar.querySelector('#dcSupplierInput');
+    if (supplierInput) {
+      supplierInput.addEventListener('input', function () {
+        supplierInputDraft = supplierInput.value;
+      });
+    }
+    var addressInput = sidebar.querySelector('#dcAddressInput');
+    if (addressInput) {
+      addressInput.addEventListener('input', function () {
+        addressInputDraft = addressInput.value;
+      });
+    }
 
     // ─── Point search ─────────────────────────────────────────
     var pointSearchInput = sidebar.querySelector('#dcPointSearch');

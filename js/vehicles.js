@@ -3136,6 +3136,20 @@
 		return itemsText;
 	}
 
+	function getDriverSurnameForExport(driverName) {
+		if (!driverName) return '';
+		var surname = String(driverName).trim().split(/\s+/)[0] || '';
+		if (!surname) return '';
+		return surname
+			.split('-')
+			.map(function (part) {
+				if (!part) return part;
+				var lower = part.toLocaleLowerCase('ru-RU');
+				return lower.charAt(0).toLocaleUpperCase('ru-RU') + lower.slice(1);
+			})
+			.join('-');
+	}
+
 	function csvEscape(value) {
 		var str = value == null ? '' : String(value);
 		if (str.indexOf('"') !== -1) str = str.replace(/"/g, '""');
@@ -3169,7 +3183,7 @@
 				idx + 1,
 				row.supplierName || row.address || '',
 				getDistributedItemsText(row),
-				row.driverName || '',
+				getDriverSurnameForExport(row.driverName),
 				getDistributedStatusLabel(row),
 				row.timeSlot || ''
 			].map(csvEscape).join(";"));
