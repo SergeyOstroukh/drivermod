@@ -11,6 +11,7 @@
   const COLORS = window.DistributionAlgo.DRIVER_COLORS;
   const ORIGINAL_COLORS = COLORS.slice();
   const STORAGE_KEY = 'dc_distribution_data';
+  const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
 
   let orders = [];
   let assignments = null;
@@ -22,6 +23,8 @@
   let isGeocoding = false;
   let mapInstance = null;
   let placemarks = [];
+  let _hoverMapHighlightPm = null;
+  let _hoveredOrderPlacemark = null;
   let placingOrderId = null;
   let editingOrderId = null;
 
@@ -29,6 +32,8 @@
   let dbDrivers = [];
   // Поставщики из БД (кэш)
   let dbSuppliers = [];
+  // Локальные алиасы: введенное имя (compact) -> supplier.id
+  let supplierAliases = {};
   let isLoadingSuppliers = false;
   // Привязка цвет-индекс → driver_id (driverSlots[0] = driver_id для цвета 0)
   let driverSlots = [];
@@ -96,6 +101,7 @@
 
   // ─── Load supplier orders (items from 1C) ─────────────────
   var _supplierOrdersCache = {};
+  var _itemsPollTimer = null;
 
   async function loadSupplierOrders() {
     var client = getSupabaseClient();
@@ -121,6 +127,43 @@
   function getSupplierItems(supplierName) {
     var key = compactName(supplierName);
     return _supplierOrdersCache[key] || [];
+  }
+
+  // Refresh items from DB + update orders that now have items
+  async function refreshSupplierItems() {
+    var prevCache = JSON.stringify(_supplierOrdersCache);
+    await loadSupplierOrders();
+    if (JSON.stringify(_supplierOrdersCache) === prevCache) return;
+
+    var updated = false;
+    orders.forEach(function (order) {
+      if (!order.isSupplier) return;
+      var items = getSupplierItems(order.supplierName || order.address);
+      if (!items.length && order.supplierData) items = getSupplierItems(order.supplierData.name);
+      var newItems = items.length > 0 ? items.join('\n') : null;
+      if (newItems && newItems !== order.items1c) {
+        order.items1c = newItems;
+        updated = true;
+      }
+    });
+    if (updated) {
+      renderAll();
+    }
+  }
+
+  function startItemsPolling() {
+    stopItemsPolling();
+    _itemsPollTimer = setInterval(function () {
+      if (orders.some(function (o) { return o.isSupplier; })) {
+        refreshSupplierItems();
+      } else {
+        stopItemsPolling();
+      }
+    }, 30000);
+  }
+
+  function stopItemsPolling() {
+    if (_itemsPollTimer) { clearInterval(_itemsPollTimer); _itemsPollTimer = null; }
   }
 
   // Strip organizational form and quotes: ООО "Название" → Название
@@ -173,6 +216,13 @@
     var n = compactName(name);
     if (!n || n.length < 2) return null;
 
+    // 0. User-linked alias match (persists between sessions)
+    var aliasSupplierId = supplierAliases[n];
+    if (aliasSupplierId != null) {
+      var aliasMatch = dbSuppliers.find(function (s) { return String(s.id) === String(aliasSupplierId); });
+      if (aliasMatch) return aliasMatch;
+    }
+
     // 1. Exact compact match
     var exact = dbSuppliers.find(function (s) { return compactName(s.name) === n; });
     if (exact) return exact;
@@ -189,6 +239,29 @@
     if (partial) return partial;
 
     return null;
+  }
+
+  function loadSupplierAliases() {
+    try {
+      var raw = localStorage.getItem(SUPPLIER_ALIASES_KEY);
+      supplierAliases = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      supplierAliases = {};
+    }
+  }
+
+  function saveSupplierAliases() {
+    try {
+      localStorage.setItem(SUPPLIER_ALIASES_KEY, JSON.stringify(supplierAliases));
+    } catch (e) { /* ignore */ }
+  }
+
+  function rememberSupplierAlias(inputName, supplier) {
+    if (!inputName || !supplier || supplier.id == null) return;
+    var key = compactName(inputName);
+    if (!key || key.length < 2) return;
+    supplierAliases[key] = supplier.id;
+    saveSupplierAliases();
   }
 
   // Search suppliers for autocomplete (returns top N matches)
@@ -376,6 +449,51 @@
 
   // ─── Map ──────────────────────────────────────────────────
   var _mapInitPromise = null;
+
+  function clearMapOrderHighlight() {
+    if (_hoveredOrderPlacemark && _hoveredOrderPlacemark.options) {
+      try {
+        _hoveredOrderPlacemark.options.set('zIndex', null);
+      } catch (e) { /* ignore */ }
+    }
+    _hoveredOrderPlacemark = null;
+
+    if (_hoverMapHighlightPm && mapInstance) {
+      try { mapInstance.geoObjects.remove(_hoverMapHighlightPm); } catch (e) { /* ignore */ }
+    }
+    _hoverMapHighlightPm = null;
+  }
+
+  function highlightMapOrder(orderId) {
+    if (!mapInstance || !orderId) return;
+
+    clearMapOrderHighlight();
+
+    var pm = null;
+    for (var i = 0; i < placemarks.length; i++) {
+      if (placemarks[i] && placemarks[i].__orderId === orderId) {
+        pm = placemarks[i];
+        break;
+      }
+    }
+    if (!pm || !pm.geometry || !pm.geometry.getCoordinates) return;
+
+    _hoveredOrderPlacemark = pm;
+    try { pm.options.set('zIndex', 5000); } catch (e) { /* ignore */ }
+
+    var coords = pm.geometry.getCoordinates();
+    var ringLayout = ymaps.templateLayoutFactory.createClass(
+      '<div style="width:40px;height:40px;border-radius:50%;border:3px solid #22d3ee;box-shadow:0 0 0 4px rgba(34,211,238,0.22);background:rgba(34,211,238,0.08);pointer-events:none;"></div>'
+    );
+    _hoverMapHighlightPm = new ymaps.Placemark(coords, {}, {
+      iconLayout: ringLayout,
+      iconOffset: [-20, -20],
+      iconShape: { type: 'Circle', coordinates: [20, 20], radius: 20 },
+      zIndex: 4999,
+    });
+    mapInstance.geoObjects.add(_hoverMapHighlightPm);
+  }
+
   async function initMap() {
     const container = $('#distributionMap');
     if (!container || mapInstance) return;
@@ -477,6 +595,7 @@
   function updatePlacemarks() {
     if (!mapInstance || !window.ymaps) return;
     var ymaps = window.ymaps;
+    clearMapOrderHighlight();
 
     // Do NOT call balloon.close() — removing the placemark auto-closes it.
     // Manual balloon.close() was causing the map to break.
@@ -533,7 +652,7 @@
       var orderDriverId = getOrderDriverId(globalIdx);
       // Hide assigned/confirmed suppliers when toggles are on
       if (_hideAssigned && order.isSupplier && orderDriverId) return;
-      if (_hideConfirmed && order.isSupplier && order.telegramStatus === 'confirmed') return;
+      if (_hideConfirmed && order.isSupplier && (order.telegramStatus === 'confirmed' || order.telegramStatus === 'picked_up')) return;
       var isVisible;
       if (editingDriverId) {
         isVisible = !orderDriverId || String(orderDriverId) === String(editingDriverId);
@@ -630,6 +749,7 @@
         });
       })(order.id);
 
+      pm.__orderId = order.id;
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
       bounds.push([plat, plng]);
@@ -893,6 +1013,7 @@
     renderAll();
     await loadDbSuppliers();
     await loadSupplierOrders();
+    startItemsPolling();
 
     var prevAssignments = append ? assignments : null;
     if (!append) {
@@ -937,6 +1058,7 @@
         found++;
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
+          sourceSupplierName: name,
           address: supplier.name,
           phone: '',
           timeSlot: timeSlot,
@@ -956,6 +1078,7 @@
         notFound++;
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
+          sourceSupplierName: name,
           address: supplier.name,
           phone: '',
           timeSlot: timeSlot,
@@ -976,6 +1099,7 @@
         notFound++;
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
+          sourceSupplierName: name,
           address: rawLine,
           phone: '',
           timeSlot: timeSlot,
@@ -1176,6 +1300,9 @@
     var order = orders.find(function (o) { return o.id === orderId; });
     if (!order) return;
 
+    // Persist manual mapping so next load can auto-match this input
+    rememberSupplierAlias(order.sourceSupplierName || order.supplierName || order.address, supplier);
+
     order.supplierDbId = supplier.id;
     order.supplierData = supplier;
     order.supplierName = supplier.name;
@@ -1372,6 +1499,7 @@
       await loadDbSuppliers(); // refresh DB data
       var supplier = findSupplierInDb(addr);
       if (supplier && supplier.lat && supplier.lon) {
+        rememberSupplierAlias(addr, supplier);
         orders = orders.map(function (o) {
           if (o.id !== orderId) return o;
           return Object.assign({}, o, {
@@ -1392,6 +1520,7 @@
         showToast('Поставщик найден в базе');
         return;
       } else if (supplier && (!supplier.lat || !supplier.lon)) {
+        rememberSupplierAlias(addr, supplier);
         // Found in DB but no coordinates — try geocoding the DB address
         var geoAddr = supplier.address || addr;
         try {
@@ -1976,6 +2105,9 @@
       return;
     }
 
+    // Always refresh items from 1C before sending
+    await refreshSupplierItems();
+
     // Group unsent suppliers by driver
     var byDriver = {}; // { driverId: { driver, orderIndices, points } }
     var noDriver = 0, noTelegram = [];
@@ -2142,6 +2274,50 @@
         renderAll();
       } else {
         showToast('Ошибка Telegram: ' + (data.description || '?'), 'error');
+      }
+    } catch (err) {
+      showToast('Ошибка отправки: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Send items update to driver (when items arrived after initial send) ──
+  async function sendItemsToDriver(orderId) {
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+    if (!botToken) { showToast('Telegram бот не настроен', 'error'); return; }
+
+    var order = orders.find(function (o) { return o.id === orderId; });
+    if (!order || !order.telegramChatId) { showToast('Поставщик не был отправлен в Telegram', 'error'); return; }
+
+    await refreshSupplierItems();
+    var items = order.items1c;
+    if (!items) {
+      var found = getSupplierItems(order.supplierName || order.address);
+      if (!found.length && order.supplierData) found = getSupplierItems(order.supplierData.name);
+      items = found.length > 0 ? found.join('\n') : null;
+    }
+    if (!items) { showToast('Товар от 1С ещё не поступил', 'error'); return; }
+
+    var msg = '📋 <b>Товар для ' + escapeHtml(order.address) + ':</b>\n' + escapeHtml(items);
+
+    try {
+      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: order.telegramChatId,
+          text: msg,
+          parse_mode: 'HTML',
+          reply_to_message_id: order.telegramMessageId || undefined,
+        }),
+      });
+      var data = await resp.json();
+      if (data.ok) {
+        order.items1c = items;
+        order.itemsSent = true;
+        showToast('Товар отправлен водителю: ' + order.address);
+        renderAll();
+      } else {
+        showToast('Ошибка: ' + (data.description || '?'), 'error');
       }
     } catch (err) {
       showToast('Ошибка отправки: ' + err.message, 'error');
@@ -2488,6 +2664,11 @@
     }
     if (order.items1c) {
       html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;white-space:pre-line;">📋 ' + escapeHtml(order.items1c) + '</div>';
+      if (order.telegramSent && !order.itemsSent) {
+        html += '<button class="btn btn-outline btn-sm dc-send-items-btn" data-id="' + order.id + '" style="font-size:9px;color:#a78bfa;border-color:#a78bfa;margin-top:2px;padding:1px 6px;" title="Дослать товар водителю в Telegram">📋 Дослать товар</button>';
+      }
+    } else if (order.telegramSent) {
+      html += '<div style="font-size:10px;color:var(--muted);margin-top:2px;">⏳ Товар от 1С ещё не поступил</div>';
     }
     // Inline driver assignment — directly from DB drivers list
     var driverDisplayName = driverId ? getDriverNameById(driverId) : (hasSlot ? getDriverName(slotIdx) : null);
@@ -2701,10 +2882,10 @@
       filteredSuppliers = filteredSuppliers.filter(function (o) { return !getOrderDriverId(o.globalIndex); });
     }
     if (_hideConfirmed) {
-      filteredSuppliers = filteredSuppliers.filter(function (o) { return o.telegramStatus !== 'confirmed'; });
+      filteredSuppliers = filteredSuppliers.filter(function (o) { return o.telegramStatus !== 'confirmed' && o.telegramStatus !== 'picked_up'; });
     }
     var assignedSupplierCount = supplierItems.filter(function (o) { return !!getOrderDriverId(o.globalIndex); }).length;
-    var confirmedSupplierCount = supplierItems.filter(function (o) { return o.telegramStatus === 'confirmed'; }).length;
+    var confirmedSupplierCount = supplierItems.filter(function (o) { return o.telegramStatus === 'confirmed' || o.telegramStatus === 'picked_up'; }).length;
     var supplierListHtml = '';
     if (supplierItems.length > 0) {
       var toggleBtnHtml = '<button class="dc-toggle-assigned" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_hideAssigned ? 'var(--accent)' : '#555') + ';background:' + (_hideAssigned ? 'rgba(16,185,129,0.15)' : 'transparent') + ';color:' + (_hideAssigned ? 'var(--accent)' : '#999') + ';cursor:pointer;margin-left:8px;white-space:nowrap;">' + (_hideAssigned ? 'Показать всех (' + supplierItems.length + ')' : 'Скрыть распред. (' + assignedSupplierCount + ')') + '</button>';
@@ -2718,7 +2899,7 @@
         supplierListHtml += renderOrderItem(order, order.globalIndex);
       });
       if (filteredSuppliers.length === 0) {
-        var reason = _hideAssigned && _hideConfirmed ? 'Все поставщики распределены/подтверждены' : (_hideAssigned ? 'Все поставщики распределены' : (_hideConfirmed ? 'Все подтверждённые скрыты' : 'Нет поставщиков'));
+        var reason = _hideAssigned && _hideConfirmed ? 'Все поставщики распределены/приняты' : (_hideAssigned ? 'Все поставщики распределены' : (_hideConfirmed ? 'Все принятые/забранные скрыты' : 'Нет поставщиков'));
         supplierListHtml += '<div style="padding:12px;color:#888;font-size:12px;text-align:center;">' + reason + '</div>';
       }
       supplierListHtml += '</div></details></div>';
@@ -3067,6 +3248,16 @@
       });
     });
 
+    // Hover on sidebar item -> highlight point on map
+    sidebar.querySelectorAll('.dc-order-item').forEach(function (item) {
+      item.addEventListener('mouseenter', function () {
+        highlightMapOrder(item.dataset.orderId);
+      });
+      item.addEventListener('mouseleave', function () {
+        clearMapOrderHighlight();
+      });
+    });
+
     // Driver color dots — open palette
     sidebar.querySelectorAll('.dc-driver-color-dot').forEach(function (dot) {
       dot.addEventListener('click', function (e) {
@@ -3213,10 +3404,18 @@
         cancelOneFromTelegram(btn.dataset.id);
       });
     });
+
+    // Send items update button
+    sidebar.querySelectorAll('.dc-send-items-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        sendItemsToDriver(btn.dataset.id);
+      });
+    });
   }
 
   // ─── Init on tab switch ───────────────────────────────────
   async function onSectionActivated() {
+    loadSupplierAliases();
     // Load drivers and suppliers from DB
     await Promise.all([loadDbDrivers(), loadDbSuppliers()]);
     // Apply custom driver colors

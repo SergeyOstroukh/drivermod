@@ -2298,6 +2298,10 @@
 				renderDistributedSuppliers();
 			});
 		}
+		const distributedExportBtn = document.getElementById("distributedExportBtn");
+		if (distributedExportBtn) {
+			distributedExportBtn.addEventListener("click", downloadDistributedSuppliersCsv);
+		}
 
 		// Восстановление сессии при загрузке страницы
 		restoreSession();
@@ -3077,6 +3081,113 @@
 	let _distributedFilterDriverId = '';
 	let _distributedFilterStatus = '';
 
+	function getDistributedRowsData() {
+		if (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers) {
+			return { allSuppliers: [], allDrivers: [], rows: [] };
+		}
+
+		const allSuppliers = window.DistributionUI.getDistributedSuppliers();
+		const allDrivers = window.DistributionUI.getDistributionDrivers();
+		let rows = allSuppliers.slice();
+
+		// Filter by driver
+		const filterId = _distributedFilterDriverId;
+		if (filterId) {
+			rows = rows.filter(function (r) { return String(r.driverId) === String(filterId); });
+		}
+
+		// Filter by status
+		if (_distributedFilterStatus === 'completed') {
+			rows = rows.filter(function (r) { return r.telegramStatus === 'picked_up'; });
+		} else if (_distributedFilterStatus === 'pending') {
+			rows = rows.filter(function (r) { return r.telegramStatus !== 'picked_up'; });
+		}
+
+		// Sort: picked_up last, then by driver name, then by supplier name
+		rows.sort(function (a, b) {
+			var pa = a.telegramStatus === 'picked_up' ? 1 : 0;
+			var pb = b.telegramStatus === 'picked_up' ? 1 : 0;
+			if (pa !== pb) return pa - pb;
+			const da = (a.driverName || 'яяя').toLowerCase();
+			const db = (b.driverName || 'яяя').toLowerCase();
+			if (da < db) return -1;
+			if (da > db) return 1;
+			return (a.supplierName || '').localeCompare(b.supplierName || '', 'ru');
+		});
+
+		return { allSuppliers: allSuppliers, allDrivers: allDrivers, rows: rows };
+	}
+
+	function getDistributedStatusLabel(row) {
+		if (row.telegramStatus === 'picked_up') return 'Забрал';
+		if (row.telegramStatus === 'confirmed') return 'Принял';
+		if (row.telegramStatus === 'rejected') return 'Отклонил';
+		if (row.telegramSent) return 'Ждём';
+		if (row.driverId) return '—';
+		return 'Не назначен';
+	}
+
+	function getDistributedItemsText(row) {
+		var itemsText = row.items1c || '';
+		if (!itemsText && window.DistributionUI.getSupplierItems) {
+			var found = window.DistributionUI.getSupplierItems(row.supplierName || row.address);
+			if (found && found.length) itemsText = found.join('\n');
+		}
+		return itemsText;
+	}
+
+	function csvEscape(value) {
+		var str = value == null ? '' : String(value);
+		if (str.indexOf('"') !== -1) str = str.replace(/"/g, '""');
+		return '"' + str + '"';
+	}
+
+	function downloadDistributedSuppliersCsv() {
+		if (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers) {
+			alert("Откройте раздел «Распределение» и загрузите поставщиков");
+			return;
+		}
+
+		const data = getDistributedRowsData();
+		if (data.rows.length === 0) {
+			alert("Нет данных для экспорта по текущему фильтру");
+			return;
+		}
+
+		const lines = [];
+		lines.push([
+			"№",
+			"Поставщик",
+			"Товар",
+			"Водитель",
+			"Статус",
+			"Время"
+		].map(csvEscape).join(";"));
+
+		data.rows.forEach(function (row, idx) {
+			lines.push([
+				idx + 1,
+				row.supplierName || row.address || '',
+				getDistributedItemsText(row),
+				row.driverName || '',
+				getDistributedStatusLabel(row),
+				row.timeSlot || ''
+			].map(csvEscape).join(";"));
+		});
+
+		const csvContent = '\uFEFF' + lines.join('\r\n');
+		const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+		const link = document.createElement("a");
+		const url = URL.createObjectURL(blob);
+		const date = new Date().toISOString().slice(0, 10);
+		link.setAttribute("href", url);
+		link.setAttribute("download", "distributed-suppliers-" + date + ".csv");
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+		URL.revokeObjectURL(url);
+	}
+
 	function openDistributedSuppliers() {
 		const section = document.getElementById("distributedSuppliersSection");
 		const driversSection = document.getElementById("driversSection");
@@ -3115,8 +3226,10 @@
 			return;
 		}
 
-		const allSuppliers = window.DistributionUI.getDistributedSuppliers();
-		const allDrivers = window.DistributionUI.getDistributionDrivers();
+		const data = getDistributedRowsData();
+		const allSuppliers = data.allSuppliers;
+		const allDrivers = data.allDrivers;
+		let rows = data.rows;
 
 		// Update driver filter dropdown (preserve selection)
 		if (filterSelect) {
@@ -3130,32 +3243,6 @@
 				filterSelect.appendChild(opt);
 			});
 		}
-
-		// Filter by driver
-		const filterId = _distributedFilterDriverId;
-		let rows = allSuppliers;
-		if (filterId) {
-			rows = rows.filter(function (r) { return String(r.driverId) === String(filterId); });
-		}
-
-		// Filter by status
-		if (_distributedFilterStatus === 'completed') {
-			rows = rows.filter(function (r) { return r.telegramStatus === 'picked_up'; });
-		} else if (_distributedFilterStatus === 'pending') {
-			rows = rows.filter(function (r) { return r.telegramStatus !== 'picked_up'; });
-		}
-
-		// Sort: picked_up last, then by driver name, then by supplier name
-		rows.sort(function (a, b) {
-			var pa = a.telegramStatus === 'picked_up' ? 1 : 0;
-			var pb = b.telegramStatus === 'picked_up' ? 1 : 0;
-			if (pa !== pb) return pa - pb;
-			const da = (a.driverName || 'яяя').toLowerCase();
-			const db = (b.driverName || 'яяя').toLowerCase();
-			if (da < db) return -1;
-			if (da > db) return 1;
-			return (a.supplierName || '').localeCompare(b.supplierName || '', 'ru');
-		});
 
 		// Stats
 		var totalCount = allSuppliers.length;
@@ -3226,11 +3313,7 @@
 			if (!row.timeSlot) tdTime.style.color = 'var(--muted)';
 
 			const tdItems = document.createElement('td');
-			var itemsText = row.items1c || '';
-			if (!itemsText && window.DistributionUI.getSupplierItems) {
-				var found = window.DistributionUI.getSupplierItems(row.supplierName || row.address);
-				if (found && found.length) itemsText = found.join('\n');
-			}
+			var itemsText = getDistributedItemsText(row);
 			if (itemsText) {
 				tdItems.style.fontSize = '11px';
 				tdItems.style.whiteSpace = 'pre-line';
