@@ -2333,6 +2333,9 @@
 
   // ─── Telegram confirmations ──────────────────────────────
   var _tgPollTimer = null;
+  var _processedCallbacks = JSON.parse(localStorage.getItem('dc_tg_processed_cbs') || '[]');
+  var _webhookDeleted = false;
+  var _tgUpdateOffset = parseInt(localStorage.getItem('dc_tg_update_offset') || '0', 10);
 
   function getSupabaseClient() {
     var config = window.SUPABASE_CONFIG || {};
@@ -2359,10 +2362,27 @@
     } catch (e) { /* table may not exist yet — ok */ }
   }
 
-  // Check confirmations via Supabase table updated by webhook
+  // Ensure webhook is deleted so getUpdates works
+  async function ensureNoWebhook(botToken) {
+    if (_webhookDeleted) return;
+    try {
+      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/deleteWebhook?drop_pending_updates=false');
+      var data = await resp.json();
+      if (data.ok) {
+        _webhookDeleted = true;
+        console.log('Telegram webhook deleted, getUpdates enabled');
+      } else {
+        console.warn('deleteWebhook failed:', data.description);
+      }
+    } catch (e) {
+      console.warn('deleteWebhook error:', e);
+    }
+  }
+
+  // Check confirmations via direct Telegram getUpdates
   async function checkTelegramConfirmations(silent) {
-    var client = getSupabaseClient();
-    if (!client) { if (!silent) showToast('Supabase не настроен', 'error'); return; }
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+    if (!botToken) { if (!silent) showToast('Telegram бот не настроен', 'error'); return; }
 
     // Collect pending order IDs (sent = waiting for accept, confirmed = waiting for pickup)
     var pendingIds = [];
@@ -2376,43 +2396,120 @@
       return;
     }
 
+    // Delete webhook first (one-time) so getUpdates works
+    await ensureNoWebhook(botToken);
+
     var processed = 0;
     try {
-      var resp = await client
-        .from('telegram_confirmations')
-        .select('order_id, status, updated_at')
-        .in('order_id', pendingIds)
-        .order('updated_at', { ascending: false });
+      var getUrl = 'https://api.telegram.org/bot' + botToken + '/getUpdates?timeout=0&limit=100';
+      if (_tgUpdateOffset > 0) getUrl += '&offset=' + _tgUpdateOffset;
+      var tgResp = await fetch(getUrl);
+      var tgData = await tgResp.json();
 
-      if (resp.error) {
-        if (!silent) showToast('Ошибка Supabase: ' + (resp.error.message || 'unknown'), 'error');
-        console.error('telegram_confirmations query error:', resp.error);
+      if (!tgData.ok) {
+        if (!silent) showToast('Telegram ошибка: ' + (tgData.description || 'unknown'), 'error');
+        console.error('getUpdates error:', tgData);
         return;
       }
 
-      var rows = resp.data || [];
-      var latestByOrder = {};
-      for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
-        if (!row || !row.order_id || !row.status) continue;
-        if (!latestByOrder[row.order_id]) latestByOrder[row.order_id] = row.status;
-      }
+      var results = tgData.result || [];
+      var callbackCount = 0;
+      var maxUpdateId = _tgUpdateOffset;
 
-      Object.keys(latestByOrder).forEach(function (orderId) {
-        var nextStatus = latestByOrder[orderId];
+      for (var i = 0; i < results.length; i++) {
+        var update = results[i];
+
+        // Track max update_id to advance offset
+        if (update.update_id >= maxUpdateId) {
+          maxUpdateId = update.update_id + 1;
+        }
+
+        if (!update.callback_query) continue;
+        callbackCount++;
+
+        var cbId = update.callback_query.id;
+        if (_processedCallbacks.indexOf(cbId) !== -1) continue;
+
+        var cbParts = (update.callback_query.data || '').split(':');
+        if (cbParts.length < 2) { _processedCallbacks.push(cbId); continue; }
+        var action = cbParts[0];
+        var orderId = cbParts.slice(1).join(':');
+
+        // Find matching order
         var order = orders.find(function (o) { return o.id === orderId; });
-        if (!order) return;
-        if (order.telegramStatus !== nextStatus) {
-          order.telegramStatus = nextStatus;
+        if (order && (action === 'accept' || action === 'reject' || action === 'pickup')) {
+          if (action === 'accept') order.telegramStatus = 'confirmed';
+          else if (action === 'reject') order.telegramStatus = 'rejected';
+          else if (action === 'pickup') order.telegramStatus = 'picked_up';
           processed++;
         }
-      });
+
+        // Answer callback
+        var answerText = action === 'accept' ? 'Принято ✅' : action === 'pickup' ? '📦 Забрал!' : 'Отклонено ❌';
+        try {
+          await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: cbId, text: answerText }),
+          });
+        } catch (e) { /* ignore */ }
+
+        // Update inline buttons
+        if (update.callback_query.message) {
+          var chatId = update.callback_query.message.chat.id;
+          var msgId = update.callback_query.message.message_id;
+          try {
+            if (action === 'accept') {
+              // Replace with "Забрал" button
+              await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [[{ text: '📦 Забрал', callback_data: 'pickup:' + orderId }]] } }),
+              });
+              await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, text: '✅ Принято\nНажмите «📦 Забрал» когда заберёте товар', reply_to_message_id: msgId }),
+              });
+            } else {
+              // Pickup or reject: remove all buttons
+              await fetch('https://api.telegram.org/bot' + botToken + '/editMessageReplyMarkup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, message_id: msgId, reply_markup: { inline_keyboard: [] } }),
+              });
+              await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, text: action === 'pickup' ? '📦 Забрал' : '❌ Отклонено', reply_to_message_id: msgId }),
+              });
+            }
+          } catch (e) {
+            console.warn('editMessageReplyMarkup error:', e);
+          }
+        }
+
+        _processedCallbacks.push(cbId);
+      }
+
+      // Save offset so we don't re-fetch old updates
+      if (maxUpdateId > _tgUpdateOffset) {
+        _tgUpdateOffset = maxUpdateId;
+        localStorage.setItem('dc_tg_update_offset', String(_tgUpdateOffset));
+      }
+
+      // Persist processed IDs
+      if (_processedCallbacks.length > 500) _processedCallbacks = _processedCallbacks.slice(-500);
+      localStorage.setItem('dc_tg_processed_cbs', JSON.stringify(_processedCallbacks));
 
       if (processed > 0) {
         showToast('✅ Обновлено ответов: ' + processed);
         renderAll();
       } else {
-        if (!silent) showToast('Нет новых ответов');
+        if (!silent) {
+          var detail = 'Всего апдейтов: ' + results.length + ', callback_query: ' + callbackCount + ', уже обработано: ' + _processedCallbacks.length;
+          showToast('Нет новых ответов. ' + detail);
+        }
       }
     } catch (err) {
       if (!silent) showToast('Ошибка: ' + err.message, 'error');
@@ -3116,6 +3213,12 @@
     if (telegramBtn) telegramBtn.addEventListener('click', sendToTelegram);
     const checkTgBtn = sidebar.querySelector('.dc-btn-check-tg');
     if (checkTgBtn) checkTgBtn.addEventListener('click', function () {
+      // Clear processed cache on manual click to re-scan all callbacks
+      _processedCallbacks = [];
+      _tgUpdateOffset = 0;
+      localStorage.removeItem('dc_tg_processed_cbs');
+      localStorage.removeItem('dc_tg_update_offset');
+      _webhookDeleted = false;
       checkTelegramConfirmations(false);
     });
 

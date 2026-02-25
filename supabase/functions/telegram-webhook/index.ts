@@ -11,54 +11,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
-function getStatusTitle(action: string): string {
-  if (action === "accept") return "✅ Принято";
-  if (action === "pickup") return "📦 Забрал";
-  if (action === "reject") return "❌ Отклонено";
-  return "";
-}
-
-function escapeHtml(text: string): string {
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function getMapUrlFromEntities(message: any): string | null {
-  const entities = message?.entities || [];
-  const text = message?.text || "";
-  for (const e of entities) {
-    if (e?.type === "text_link" && e?.url) return e.url;
-    if (e?.type === "url" && typeof e.offset === "number" && typeof e.length === "number") {
-      const rawUrl = text.slice(e.offset, e.offset + e.length).trim();
-      if (rawUrl) return rawUrl;
-    }
-  }
-  return null;
-}
-
-function buildUpdatedMessage(currentText: string, action: string, mapUrl?: string | null): string {
-  let base = (currentText || "")
-    .trim()
-    .replace(/^(?:✅ Принято|📦 Забрал|❌ Отклонено)(?:\s+—[^\n]*)?\n+/u, "");
-
-  if (mapUrl) {
-    const escapedUrl = escapeHtml(mapUrl);
-    if (base.includes("🗺 Карта")) {
-      base = base.replace("🗺 Карта", `🗺 <a href="${escapedUrl}">Карта</a>`);
-    } else {
-      base += `\n🗺 <a href="${escapedUrl}">Карта</a>`;
-    }
-  } else {
-    base = escapeHtml(base);
-  }
-
-  const title = getStatusTitle(action);
-  return title ? `${title}\n${base}` : base;
-}
-
 serve(async (req) => {
   // Only accept POST
   if (req.method !== "POST") {
@@ -117,26 +69,71 @@ serve(async (req) => {
         }),
       });
 
-      // 2. Update one existing message: status line + buttons (no extra messages)
+      // 2. Update inline buttons based on action
       if (chatId && messageId) {
-        const currentText = cb.message?.text || "";
-        const mapUrl = getMapUrlFromEntities(cb.message);
-        const updatedText = buildUpdatedMessage(currentText, action, mapUrl);
-        const replyMarkup = action === "accept"
-          ? { inline_keyboard: [[{ text: "📦 Забрал", callback_data: "pickup:" + orderId }]] }
-          : { inline_keyboard: [] };
-
-        await fetch(`https://api.telegram.org/bot${botToken}/editMessageText`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            message_id: messageId,
-            text: updatedText,
-            parse_mode: "HTML",
-            reply_markup: replyMarkup,
-          }),
-        });
+        if (action === "accept") {
+          // Replace with "Забрал" button
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: messageId,
+              reply_markup: {
+                inline_keyboard: [[{ text: "📦 Забрал", callback_data: "pickup:" + orderId }]],
+              },
+            }),
+          });
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "✅ Принято — " + driverName + "\nНажмите «📦 Забрал» когда заберёте товар",
+              reply_to_message_id: messageId,
+            }),
+          });
+        } else if (action === "pickup") {
+          // Remove all buttons
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: messageId,
+              reply_markup: { inline_keyboard: [] },
+            }),
+          });
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "📦 Забрал — " + driverName,
+              reply_to_message_id: messageId,
+            }),
+          });
+        } else {
+          // Reject: remove buttons
+          await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              message_id: messageId,
+              reply_markup: { inline_keyboard: [] },
+            }),
+          });
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: "❌ Отклонено — " + driverName,
+              reply_to_message_id: messageId,
+            }),
+          });
+        }
       }
 
       // 3. Save confirmation to database
