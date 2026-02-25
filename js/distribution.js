@@ -47,6 +47,8 @@
   // Hide assigned toggle
   let _hideAssigned = false;
   let _hideConfirmed = false;
+  // Supplier telegram filter: all | sent | unsent
+  let _supplierTelegramFilter = 'all';
   // Custom driver colors
   let driverCustomColors = {};
   const DRIVER_COLORS_KEY = 'dc_driver_colors';
@@ -132,6 +134,50 @@
     return _supplierOrdersCache[key] || [];
   }
 
+  function dateKeyLocal(d) {
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  async function clearSupplierItemsForOrder(order) {
+    if (!order || !order.isSupplier) return;
+    var client = getSupabaseClient();
+    if (!client) return;
+    var today = dateKeyLocal(new Date());
+    var candidates = [];
+    [order.sourceSupplierName, order.supplierName, order.address, order.supplierData && order.supplierData.name].forEach(function (n) {
+      if (!n) return;
+      var c = compactName(n);
+      if (!c) return;
+      if (candidates.indexOf(c) === -1) candidates.push(c);
+    });
+    if (candidates.length === 0) return;
+
+    try {
+      var resp = await client
+        .from('supplier_orders')
+        .select('id, supplier_name')
+        .eq('order_date', today);
+      if (resp.error) {
+        console.warn('supplier_orders select error:', resp.error);
+        return;
+      }
+      var ids = (resp.data || [])
+        .filter(function (row) { return candidates.indexOf(compactName(row.supplier_name || '')) !== -1; })
+        .map(function (row) { return row.id; });
+      if (ids.length === 0) return;
+      var delResp = await client
+        .from('supplier_orders')
+        .delete()
+        .in('id', ids);
+      if (delResp.error) console.warn('supplier_orders delete error:', delResp.error);
+    } catch (e) {
+      console.warn('clearSupplierItemsForOrder error:', e);
+    }
+  }
+
   // Refresh items from DB + update orders that now have items
   async function refreshSupplierItems() {
     var prevCache = JSON.stringify(_supplierOrdersCache);
@@ -139,6 +185,7 @@
     if (JSON.stringify(_supplierOrdersCache) === prevCache) return;
 
     var updated = false;
+    var autoSendOrderIds = [];
     orders.forEach(function (order) {
       if (!order.isSupplier) return;
       var items = getSupplierItems(order.supplierName || order.address);
@@ -146,11 +193,27 @@
       var newItems = items.length > 0 ? items.join('\n') : null;
       if (newItems && newItems !== order.items1c) {
         order.items1c = newItems;
+        if (order.telegramSent) {
+          // Mark as unsent when items changed after telegram send
+          order.itemsSent = order.itemsSentText === newItems;
+          // Auto-send refreshed items for active supplier statuses
+          if (!order.itemsSent && order.telegramChatId && (order.telegramStatus === 'sent' || order.telegramStatus === 'confirmed')) {
+            autoSendOrderIds.push(order.id);
+          }
+        }
         updated = true;
       }
     });
     if (updated) {
       renderAll();
+    }
+    // Auto-send new 1C items (no toast spam) for suppliers already sent to Telegram
+    for (var i = 0; i < autoSendOrderIds.length; i++) {
+      try {
+        await sendItemsToDriver(autoSendOrderIds[i], { silent: true, auto: true, skipRefresh: true });
+      } catch (e) {
+        console.warn('auto send items error:', e);
+      }
     }
   }
 
@@ -1310,10 +1373,13 @@
     // Persist manual mapping so next load can auto-match this input
     rememberSupplierAlias(order.sourceSupplierName || order.supplierName || order.address, supplier);
 
+    var keepUserName = order.sourceSupplierName || order.supplierName || order.address || supplier.name;
+
     order.supplierDbId = supplier.id;
     order.supplierData = supplier;
-    order.supplierName = supplier.name;
-    order.address = supplier.name;
+    // Keep supplier display name as originally pasted from 1C/manual input
+    order.supplierName = keepUserName;
+    order.address = keepUserName;
     if (supplier.lat && supplier.lon) {
       order.lat = supplier.lat;
       order.lng = supplier.lon;
@@ -1507,10 +1573,11 @@
       var supplier = findSupplierInDb(addr);
       if (supplier && supplier.lat && supplier.lon) {
         rememberSupplierAlias(addr, supplier);
+        var displayName = (order.sourceSupplierName || order.supplierName || addr || order.address || supplier.name);
         orders = orders.map(function (o) {
           if (o.id !== orderId) return o;
           return Object.assign({}, o, {
-            address: supplier.name,
+            address: displayName,
             lat: supplier.lat,
             lng: supplier.lon,
             formattedAddress: supplier.address || (supplier.lat + ', ' + supplier.lon),
@@ -1518,7 +1585,7 @@
             error: null,
             isSupplier: true,
             supplierDbId: supplier.id,
-            supplierName: supplier.name,
+            supplierName: displayName,
             supplierData: supplier,
           });
         });
@@ -1528,6 +1595,7 @@
         return;
       } else if (supplier && (!supplier.lat || !supplier.lon)) {
         rememberSupplierAlias(addr, supplier);
+        var displayNameNoCoords = (order.sourceSupplierName || order.supplierName || addr || order.address || supplier.name);
         // Found in DB but no coordinates — try geocoding the DB address
         var geoAddr = supplier.address || addr;
         try {
@@ -1535,7 +1603,7 @@
           orders = orders.map(function (o) {
             if (o.id !== orderId) return o;
             return Object.assign({}, o, {
-              address: supplier.name,
+              address: displayNameNoCoords,
               lat: geo.lat,
               lng: geo.lng,
               formattedAddress: geo.formattedAddress,
@@ -1543,7 +1611,7 @@
               error: null,
               isSupplier: true,
               supplierDbId: supplier.id,
-              supplierName: supplier.name,
+              supplierName: displayNameNoCoords,
               supplierData: supplier,
             });
           });
@@ -1555,9 +1623,9 @@
           orders = orders.map(function (o) {
             if (o.id !== orderId) return o;
             return Object.assign({}, o, {
-              address: supplier.name,
+              address: displayNameNoCoords,
               supplierDbId: supplier.id,
-              supplierName: supplier.name,
+              supplierName: displayNameNoCoords,
               supplierData: supplier,
               error: 'Нет координат — поставьте точку на карте',
             });
@@ -2196,6 +2264,8 @@
             supplierOrder.telegramStatus = 'sent';
             supplierOrder.telegramMessageId = data.result.message_id;
             supplierOrder.telegramChatId = driver.telegram_chat_id;
+            supplierOrder.itemsSent = !!supplierOrder.items1c;
+            supplierOrder.itemsSentText = supplierOrder.items1c || null;
             saveTelegramConfirmation(supplierOrder.id, driver.telegram_chat_id, data.result.message_id, driver.name, supplierOrder.address);
           } else {
             messagesFailed++;
@@ -2274,6 +2344,8 @@
         order.telegramStatus = 'sent';
         order.telegramMessageId = data.result.message_id;
         order.telegramChatId = driver.telegram_chat_id;
+        order.itemsSent = !!order.items1c;
+        order.itemsSentText = order.items1c || null;
         // Save to Supabase for webhook tracking
         saveTelegramConfirmation(order.id, driver.telegram_chat_id, data.result.message_id, driver.name, order.address);
         showToast('Отправлено в Telegram: ' + order.address);
@@ -2288,21 +2360,22 @@
   }
 
   // ─── Send items update to driver (when items arrived after initial send) ──
-  async function sendItemsToDriver(orderId) {
+  async function sendItemsToDriver(orderId, opts) {
+    opts = opts || {};
     var botToken = window.TELEGRAM_BOT_TOKEN;
-    if (!botToken) { showToast('Telegram бот не настроен', 'error'); return; }
+    if (!botToken) { if (!opts.silent) showToast('Telegram бот не настроен', 'error'); return; }
 
     var order = orders.find(function (o) { return o.id === orderId; });
-    if (!order || !order.telegramChatId) { showToast('Поставщик не был отправлен в Telegram', 'error'); return; }
+    if (!order || !order.telegramChatId) { if (!opts.silent) showToast('Поставщик не был отправлен в Telegram', 'error'); return; }
 
-    await refreshSupplierItems();
+    if (!opts.skipRefresh) await refreshSupplierItems();
     var items = order.items1c;
     if (!items) {
       var found = getSupplierItems(order.supplierName || order.address);
       if (!found.length && order.supplierData) found = getSupplierItems(order.supplierData.name);
       items = found.length > 0 ? found.join('\n') : null;
     }
-    if (!items) { showToast('Товар от 1С ещё не поступил', 'error'); return; }
+    if (!items) { if (!opts.silent) showToast('Товар от 1С ещё не поступил', 'error'); return; }
 
     var msg = '📋 <b>Товар для ' + escapeHtml(order.address) + ':</b>\n' + escapeHtml(items);
 
@@ -2321,13 +2394,14 @@
       if (data.ok) {
         order.items1c = items;
         order.itemsSent = true;
-        showToast('Товар отправлен водителю: ' + order.address);
+        order.itemsSentText = items;
+        if (!opts.silent) showToast(opts.auto ? 'Товар автоматически отправлен: ' + order.address : 'Товар отправлен водителю: ' + order.address);
         renderAll();
       } else {
-        showToast('Ошибка: ' + (data.description || '?'), 'error');
+        if (!opts.silent) showToast('Ошибка: ' + (data.description || '?'), 'error');
       }
     } catch (err) {
-      showToast('Ошибка отправки: ' + err.message, 'error');
+      if (!opts.silent) showToast('Ошибка отправки: ' + err.message, 'error');
     }
   }
 
@@ -2434,6 +2508,12 @@
         if (cbParts.length < 2) { _processedCallbacks.push(cbId); continue; }
         var action = cbParts[0];
         var orderId = cbParts.slice(1).join(':');
+        var messageDateTs = update.callback_query && update.callback_query.message ? update.callback_query.message.date : null;
+        if (messageDateTs) {
+          var msgDate = dateKeyLocal(new Date(messageDateTs * 1000));
+          var todayLocal = dateKeyLocal(new Date());
+          if (msgDate !== todayLocal) { _processedCallbacks.push(cbId); continue; }
+        }
 
         // Find matching order
         var order = orders.find(function (o) { return o.id === orderId; });
@@ -2576,6 +2656,8 @@
     order.telegramStatus = null;
     order.telegramMessageId = null;
     order.telegramChatId = null;
+    order.itemsSent = false;
+    order.itemsSentText = null;
     order.assignedDriverId = null;
     if (assignments && assignments[orderIdx] >= 0) {
       assignments[orderIdx] = -1;
@@ -2669,13 +2751,19 @@
     } else if (order.isSupplier && !order.supplierDbId) {
       html += '<div class="dc-supplier-not-found" data-id="' + order.id + '" style="font-size:10px;color:#ef4444;margin-top:1px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;" title="Нажмите чтобы найти в базе">🔍 Не найден — нажмите для поиска</div>';
     }
-    if (order.items1c) {
-      html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;white-space:pre-line;">📋 ' + escapeHtml(order.items1c) + '</div>';
-      if (order.telegramSent && !order.itemsSent) {
+    if (order.telegramSent) {
+      if (!order.items1c) {
+        html += '<div style="font-size:10px;color:var(--muted);margin-top:2px;">⏳ Товар от 1С ещё не поступил</div>';
+      } else if (order.itemsSentText && order.itemsSentText === order.items1c) {
+        html += '<div style="font-size:10px;color:#22c55e;margin-top:2px;">📋 Список товара отправлен</div>';
+      } else {
+        html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;">📋 Товар из 1С загружен</div>';
         html += '<button class="btn btn-outline btn-sm dc-send-items-btn" data-id="' + order.id + '" style="font-size:9px;color:#a78bfa;border-color:#a78bfa;margin-top:2px;padding:1px 6px;" title="Дослать товар водителю в Telegram">📋 Дослать товар</button>';
       }
-    } else if (order.telegramSent) {
+    } else if (!order.items1c) {
       html += '<div style="font-size:10px;color:var(--muted);margin-top:2px;">⏳ Товар от 1С ещё не поступил</div>';
+    } else {
+      html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;">📋 Товар из 1С загружен</div>';
     }
     // Inline driver assignment — directly from DB drivers list
     var driverDisplayName = driverId ? getDriverNameById(driverId) : (hasSlot ? getDriverName(slotIdx) : null);
@@ -2897,22 +2985,32 @@
     if (_hideConfirmed) {
       filteredSuppliers = filteredSuppliers.filter(function (o) { return o.telegramStatus !== 'confirmed' && o.telegramStatus !== 'picked_up'; });
     }
+    if (_supplierTelegramFilter === 'sent') {
+      filteredSuppliers = filteredSuppliers.filter(function (o) { return !!o.telegramSent; });
+    } else if (_supplierTelegramFilter === 'unsent') {
+      filteredSuppliers = filteredSuppliers.filter(function (o) { return !o.telegramSent; });
+    }
     var assignedSupplierCount = supplierItems.filter(function (o) { return !!getOrderDriverId(o.globalIndex); }).length;
     var confirmedSupplierCount = supplierItems.filter(function (o) { return o.telegramStatus === 'confirmed' || o.telegramStatus === 'picked_up'; }).length;
+    var sentSupplierCount = supplierItems.filter(function (o) { return !!o.telegramSent; }).length;
+    var unsentSupplierCount = supplierItems.length - sentSupplierCount;
     var supplierListHtml = '';
     if (supplierItems.length > 0) {
       var toggleBtnHtml = '<button class="dc-toggle-assigned" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_hideAssigned ? 'var(--accent)' : '#555') + ';background:' + (_hideAssigned ? 'rgba(16,185,129,0.15)' : 'transparent') + ';color:' + (_hideAssigned ? 'var(--accent)' : '#999') + ';cursor:pointer;margin-left:8px;white-space:nowrap;">' + (_hideAssigned ? 'Показать всех (' + supplierItems.length + ')' : 'Скрыть распред. (' + assignedSupplierCount + ')') + '</button>';
       var confirmToggleHtml = confirmedSupplierCount > 0
         ? '<button class="dc-toggle-confirmed" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_hideConfirmed ? '#22c55e' : '#555') + ';background:' + (_hideConfirmed ? 'rgba(34,197,94,0.15)' : 'transparent') + ';color:' + (_hideConfirmed ? '#22c55e' : '#999') + ';cursor:pointer;margin-left:4px;white-space:nowrap;">' + (_hideConfirmed ? 'Показать ✅ (' + confirmedSupplierCount + ')' : 'Скрыть ✅ (' + confirmedSupplierCount + ')') + '</button>'
         : '';
+      var tgFilterAllHtml = '<button class="dc-filter-tg-all" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_supplierTelegramFilter === 'all' ? '#3b82f6' : '#555') + ';background:' + (_supplierTelegramFilter === 'all' ? 'rgba(59,130,246,0.15)' : 'transparent') + ';color:' + (_supplierTelegramFilter === 'all' ? '#93c5fd' : '#999') + ';cursor:pointer;margin-left:4px;white-space:nowrap;">TG все (' + supplierItems.length + ')</button>';
+      var tgFilterSentHtml = '<button class="dc-filter-tg-sent" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_supplierTelegramFilter === 'sent' ? '#229ED9' : '#555') + ';background:' + (_supplierTelegramFilter === 'sent' ? 'rgba(34,158,217,0.15)' : 'transparent') + ';color:' + (_supplierTelegramFilter === 'sent' ? '#7dd3fc' : '#999') + ';cursor:pointer;margin-left:4px;white-space:nowrap;">Отправлены (' + sentSupplierCount + ')</button>';
+      var tgFilterUnsentHtml = '<button class="dc-filter-tg-unsent" style="font-size:10px;padding:2px 8px;border-radius:6px;border:1px solid ' + (_supplierTelegramFilter === 'unsent' ? '#f59e0b' : '#555') + ';background:' + (_supplierTelegramFilter === 'unsent' ? 'rgba(245,158,11,0.15)' : 'transparent') + ';color:' + (_supplierTelegramFilter === 'unsent' ? '#fcd34d' : '#999') + ';cursor:pointer;margin-left:4px;white-space:nowrap;">Не отправлены (' + unsentSupplierCount + ')</button>';
       supplierListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-suppliers"' + (_supplierListOpen ? ' open' : '') + '>' +
-        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">Поставщики <span style="font-weight:400;color:#888;">(' + filteredSuppliers.length + ')</span>' + toggleBtnHtml + confirmToggleHtml + '</summary>' +
+        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;display:flex;align-items:center;flex-wrap:wrap;gap:4px;">Поставщики <span style="font-weight:400;color:#888;">(' + filteredSuppliers.length + ')</span>' + toggleBtnHtml + confirmToggleHtml + tgFilterAllHtml + tgFilterSentHtml + tgFilterUnsentHtml + '</summary>' +
         '<div class="dc-orders-list">';
       filteredSuppliers.forEach(function (order) {
         supplierListHtml += renderOrderItem(order, order.globalIndex);
       });
       if (filteredSuppliers.length === 0) {
-        var reason = _hideAssigned && _hideConfirmed ? 'Все поставщики распределены/приняты' : (_hideAssigned ? 'Все поставщики распределены' : (_hideConfirmed ? 'Все принятые/забранные скрыты' : 'Нет поставщиков'));
+        var reason = _hideAssigned && _hideConfirmed ? 'Все поставщики распределены/приняты' : (_hideAssigned ? 'Все поставщики распределены' : (_hideConfirmed ? 'Все принятые/забранные скрыты' : (_supplierTelegramFilter === 'sent' ? 'Нет отправленных в Telegram' : (_supplierTelegramFilter === 'unsent' ? 'Нет неотправленных в Telegram' : 'Нет поставщиков'))));
         supplierListHtml += '<div style="padding:12px;color:#888;font-size:12px;text-align:center;">' + reason + '</div>';
       }
       supplierListHtml += '</div></details></div>';
@@ -3137,6 +3235,33 @@
         renderAll();
       });
     }
+    var filterTgAllBtn = sidebar.querySelector('.dc-filter-tg-all');
+    if (filterTgAllBtn) {
+      filterTgAllBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _supplierTelegramFilter = 'all';
+        renderAll();
+      });
+    }
+    var filterTgSentBtn = sidebar.querySelector('.dc-filter-tg-sent');
+    if (filterTgSentBtn) {
+      filterTgSentBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _supplierTelegramFilter = 'sent';
+        renderAll();
+      });
+    }
+    var filterTgUnsentBtn = sidebar.querySelector('.dc-filter-tg-unsent');
+    if (filterTgUnsentBtn) {
+      filterTgUnsentBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        _supplierTelegramFilter = 'unsent';
+        renderAll();
+      });
+    }
 
     // Supplier load / append
     const loadSuppliersBtn = sidebar.querySelector('.dc-btn-load-suppliers');
@@ -3300,10 +3425,14 @@
 
     // Delete buttons
     sidebar.querySelectorAll('.dc-del-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', async function () {
         const idx = orders.findIndex(function (o) { return o.id === btn.dataset.id; });
         if (idx === -1) return;
+        var orderToDelete = orders[idx];
         var affectedDriverId = getOrderDriverId(idx);
+        if (orderToDelete && orderToDelete.isSupplier) {
+          await clearSupplierItemsForOrder(orderToDelete);
+        }
         orders.splice(idx, 1);
         if (assignments) {
           assignments.splice(idx, 1);
