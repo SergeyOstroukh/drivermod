@@ -2197,6 +2197,138 @@
     }
   }
 
+  // ─── Finish suppliers only (save as completed trip) ──────
+  function showFinishSuppliersDialog() {
+    var existing = document.getElementById('dcFinishSuppliersModal');
+    if (existing) existing.remove();
+
+    // Count supplier orders per driver (only assigned and geocoded)
+    var driverSupplierCounts = {};
+    orders.forEach(function (o, idx) {
+      if (!o.isSupplier || !o.geocoded || o.isPoi) return;
+      var did = getOrderDriverId(idx);
+      if (!did) return;
+      var key = String(did);
+      if (!driverSupplierCounts[key]) driverSupplierCounts[key] = 0;
+      driverSupplierCounts[key]++;
+    });
+
+    var modal = document.createElement('div');
+    modal.id = 'dcFinishSuppliersModal';
+    modal.className = 'modal is-open';
+    modal.style.cssText = 'z-index:10000;';
+
+    var driverBtns = '';
+    dbDrivers.forEach(function (dr, di) {
+      var count = driverSupplierCounts[String(dr.id)] || 0;
+      if (count === 0) return;
+      var c = COLORS[di % COLORS.length];
+      var label = dr.name.split(' ')[0];
+      driverBtns += '<button class="btn btn-outline dc-finish-sup-driver" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
+        '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
+        '<span style="flex:1;text-align:left;">' + escapeHtml(label) + '</span>' +
+        '<span style="color:#888;font-size:11px;">' + count + ' пост.</span>' +
+        '</button>';
+    });
+
+    if (!driverBtns) {
+      showToast('Нет поставщиков для завершения', 'error');
+      return;
+    }
+
+    var totalSuppliers = 0;
+    Object.keys(driverSupplierCounts).forEach(function (k) { totalSuppliers += driverSupplierCounts[k]; });
+
+    modal.innerHTML = '<div class="modal-content" style="max-width:420px;">' +
+      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Завершить поставщиков</h3>' +
+      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Поставщики будут сохранены как завершённый выезд и убраны с карты. Данные останутся в таблице по дате.</div>' +
+      '<div style="display:flex;flex-direction:column;gap:6px;">' +
+      driverBtns +
+      '<div style="border-top:1px solid #333;margin:4px 0;"></div>' +
+      '<button class="btn btn-outline dc-finish-sup-driver" data-driver-id="__all__" style="color:#10b981;border-color:#10b981;width:100%;">Все водители (' + totalSuppliers + ' пост.)</button>' +
+      '<button class="btn btn-outline dc-finish-sup-cancel" style="margin-top:4px;width:100%;">Отмена</button>' +
+      '</div></div>';
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('.dc-finish-sup-cancel').addEventListener('click', function () { modal.remove(); });
+    modal.querySelectorAll('.dc-finish-sup-driver').forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        modal.remove();
+        var driverId = btn.dataset.driverId;
+        if (driverId === '__all__') {
+          var driverIds = Object.keys(driverSupplierCounts);
+          for (var i = 0; i < driverIds.length; i++) {
+            await finishSupplierRoute(driverIds[i]);
+          }
+        } else {
+          await finishSupplierRoute(driverId);
+        }
+      });
+    });
+  }
+
+  async function finishSupplierRoute(driverId) {
+    var routeDate = new Date().toISOString().split('T')[0];
+    var driverName = getDriverNameById(driverId);
+
+    var supplierPoints = [];
+    var supplierIndicesToRemove = [];
+    orders.forEach(function (order, idx) {
+      if (!order.isSupplier || !order.geocoded || order.isPoi) return;
+      var did = getOrderDriverId(idx);
+      if (!did || String(did) !== String(driverId)) return;
+
+      var pt = {
+        address: order.address,
+        lat: order.lat,
+        lng: order.lng,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        formattedAddress: order.formattedAddress || null,
+        orderNum: supplierPoints.length + 1,
+        isSupplier: true,
+        telegramSent: !!order.telegramSent,
+        telegramStatus: order.telegramStatus || null,
+        items1c: order.items1c || null,
+        itemsSent: !!order.itemsSent,
+        itemsSentText: order.itemsSentText || null,
+      };
+      supplierPoints.push(pt);
+      supplierIndicesToRemove.push(idx);
+    });
+
+    if (supplierPoints.length === 0) {
+      showToast('Нет поставщиков для ' + driverName, 'error');
+      return;
+    }
+
+    try {
+      var savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId, 10), routeDate, supplierPoints);
+      if (savedRoute && savedRoute.id) {
+        await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+      }
+
+      supplierIndicesToRemove.sort(function (a, b) { return b - a; });
+      supplierIndicesToRemove.forEach(function (idx) {
+        orders.splice(idx, 1);
+        if (assignments) assignments.splice(idx, 1);
+      });
+
+      variants = [];
+      activeVariant = -1;
+      _fitBoundsNext = true;
+      renderAll();
+
+      // Rebuild remaining active route (e.g. only addresses left).
+      await syncDriverToDb(String(driverId));
+
+      showToast('Поставщики для ' + driverName + ' завершены (' + supplierPoints.length + ')');
+    } catch (err) {
+      showToast('Ошибка: ' + err.message, 'error');
+    }
+  }
+
   // ─── Send all unsent suppliers to Telegram ─────────────
   async function sendToTelegram() {
     var botToken = window.TELEGRAM_BOT_TOKEN;
@@ -2977,6 +3109,8 @@
         '<button class="btn dc-btn-finish ready">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> ' +
         'Завершить маршрут</button>' +
+        '<button class="btn dc-btn-finish-suppliers" style="background:#10b981;color:#fff;border:none;margin-top:4px;display:flex;align-items:center;gap:6px;">' +
+        '🏁 Завершить поставщиков</button>' +
         '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' +
         'Поставщики → Telegram' + (unsentSupplierCount > 0 ? ' (' + unsentSupplierCount + ')' : ' ✓') + '</button>' +
@@ -3353,6 +3487,8 @@
     // Finish distribution
     const finishBtn = sidebar.querySelector('.dc-btn-finish');
     if (finishBtn) finishBtn.addEventListener('click', showFinishRouteDialog);
+    const finishSuppliersBtn = sidebar.querySelector('.dc-btn-finish-suppliers');
+    if (finishSuppliersBtn) finishSuppliersBtn.addEventListener('click', showFinishSuppliersDialog);
     const telegramBtn = sidebar.querySelector('.dc-btn-telegram');
     if (telegramBtn) telegramBtn.addEventListener('click', sendToTelegram);
     const checkTgBtn = sidebar.querySelector('.dc-btn-check-tg');
