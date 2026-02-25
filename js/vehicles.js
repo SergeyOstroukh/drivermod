@@ -3177,6 +3177,48 @@
 			allSuppliers = [];
 			allDrivers = [];
 		}
+
+		// Keep one factual row per supplier+driver to avoid duplicate entries
+		// when multiple route snapshots/trips were saved during the day.
+		const statusWeight = {
+			'picked_up': 3,
+			'confirmed': 2,
+			'sent': 1,
+			'rejected': 0
+		};
+		const bySupplier = {};
+		allSuppliers.forEach(function (r) {
+			const nameKey = String(r.supplierName || r.address || '').trim().toLowerCase();
+			const driverKey = String(r.driverId || '');
+			const key = nameKey + '|' + driverKey;
+			if (!nameKey) return;
+
+			if (!bySupplier[key]) {
+				bySupplier[key] = { ...r };
+				return;
+			}
+
+			const prev = bySupplier[key];
+			const prevWeight = statusWeight[prev.telegramStatus] != null ? statusWeight[prev.telegramStatus] : -1;
+			const nextWeight = statusWeight[r.telegramStatus] != null ? statusWeight[r.telegramStatus] : -1;
+
+			// Prefer row with stronger status (picked_up > confirmed > sent > rejected > empty).
+			if (nextWeight > prevWeight) {
+				bySupplier[key] = { ...prev, ...r };
+				return;
+			}
+
+			// Same status: enrich missing fields from newer snapshot.
+			if (!prev.items1c && r.items1c) prev.items1c = r.items1c;
+			if (!prev.itemsSentText && r.itemsSentText) prev.itemsSentText = r.itemsSentText;
+			if (!prev.timeSlot && r.timeSlot) prev.timeSlot = r.timeSlot;
+			if (!prev.phone && r.phone) prev.phone = r.phone;
+			if (!prev.driverName && r.driverName) prev.driverName = r.driverName;
+			prev.itemsSent = !!(prev.itemsSent || r.itemsSent);
+			prev.telegramSent = !!(prev.telegramSent || r.telegramSent);
+		});
+
+		allSuppliers = Object.keys(bySupplier).map(function (k) { return bySupplier[k]; });
 		let rows = allSuppliers.slice();
 
 		// Filter by driver
