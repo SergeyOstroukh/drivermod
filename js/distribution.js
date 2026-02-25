@@ -2444,40 +2444,8 @@
           processed++;
         }
 
-        // Answer callback
-        var answerText = action === 'accept' ? 'Принято ✅' : action === 'pickup' ? '📦 Забрал!' : 'Отклонено ❌';
-        try {
-          await fetch('https://api.telegram.org/bot' + botToken + '/answerCallbackQuery', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ callback_query_id: cbId, text: answerText }),
-          });
-        } catch (e) { /* ignore */ }
-
-        // Update one existing message: status line + buttons (no new messages)
-        if (update.callback_query.message) {
-          var chatId = update.callback_query.message.chat.id;
-          var msgId = update.callback_query.message.message_id;
-          var currentText = update.callback_query.message.text || '';
-          var updatedText = buildTelegramUpdatedMessage(currentText, action);
-          var replyMarkup = action === 'accept'
-            ? { inline_keyboard: [[{ text: '📦 Забрал', callback_data: 'pickup:' + orderId }]] }
-            : { inline_keyboard: [] };
-          try {
-            await fetch('https://api.telegram.org/bot' + botToken + '/editMessageText', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                chat_id: chatId,
-                message_id: msgId,
-                text: updatedText,
-                reply_markup: replyMarkup,
-              }),
-            });
-          } catch (e) {
-            console.warn('editMessageText error:', e);
-          }
-        }
+        // Telegram message updates are handled by server webhook.
+        // Client-side polling only synchronizes statuses into the UI.
 
         _processedCallbacks.push(cbId);
       }
@@ -2592,21 +2560,6 @@
       msg += '\n';
     });
     return msg.trim();
-  }
-
-  function getTelegramStatusTitle(action) {
-    if (action === 'accept') return '✅ Принято';
-    if (action === 'pickup') return '📦 Забрал';
-    if (action === 'reject') return '❌ Отклонено';
-    return '';
-  }
-
-  function buildTelegramUpdatedMessage(currentText, action) {
-    var base = String(currentText || '').trim();
-    // Remove previous status header if message was already updated before
-    base = base.replace(/^(?:✅ Принято|📦 Забрал|❌ Отклонено)(?:\s+—[^\n]*)?\n+/u, '');
-    var title = getTelegramStatusTitle(action);
-    return (title ? title + '\n' : '') + base;
   }
 
   function escapeHtml(s) {

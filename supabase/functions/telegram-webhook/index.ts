@@ -18,10 +18,43 @@ function getStatusTitle(action: string): string {
   return "";
 }
 
-function buildUpdatedMessage(currentText: string, action: string): string {
-  const base = (currentText || "")
+function escapeHtml(text: string): string {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function getMapUrlFromEntities(message: any): string | null {
+  const entities = message?.entities || [];
+  const text = message?.text || "";
+  for (const e of entities) {
+    if (e?.type === "text_link" && e?.url) return e.url;
+    if (e?.type === "url" && typeof e.offset === "number" && typeof e.length === "number") {
+      const rawUrl = text.slice(e.offset, e.offset + e.length).trim();
+      if (rawUrl) return rawUrl;
+    }
+  }
+  return null;
+}
+
+function buildUpdatedMessage(currentText: string, action: string, mapUrl?: string | null): string {
+  let base = (currentText || "")
     .trim()
     .replace(/^(?:✅ Принято|📦 Забрал|❌ Отклонено)(?:\s+—[^\n]*)?\n+/u, "");
+
+  if (mapUrl) {
+    const escapedUrl = escapeHtml(mapUrl);
+    if (base.includes("🗺 Карта")) {
+      base = base.replace("🗺 Карта", `🗺 <a href="${escapedUrl}">Карта</a>`);
+    } else {
+      base += `\n🗺 <a href="${escapedUrl}">Карта</a>`;
+    }
+  } else {
+    base = escapeHtml(base);
+  }
+
   const title = getStatusTitle(action);
   return title ? `${title}\n${base}` : base;
 }
@@ -87,7 +120,8 @@ serve(async (req) => {
       // 2. Update one existing message: status line + buttons (no extra messages)
       if (chatId && messageId) {
         const currentText = cb.message?.text || "";
-        const updatedText = buildUpdatedMessage(currentText, action);
+        const mapUrl = getMapUrlFromEntities(cb.message);
+        const updatedText = buildUpdatedMessage(currentText, action, mapUrl);
         const replyMarkup = action === "accept"
           ? { inline_keyboard: [[{ text: "📦 Забрал", callback_data: "pickup:" + orderId }]] }
           : { inline_keyboard: [] };
@@ -99,6 +133,7 @@ serve(async (req) => {
             chat_id: chatId,
             message_id: messageId,
             text: updatedText,
+            parse_mode: "HTML",
             reply_markup: replyMarkup,
           }),
         });
