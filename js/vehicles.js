@@ -2298,6 +2298,16 @@
 				renderDistributedSuppliers();
 			});
 		}
+		const distributedDateFilter = document.getElementById("distributedDateFilter");
+		if (distributedDateFilter) {
+			if (!_distributedFilterDate) _distributedFilterDate = getTodayLocalDateString();
+			distributedDateFilter.value = _distributedFilterDate;
+			distributedDateFilter.addEventListener("change", async function () {
+				_distributedFilterDate = this.value || getTodayLocalDateString();
+				await loadDistributedHistoryForDate(_distributedFilterDate);
+				renderDistributedSuppliers();
+			});
+		}
 		const distributedExportBtn = document.getElementById("distributedExportBtn");
 		if (distributedExportBtn) {
 			distributedExportBtn.addEventListener("click", downloadDistributedSuppliersCsv);
@@ -3080,14 +3090,91 @@
 	let _distributedSectionOpen = false;
 	let _distributedFilterDriverId = '';
 	let _distributedFilterStatus = '';
+	let _distributedFilterDate = '';
+	let _distributedHistoryRows = [];
+	let _distributedHistoryLoading = false;
+	let _distributedHistoryError = '';
+
+	function getTodayLocalDateString() {
+		const now = new Date();
+		const y = now.getFullYear();
+		const m = String(now.getMonth() + 1).padStart(2, '0');
+		const d = String(now.getDate()).padStart(2, '0');
+		return `${y}-${m}-${d}`;
+	}
+
+	async function loadDistributedHistoryForDate(routeDate) {
+		const targetDate = routeDate || getTodayLocalDateString();
+		const today = getTodayLocalDateString();
+		if (targetDate === today) {
+			_distributedHistoryRows = [];
+			_distributedHistoryError = '';
+			_distributedHistoryLoading = false;
+			return;
+		}
+		if (!window.VehiclesDB || !window.VehiclesDB.getRoutesByDate) {
+			_distributedHistoryRows = [];
+			_distributedHistoryError = 'История маршрутов недоступна';
+			_distributedHistoryLoading = false;
+			return;
+		}
+		_distributedHistoryLoading = true;
+		_distributedHistoryError = '';
+		if (_distributedSectionOpen) renderDistributedSuppliers();
+		try {
+			const routes = await window.VehiclesDB.getRoutesByDate(targetDate);
+			const rows = [];
+			(routes || []).forEach(function (route) {
+				const points = Array.isArray(route.points) ? route.points : [];
+				points.forEach(function (pt) {
+					if (!pt || !pt.isSupplier) return;
+					rows.push({
+						address: pt.address || '',
+						supplierName: pt.address || '',
+						driverName: route.driver && route.driver.name ? route.driver.name : null,
+						driverId: route.driver_id || null,
+						timeSlot: pt.timeSlot || '',
+						phone: pt.phone || '',
+						geocoded: true,
+						inDb: true,
+						telegramStatus: pt.telegramStatus || null,
+						telegramSent: !!pt.telegramSent,
+						items1c: pt.items1c || null,
+						itemsSent: !!pt.itemsSent,
+						itemsSentText: pt.itemsSentText || null,
+					});
+				});
+			});
+			_distributedHistoryRows = rows;
+		} catch (err) {
+			console.error('Ошибка загрузки распределённых поставщиков по дате:', err);
+			_distributedHistoryRows = [];
+			_distributedHistoryError = err && err.message ? err.message : 'Ошибка загрузки данных';
+		} finally {
+			_distributedHistoryLoading = false;
+		}
+	}
 
 	function getDistributedRowsData() {
-		if (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers) {
-			return { allSuppliers: [], allDrivers: [], rows: [] };
-		}
+		const selectedDate = _distributedFilterDate || getTodayLocalDateString();
+		const today = getTodayLocalDateString();
 
-		const allSuppliers = window.DistributionUI.getDistributedSuppliers();
-		const allDrivers = window.DistributionUI.getDistributionDrivers();
+		let allSuppliers = [];
+		let allDrivers = [];
+		if (selectedDate === today && window.DistributionUI && window.DistributionUI.getDistributedSuppliers) {
+			allSuppliers = window.DistributionUI.getDistributedSuppliers();
+			allDrivers = window.DistributionUI.getDistributionDrivers();
+		} else {
+			allSuppliers = _distributedHistoryRows.slice();
+			const driverMap = {};
+			allSuppliers.forEach(function (r) {
+				if (!r.driverId || !r.driverName) return;
+				if (!driverMap[String(r.driverId)]) {
+					driverMap[String(r.driverId)] = { id: r.driverId, name: r.driverName };
+				}
+			});
+			allDrivers = Object.keys(driverMap).map(function (k) { return driverMap[k]; });
+		}
 		let rows = allSuppliers.slice();
 
 		// Filter by driver
@@ -3129,7 +3216,7 @@
 
 	function getDistributedItemLists(row) {
 		var lists = [];
-		if (window.DistributionUI.getSupplierItems) {
+		if (window.DistributionUI && window.DistributionUI.getSupplierItems) {
 			var found = window.DistributionUI.getSupplierItems(row.supplierName || row.address);
 			if (found && found.length) {
 				lists = found.filter(function (x) { return !!x; });
@@ -3194,11 +3281,6 @@
 	}
 
 	function downloadDistributedSuppliersCsv() {
-		if (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers) {
-			alert("Откройте раздел «Распределение» и загрузите поставщиков");
-			return;
-		}
-
 		const data = getDistributedRowsData();
 		if (data.rows.length === 0) {
 			alert("Нет данных для экспорта по текущему фильтру");
@@ -3231,7 +3313,7 @@
 		const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
 		const link = document.createElement("a");
 		const url = URL.createObjectURL(blob);
-		const date = new Date().toISOString().slice(0, 10);
+		const date = _distributedFilterDate || getTodayLocalDateString();
 		link.setAttribute("href", url);
 		link.setAttribute("download", "distributed-suppliers-" + date + ".csv");
 		document.body.appendChild(link);
@@ -3249,8 +3331,13 @@
 		section.style.display = "block";
 		section.classList.add("active");
 		_distributedSectionOpen = true;
+		if (!_distributedFilterDate) _distributedFilterDate = getTodayLocalDateString();
+		const distributedDateFilter = document.getElementById("distributedDateFilter");
+		if (distributedDateFilter) distributedDateFilter.value = _distributedFilterDate;
 
-		renderDistributedSuppliers();
+		loadDistributedHistoryForDate(_distributedFilterDate).then(function () {
+			renderDistributedSuppliers();
+		});
 	}
 
 	function closeDistributedSuppliers() {
@@ -3273,8 +3360,18 @@
 		const filterSelect = document.getElementById("distributedDriverFilter");
 		if (!tbody) return;
 
-		if (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers) {
+		const selectedDate = _distributedFilterDate || getTodayLocalDateString();
+		const today = getTodayLocalDateString();
+		if (selectedDate === today && (!window.DistributionUI || !window.DistributionUI.getDistributedSuppliers)) {
 			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">Откройте раздел «Распределение» и загрузите поставщиков</td></tr>';
+			return;
+		}
+		if (_distributedHistoryLoading) {
+			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">Загрузка данных за ' + selectedDate + '...</td></tr>';
+			return;
+		}
+		if (_distributedHistoryError && selectedDate !== today) {
+			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#ef4444;">Ошибка загрузки: ' + _distributedHistoryError + '</td></tr>';
 			return;
 		}
 
@@ -3397,7 +3494,7 @@
 
 	// Real-time: distribution module calls this on every change
 	window._onDistributionChanged = function () {
-		if (_distributedSectionOpen) {
+		if (_distributedSectionOpen && (_distributedFilterDate || getTodayLocalDateString()) === getTodayLocalDateString()) {
 			renderDistributedSuppliers();
 		}
 	};

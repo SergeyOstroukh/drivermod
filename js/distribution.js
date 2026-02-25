@@ -959,7 +959,14 @@
         formattedAddress: order.formattedAddress || null,
         orderNum: points.length + 1,
       };
-      if (order.isSupplier) pt.isSupplier = true;
+      if (order.isSupplier) {
+        pt.isSupplier = true;
+        pt.telegramSent = !!order.telegramSent;
+        pt.telegramStatus = order.telegramStatus || null;
+        pt.items1c = order.items1c || null;
+        pt.itemsSent = !!order.itemsSent;
+        pt.itemsSentText = order.itemsSentText || null;
+      }
       if (order.isPoi) { pt.isPoi = true; pt.poiLabel = order.poiLabel || null; }
       if (order.isKbt) {
         pt.isKbt = true;
@@ -1907,6 +1914,11 @@
       // Supplier flag
       if (order.isSupplier) {
         pointData.isSupplier = true;
+        pointData.telegramSent = !!order.telegramSent;
+        pointData.telegramStatus = order.telegramStatus || null;
+        pointData.items1c = order.items1c || null;
+        pointData.itemsSent = !!order.itemsSent;
+        pointData.itemsSentText = order.itemsSentText || null;
       }
 
       // POI flag
@@ -1999,7 +2011,14 @@
         formattedAddress: order.formattedAddress || null,
         orderNum: points.length + 1,
       };
-      if (order.isSupplier) pt.isSupplier = true;
+      if (order.isSupplier) {
+        pt.isSupplier = true;
+        pt.telegramSent = !!order.telegramSent;
+        pt.telegramStatus = order.telegramStatus || null;
+        pt.items1c = order.items1c || null;
+        pt.itemsSent = !!order.itemsSent;
+        pt.itemsSentText = order.itemsSentText || null;
+      }
       if (order.isPoi) { pt.isPoi = true; pt.poiLabel = order.poiLabel || null; }
       if (order.isKbt) {
         pt.isKbt = true;
@@ -2121,6 +2140,11 @@
 
       if (order.isSupplier) {
         pt.isSupplier = true;
+        pt.telegramSent = !!order.telegramSent;
+        pt.telegramStatus = order.telegramStatus || null;
+        pt.items1c = order.items1c || null;
+        pt.itemsSent = !!order.itemsSent;
+        pt.itemsSentText = order.itemsSentText || null;
       }
       if (order.isKbt) {
         pt.isKbt = true;
@@ -2509,12 +2533,6 @@
         if (cbParts.length < 2) { _processedCallbacks.push(cbId); continue; }
         var action = cbParts[0];
         var orderId = cbParts.slice(1).join(':');
-        var messageDateTs = update.callback_query && update.callback_query.message ? update.callback_query.message.date : null;
-        if (messageDateTs) {
-          var msgDate = dateKeyLocal(new Date(messageDateTs * 1000));
-          var todayLocal = dateKeyLocal(new Date());
-          if (msgDate !== todayLocal) { _processedCallbacks.push(cbId); continue; }
-        }
 
         // Find matching order
         var order = orders.find(function (o) { return o.id === orderId; });

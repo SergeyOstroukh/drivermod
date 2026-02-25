@@ -774,6 +774,39 @@
 	}
 
 	/**
+	 * Получает все маршруты на дату (active/completed/cancelled)
+	 */
+	async function getRoutesByDate(routeDate) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.select(`
+					*,
+					drivers (
+						id,
+						name,
+						phone
+					)
+				`)
+				.eq('route_date', routeDate)
+				.order('created_at', { ascending: true });
+
+			if (error) throw error;
+			return (data || []).map(item => {
+				let driver = null;
+				if (item.drivers) {
+					driver = Array.isArray(item.drivers) ? item.drivers[0] : item.drivers;
+				}
+				return { ...item, driver };
+			});
+		} catch (err) {
+			console.error('Ошибка получения маршрутов по дате:', err);
+			throw err;
+		}
+	}
+
+	/**
 	 * Удаляет маршрут
 	 */
 	async function deleteDriverRoute(id) {
@@ -1013,6 +1046,7 @@
 		getDriverRoute,
 		getDriverRoutes,
 		getActiveRoutes,
+		getRoutesByDate,
 		deleteDriverRoute,
 		completeDriverRoute,
 		updateRoutePoints
