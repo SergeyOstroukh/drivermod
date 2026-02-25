@@ -3127,13 +3127,50 @@
 		return 'Не назначен';
 	}
 
-	function getDistributedItemsText(row) {
-		var itemsText = row.items1c || '';
-		if (!itemsText && window.DistributionUI.getSupplierItems) {
+	function getDistributedItemLists(row) {
+		var lists = [];
+		if (window.DistributionUI.getSupplierItems) {
 			var found = window.DistributionUI.getSupplierItems(row.supplierName || row.address);
-			if (found && found.length) itemsText = found.join('\n');
+			if (found && found.length) {
+				lists = found.filter(function (x) { return !!x; });
+			}
 		}
-		return itemsText;
+		if (lists.length === 0 && row.items1c) {
+			lists = [row.items1c];
+		}
+		return lists;
+	}
+
+	function formatItemListsForDisplay(lists) {
+		if (!lists || lists.length === 0) return '';
+		if (lists.length === 1) return lists[0];
+		return lists.map(function (list, idx) {
+			return (idx + 1) + ') ' + list;
+		}).join('\n\n');
+	}
+
+	function formatItemListsForExport(lists) {
+		if (!lists || lists.length === 0) return '';
+		if (lists.length === 1) return lists[0];
+		return lists.map(function (list, idx) {
+			return (idx + 1) + ') ' + list;
+		}).join('\n\n');
+	}
+
+	function getDistributedItemsMeta(row) {
+		var lists = getDistributedItemLists(row);
+		var itemsText = formatItemListsForDisplay(lists);
+		var hasItems = lists.length > 0;
+		var sentText = row.itemsSentText || null;
+		var isSentCurrent = !!(hasItems && row.itemsSent && sentText && sentText === row.items1c);
+
+		if (!hasItems) {
+			return { itemsText: '', statusHtml: '<span style="color:var(--muted);">⏳ Ожидает товар из 1С</span>', canExpand: false };
+		}
+		if (isSentCurrent) {
+			return { itemsText: itemsText, statusHtml: '<span style="color:#22c55e;">✅ Отправлен водителю</span>', canExpand: true };
+		}
+		return { itemsText: itemsText, statusHtml: '<span style="color:#f59e0b;">❌ Не отправлен водителю</span>', canExpand: true };
 	}
 
 	function getDriverSurnameForExport(driverName) {
@@ -3179,10 +3216,11 @@
 		].map(csvEscape).join(";"));
 
 		data.rows.forEach(function (row, idx) {
+			var exportLists = getDistributedItemLists(row);
 			lines.push([
 				idx + 1,
 				row.supplierName || row.address || '',
-				getDistributedItemsText(row),
+				formatItemListsForExport(exportLists),
 				getDriverSurnameForExport(row.driverName),
 				getDistributedStatusLabel(row),
 				row.timeSlot || ''
@@ -3327,15 +3365,24 @@
 			if (!row.timeSlot) tdTime.style.color = 'var(--muted)';
 
 			const tdItems = document.createElement('td');
-			var itemsText = getDistributedItemsText(row);
-			if (itemsText) {
-				tdItems.style.fontSize = '11px';
-				tdItems.style.whiteSpace = 'pre-line';
-				tdItems.style.color = '#a78bfa';
-				tdItems.textContent = itemsText;
-			} else {
-				tdItems.textContent = '—';
-				tdItems.style.color = 'var(--muted)';
+			var itemMeta = getDistributedItemsMeta(row);
+			tdItems.style.fontSize = '11px';
+			tdItems.innerHTML = itemMeta.statusHtml;
+			if (itemMeta.canExpand) {
+				var details = document.createElement('details');
+				details.style.marginTop = '4px';
+				details.style.cursor = 'pointer';
+				var summary = document.createElement('summary');
+				summary.textContent = 'Показать товары';
+				summary.style.color = '#93c5fd';
+				var body = document.createElement('div');
+				body.textContent = itemMeta.itemsText;
+				body.style.whiteSpace = 'pre-line';
+				body.style.color = '#a78bfa';
+				body.style.marginTop = '4px';
+				details.appendChild(summary);
+				details.appendChild(body);
+				tdItems.appendChild(details);
 			}
 
 			tr.appendChild(tdNum);

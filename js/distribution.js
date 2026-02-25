@@ -3613,6 +3613,9 @@
         inDb: !!o.supplierDbId,
         telegramStatus: o.telegramStatus || null,
         telegramSent: !!o.telegramSent,
+        items1c: o.items1c || null,
+        itemsSent: !!o.itemsSent,
+        itemsSentText: o.itemsSentText || null,
       });
     }
     return result;
