@@ -1112,6 +1112,7 @@
       var parsed = extractSupplierTimeSlot(rawLine);
       var name = parsed.name;
       var timeSlot = parsed.timeSlot;
+      var displayName = name || rawLine;
 
       // Strip org form + quotes for clean display name
       var cleanName = stripOrgForm(name);
@@ -1128,7 +1129,7 @@
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
           sourceSupplierName: name,
-          address: supplier.name,
+          address: displayName,
           phone: '',
           timeSlot: timeSlot,
           geocoded: true,
@@ -1138,7 +1139,7 @@
           error: null,
           isSupplier: true,
           supplierDbId: supplier.id,
-          supplierName: supplier.name,
+          supplierName: displayName,
           supplierData: supplier,
           items1c: items1c.length > 0 ? items1c.join('\n') : null,
         });
@@ -1148,7 +1149,7 @@
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
           sourceSupplierName: name,
-          address: supplier.name,
+          address: displayName,
           phone: '',
           timeSlot: timeSlot,
           geocoded: false,
@@ -1158,7 +1159,7 @@
           error: 'Нет координат в базе',
           isSupplier: true,
           supplierDbId: supplier.id,
-          supplierName: supplier.name,
+          supplierName: displayName,
           supplierData: supplier,
           items1c: items1c.length > 0 ? items1c.join('\n') : null,
         });
@@ -1169,7 +1170,7 @@
         supplierOrders.push({
           id: 'supplier-' + orderCounter + '-' + i,
           sourceSupplierName: name,
-          address: rawLine,
+          address: displayName,
           phone: '',
           timeSlot: timeSlot,
           geocoded: false,
@@ -1179,7 +1180,7 @@
           error: 'Не найден в базе',
           isSupplier: true,
           supplierDbId: null,
-          supplierName: cleanName || name,
+          supplierName: displayName,
           supplierData: null,
           items1c: items1c.length > 0 ? items1c.join('\n') : null,
         });
