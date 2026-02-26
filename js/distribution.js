@@ -4337,6 +4337,13 @@
     if (orders.length === 0) {
       loadState();
     }
+    // Ensure 1C items are loaded even after page refresh/session restore.
+    if (orders.some(function (o) { return o.isSupplier; })) {
+      await refreshSupplierItems();
+      startItemsPolling();
+    } else {
+      stopItemsPolling();
+    }
     _fitBoundsNext = true;
     initMap().then(function () { updatePlacemarks(); });
     renderSidebar();
