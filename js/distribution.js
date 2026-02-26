@@ -281,14 +281,17 @@
 
   // Extract time slot from supplier line: "Название до 14" → { name: "Название", timeSlot: "до 14" }
   function extractSupplierTimeSlot(line) {
-    var timeMatch = line.match(/\s+(до\s+\d{1,2}(?:[:.]\d{2})?|после\s+\d{1,2}(?:[:.]\d{2})?|с\s+\d{1,2}(?:[:.]\d{2})?\s*(?:до|[-–])\s*\d{1,2}(?:[:.]\d{2})?)\s*$/i);
+    var normalizedLine = String(line || '')
+      // Handle glued suffixes like: ООО "Триовист"после 15
+      .replace(/([«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂])(?=(?:до|после|с)\s+\d)/ig, '$1 ');
+    var timeMatch = normalizedLine.match(/\s+(до\s+\d{1,2}(?:[:.]\d{2})?|после\s+\d{1,2}(?:[:.]\d{2})?|с\s+\d{1,2}(?:[:.]\d{2})?\s*(?:до|[-–])\s*\d{1,2}(?:[:.]\d{2})?)\s*$/i);
     if (timeMatch) {
       return {
-        name: line.substring(0, timeMatch.index).trim(),
+        name: normalizedLine.substring(0, timeMatch.index).trim(),
         timeSlot: timeMatch[1].trim(),
       };
     }
-    return { name: line, timeSlot: null };
+    return { name: normalizedLine.trim(), timeSlot: null };
   }
 
   // Normalize for display: lowercase, collapse spaces
