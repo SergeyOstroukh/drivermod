@@ -3177,6 +3177,7 @@
 		const selectedDate = _distributedFilterDate || getTodayLocalDateString();
 		const today = getTodayLocalDateString();
 		const hasHistoryForSelectedDate = _distributedHistoryDate === selectedDate;
+		const isTodaySelected = selectedDate === today;
 
 		let allSuppliers = [];
 		let allDrivers = [];
@@ -3196,6 +3197,44 @@
 		} else {
 			allSuppliers = [];
 			allDrivers = [];
+		}
+
+		// For today, enrich history rows with actual in-memory telegram state
+		// from DistributionUI (status can change after route snapshot was saved).
+		if (isTodaySelected && window.DistributionUI && window.DistributionUI.getDistributedSuppliers) {
+			const liveRows = window.DistributionUI.getDistributedSuppliers() || [];
+			const normalize = function (s) { return String(s || '').trim().toLowerCase(); };
+			const keyOf = function (r) {
+				return normalize(r.supplierName || r.address) + '|' + String(r.driverId || '');
+			};
+			const liveByKey = {};
+			liveRows.forEach(function (r) {
+				liveByKey[keyOf(r)] = r;
+			});
+
+			allSuppliers = allSuppliers.map(function (row) {
+				const live = liveByKey[keyOf(row)];
+				if (!live) return row;
+				return {
+					...row,
+					telegramStatus: live.telegramStatus || row.telegramStatus || null,
+					telegramSent: !!(live.telegramSent || row.telegramSent),
+					items1c: live.items1c || row.items1c || null,
+					itemsSent: !!(live.itemsSent || row.itemsSent),
+					itemsSentText: live.itemsSentText || row.itemsSentText || null,
+				};
+			});
+
+			// Include live-only rows too (e.g. still active, not in saved history yet)
+			const existingKeys = {};
+			allSuppliers.forEach(function (r) { existingKeys[keyOf(r)] = true; });
+			liveRows.forEach(function (r) {
+				const k = keyOf(r);
+				if (!existingKeys[k]) {
+					allSuppliers.push({ ...r });
+					existingKeys[k] = true;
+				}
+			});
 		}
 
 		// Keep one factual row per supplier+driver to avoid duplicate entries
