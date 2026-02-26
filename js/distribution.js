@@ -437,6 +437,33 @@
     return results;
   }
 
+  async function findPartnerInDbRemote(name) {
+    var query = (name || '').trim();
+    if (!query) return null;
+    var client = getSupabaseClient();
+    if (!client) return null;
+    try {
+      var resp = await client
+        .from('partners')
+        .select('*')
+        .ilike('name', '%' + query + '%')
+        .limit(25);
+      if (resp.error) return null;
+      var rows = resp.data || [];
+      if (!rows.length) return null;
+      var key = compactName(query);
+      var exact = rows.find(function (p) { return compactName(p.name || '') === key; });
+      if (exact) return exact;
+      var partial = rows.find(function (p) {
+        var pn = compactName(p.name || '');
+        return pn && (pn.indexOf(key) !== -1 || key.indexOf(pn) !== -1);
+      });
+      return partial || rows[0] || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   // Resolve driver_id for an order: direct assignment takes priority, then slot-based
   function getOrderDriverId(idx) {
     var order = orders[idx];
@@ -1384,9 +1411,17 @@
         if (!rawLine) continue;
         orderCounter++;
         var partner = findPartnerInDb(rawLine);
+        if (!partner) {
+          partner = await findPartnerInDbRemote(rawLine);
+          if (partner) {
+            dbPartners.push(partner);
+          }
+        }
         if (partner) {
           rememberPartnerAlias(rawLine, partner);
-          if (partner.lat != null && partner.lon != null) {
+          var plat = parseFloat(partner.lat);
+          var plon = parseFloat(partner.lon);
+          if (Number.isFinite(plat) && Number.isFinite(plon)) {
             partnerOrders.push({
               id: 'partner-' + orderCounter + '-' + i,
               sourcePartnerName: rawLine,
@@ -1395,8 +1430,8 @@
               phone: '',
               timeSlot: null,
               geocoded: true,
-              lat: Number(partner.lat),
-              lng: Number(partner.lon),
+              lat: plat,
+              lng: plon,
               formattedAddress: partner.address || (partner.lat + ', ' + partner.lon),
               error: null,
               isPartner: true,
