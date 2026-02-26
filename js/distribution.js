@@ -12,6 +12,7 @@
   const ORIGINAL_COLORS = COLORS.slice();
   const STORAGE_KEY = 'dc_distribution_data';
   const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
+  const PARTNER_ALIASES_KEY = 'dc_partner_aliases';
 
   let orders = [];
   let assignments = null;
@@ -32,16 +33,23 @@
   let dbDrivers = [];
   // Поставщики из БД (кэш)
   let dbSuppliers = [];
+  // Партнеры из БД (кэш)
+  let dbPartners = [];
   // Локальные алиасы: введенное имя (compact) -> supplier.id
   let supplierAliases = {};
+  // Локальные алиасы: введенное имя (compact) -> partner.id
+  let partnerAliases = {};
   // Черновики полей вставки (чтобы не терялись при авто-обновлениях)
   let supplierInputDraft = '';
+  let partnerInputDraft = '';
   let addressInputDraft = '';
   let isLoadingSuppliers = false;
+  let isLoadingPartners = false;
   // Привязка цвет-индекс → driver_id (driverSlots[0] = driver_id для цвета 0)
   let driverSlots = [];
   // Collapsed/expanded state for sidebar lists
   let _supplierListOpen = true;
+  let _partnerListOpen = true;
   let _addressListOpen = true;
   let _driversListOpen = true;
   // Hide assigned toggle
@@ -101,6 +109,24 @@
     } catch (e) {
       console.warn('Failed to load suppliers:', e);
       dbSuppliers = [];
+    }
+  }
+
+  // ─── Load partners from DB ────────────────────────────────
+  async function loadDbPartners() {
+    try {
+      if (window.PartnersDB && window.PartnersDB.getAllWithId) {
+        dbPartners = await window.PartnersDB.getAllWithId();
+        return;
+      }
+      var client = getSupabaseClient();
+      if (!client) { dbPartners = []; return; }
+      var resp = await client.from('partners').select('*').order('name', { ascending: true });
+      if (resp.error) throw resp.error;
+      dbPartners = resp.data || [];
+    } catch (e) {
+      console.warn('Failed to load partners:', e);
+      dbPartners = [];
     }
   }
 
@@ -330,6 +356,29 @@
     saveSupplierAliases();
   }
 
+  function loadPartnerAliases() {
+    try {
+      var raw = localStorage.getItem(PARTNER_ALIASES_KEY);
+      partnerAliases = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      partnerAliases = {};
+    }
+  }
+
+  function savePartnerAliases() {
+    try {
+      localStorage.setItem(PARTNER_ALIASES_KEY, JSON.stringify(partnerAliases));
+    } catch (e) { /* ignore */ }
+  }
+
+  function rememberPartnerAlias(inputName, partner) {
+    if (!inputName || !partner || partner.id == null) return;
+    var key = compactName(inputName);
+    if (!key || key.length < 2) return;
+    partnerAliases[key] = partner.id;
+    savePartnerAliases();
+  }
+
   // Search suppliers for autocomplete (returns top N matches)
   function searchSuppliers(query, limit) {
     var q = compactName(query);
@@ -340,6 +389,48 @@
       var sn = compactName(s.name);
       if (sn.includes(q)) {
         results.push(s);
+        if (results.length >= (limit || 8)) break;
+      }
+    }
+    return results;
+  }
+
+  // Find partner in DB by name (manual linking support)
+  function findPartnerInDb(name) {
+    var n = compactName(name);
+    if (!n || n.length < 2) return null;
+
+    var aliasPartnerId = partnerAliases[n];
+    if (aliasPartnerId != null) {
+      var aliasMatch = dbPartners.find(function (p) { return String(p.id) === String(aliasPartnerId); });
+      if (aliasMatch) return aliasMatch;
+    }
+
+    var exact = dbPartners.find(function (p) { return compactName(p.name) === n; });
+    if (exact) return exact;
+
+    var partial = dbPartners.find(function (p) {
+      var pn = compactName(p.name);
+      if (!pn) return false;
+      var longer = Math.max(pn.length, n.length);
+      var shorter = Math.min(pn.length, n.length);
+      if (shorter / longer < 0.7) return false;
+      return pn.includes(n) || n.includes(pn);
+    });
+    if (partial) return partial;
+    return null;
+  }
+
+  // Search partners for autocomplete (returns top N matches)
+  function searchPartners(query, limit) {
+    var q = compactName(query);
+    if (!q || q.length < 1) return [];
+    var results = [];
+    for (var i = 0; i < dbPartners.length; i++) {
+      var p = dbPartners[i];
+      var pn = compactName(p.name);
+      if (pn.includes(q)) {
+        results.push(p);
         if (results.length >= (limit || 8)) break;
       }
     }
@@ -703,7 +794,7 @@
     var _addrNum = {};
     var _addrCounter = 1;
     orders.forEach(function (o) {
-      if (!o.isSupplier && !o.isPoi) _addrNum[o.id] = _addrCounter++;
+      if (!o.isSupplier && !o.isPartner && !o.isPoi) _addrNum[o.id] = _addrCounter++;
     });
 
     var bounds = [];
@@ -731,10 +822,11 @@
       var color = !isUnassigned ? COLORS[slotIdx % COLORS.length] : defaultColor;
 
       var overlapCount = overlapGroups[overlapKey(order)] ? overlapGroups[overlapKey(order)].length : 1;
-      var displayNum = order.isSupplier ? 'П' : (_addrNum[order.id] || (globalIdx + 1));
+      var displayNum = order.isSupplier ? 'П' : (order.isPartner ? 'ПР' : (_addrNum[order.id] || (globalIdx + 1)));
       var hintHtml = '<b>' + displayNum + '. ' + order.address + '</b>' +
         (overlapCount > 1 ? '<br><span style="color:#f97316;font-size:11px;">📌 ' + overlapCount + ' точки в одном месте</span>' : '') +
         (order.isSupplier ? '<br><span style="color:#10b981;font-size:11px;">Поставщик</span>' : '') +
+        (order.isPartner ? '<br><span style="color:#f97316;font-size:11px;">Партнёр</span>' : '') +
         (order.formattedAddress ? '<br><span style="color:#666;font-size:12px;">' + order.formattedAddress + '</span>' : '') +
         (isSettlementOnly ? '<br><span style="color:#f59e0b;font-size:11px;">⚠ Только населённый пункт</span>' : '') +
         (order.isKbt ? '<br><span style="color:#e879f9;font-size:11px;font-weight:700;">📦 КБТ</span>' : '');
@@ -770,6 +862,23 @@
           hintContent: hintHtml,
         }, {
           iconLayout: supLayout,
+          iconShape: { type: 'Rectangle', coordinates: [[0, 0], [26, 26]] },
+          iconOffset: [-13, -13],
+        });
+      } else if (order.isPartner) {
+        // Partner: rounded square marker
+        var partnerColor = !isUnassigned ? color : '#f97316';
+        var partnerOpacity = isVisible ? 1 : 0.25;
+        var partnerTextColor = '#fff';
+        var partnerBorder = '2px solid rgba(255,255,255,.9)';
+        var partnerHtml = '<div style="width:26px;height:26px;border-radius:7px;background:' + partnerColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:' + partnerBorder + ';opacity:' + partnerOpacity + ';">' +
+          '<span style="color:' + partnerTextColor + ';font-size:9px;font-weight:800;">ПР</span></div>';
+        var partnerLayout = ymaps.templateLayoutFactory.createClass(partnerHtml);
+        pm = new ymaps.Placemark([plat, plng], {
+          balloonContentBody: buildBalloon(order, globalIdx, driverIdx),
+          hintContent: hintHtml,
+        }, {
+          iconLayout: partnerLayout,
           iconShape: { type: 'Rectangle', coordinates: [[0, 0], [26, 26]] },
           iconOffset: [-13, -13],
         });
@@ -966,6 +1075,10 @@
         pt.items1c = order.items1c || null;
         pt.itemsSent = !!order.itemsSent;
         pt.itemsSentText = order.itemsSentText || null;
+      }
+      if (order.isPartner) {
+        pt.isPartner = true;
+        pt.partnerName = order.partnerName || order.address || null;
       }
       if (order.isPoi) { pt.isPoi = true; pt.poiLabel = order.poiLabel || null; }
       if (order.isKbt) {
@@ -1233,6 +1346,82 @@
     }
   }
 
+  // ─── Partner loading (manual DB selection flow) ───────────
+  async function loadPartners(append) {
+    const textarea = $('#dcPartnerInput');
+    if (!textarea) return;
+    const text = textarea.value.trim();
+    partnerInputDraft = textarea.value;
+    if (!text) { showToast('Вставьте названия партнёров', 'error'); return; }
+    try {
+      const names = text.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l.length > 0; });
+      if (names.length === 0) { showToast('Не найдено партнёров', 'error'); return; }
+
+      isLoadingPartners = true;
+      renderAll();
+      await loadDbPartners();
+
+      var prevAssignments = append ? assignments : null;
+      if (!append) {
+        // Replace only partner rows, keep suppliers and addresses
+        var keepOrders = [];
+        var keepAssignments = [];
+        for (var k = 0; k < orders.length; k++) {
+          if (!orders[k].isPartner) {
+            keepOrders.push(orders[k]);
+            if (assignments) keepAssignments.push(assignments[k]);
+          }
+        }
+        orders = keepOrders;
+        assignments = keepAssignments.length > 0 ? keepAssignments : null;
+        variants = []; activeVariant = -1;
+      }
+
+      var partnerOrders = [];
+      var orderCounter = Date.now();
+      for (var i = 0; i < names.length; i++) {
+        var rawLine = names[i].replace(/^\d+[\.):\-\s]+\s*/, '').trim();
+        if (!rawLine) continue;
+        orderCounter++;
+        partnerOrders.push({
+          id: 'partner-' + orderCounter + '-' + i,
+          sourcePartnerName: rawLine,
+          partnerName: rawLine,
+          address: rawLine,
+          phone: '',
+          timeSlot: null,
+          geocoded: false,
+          lat: null,
+          lng: null,
+          formattedAddress: null,
+          error: 'Выберите партнёра из поиска',
+          isPartner: true,
+          partnerDbId: null,
+          partnerData: null,
+        });
+      }
+
+      orders = orders.concat(partnerOrders);
+      if (prevAssignments) {
+        assignments = prevAssignments.slice();
+        for (var a = 0; a < partnerOrders.length; a++) assignments.push(-1);
+      } else if (!append) {
+        assignments = null; variants = []; activeVariant = -1;
+      }
+
+      _fitBoundsNext = true;
+      textarea.value = '';
+      partnerInputDraft = '';
+      showToast('Партнёры добавлены: ' + partnerOrders.length + '. Выберите каждого через поиск.');
+    } catch (err) {
+      console.error('loadPartners error:', err);
+      showToast('Ошибка загрузки партнёров: ' + err.message, 'error');
+    } finally {
+      isLoadingPartners = false;
+      renderAll();
+    }
+  }
+
   // ─── Create supplier from distribution ─────────────────────
   function createSupplierFromOrder(orderId) {
     var order = orders.find(function (o) { return o.id === orderId; });
@@ -1410,6 +1599,194 @@
     }
   }
 
+  // ─── Search & link partner from DB (modal) ────────────────
+  var _partnerSearchOrderId = null;
+
+  function openPartnerSearch(orderId) {
+    closePartnerSearch();
+    var order = orders.find(function (o) { return o.id === orderId; });
+    if (!order || !order.isPartner) return;
+    _partnerSearchOrderId = orderId;
+
+    var overlay = document.createElement('div');
+    overlay.id = 'dcPartnerSearchModal';
+    overlay.className = 'dc-search-modal-overlay';
+
+    var modal = document.createElement('div');
+    modal.className = 'dc-search-modal';
+
+    var header = document.createElement('div');
+    header.className = 'dc-search-modal-header';
+    header.innerHTML = '<h3>Поиск партнёра</h3>' +
+      '<button class="dc-search-modal-close" title="Закрыть">&times;</button>';
+
+    var searchName = order.partnerName || order.address || '';
+    var body = document.createElement('div');
+    body.className = 'dc-search-modal-body';
+    body.innerHTML =
+      '<div class="dc-search-modal-query">Ищем: <strong>' + escapeHtml(order.address) + '</strong></div>' +
+      '<input class="dc-search-modal-input" type="text" placeholder="Введите название партнёра..." value="' + escapeHtml(searchName).replace(/"/g, '&quot;') + '" />' +
+      '<div class="dc-search-modal-results"></div>';
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    var input = body.querySelector('.dc-search-modal-input');
+    var resultsEl = body.querySelector('.dc-search-modal-results');
+
+    function doSearch() {
+      var q = input.value.trim();
+      if (q.length < 1) {
+        resultsEl.innerHTML = '<div class="dc-search-modal-hint">Начните вводить название</div>';
+        return;
+      }
+      var matches = searchPartners(q, 15);
+      if (matches.length === 0) {
+        resultsEl.innerHTML = '<div class="dc-search-modal-hint">Ничего не найдено по запросу &laquo;' + escapeHtml(q) + '&raquo;</div>';
+        return;
+      }
+      resultsEl.innerHTML = '';
+      matches.forEach(function (p) {
+        var item = document.createElement('div');
+        item.className = 'dc-search-modal-item';
+        var hasCoords = p.lat && p.lon;
+        item.innerHTML =
+          '<div class="dc-search-modal-item-name">' + escapeHtml(p.name) + '</div>' +
+          (p.address ? '<div class="dc-search-modal-item-addr">' + escapeHtml(p.address) + '</div>' : '') +
+          '<div class="dc-search-modal-item-status">' + (hasCoords ? '📍 Есть координаты' : '⚠ Нет координат') + '</div>';
+        item.addEventListener('click', function () {
+          linkPartnerToOrder(orderId, p);
+        });
+        resultsEl.appendChild(item);
+      });
+    }
+
+    input.addEventListener('input', doSearch);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closePartnerSearch();
+    });
+
+    header.querySelector('.dc-search-modal-close').addEventListener('click', closePartnerSearch);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) closePartnerSearch();
+    });
+
+    setTimeout(function () { input.focus(); input.select(); }, 50);
+    doSearch();
+  }
+
+  function closePartnerSearch() {
+    var el = document.getElementById('dcPartnerSearchModal');
+    if (el) el.remove();
+    _partnerSearchOrderId = null;
+  }
+
+  async function linkPartnerToOrder(orderId, partner) {
+    var order = orders.find(function (o) { return o.id === orderId; });
+    if (!order) return;
+
+    rememberPartnerAlias(order.sourcePartnerName || order.partnerName || order.address, partner);
+    var keepUserName = order.sourcePartnerName || order.partnerName || order.address || partner.name;
+
+    order.partnerDbId = partner.id;
+    order.partnerData = partner;
+    order.partnerName = keepUserName;
+    order.address = keepUserName;
+
+    if (partner.lat && partner.lon) {
+      order.lat = partner.lat;
+      order.lng = partner.lon;
+      order.formattedAddress = partner.address || (partner.lat + ', ' + partner.lon);
+      order.geocoded = true;
+      order.error = null;
+    } else if (partner.address) {
+      try {
+        var geo = await window.DistributionGeocoder.geocodeAddress(partner.address);
+        order.lat = geo.lat;
+        order.lng = geo.lng;
+        order.formattedAddress = geo.formattedAddress;
+        order.geocoded = true;
+        order.error = null;
+      } catch (e) {
+        order.geocoded = false;
+        order.error = 'Нет координат — поставьте точку на карте';
+      }
+    } else {
+      order.geocoded = false;
+      order.error = 'Нет координат — поставьте точку на карте';
+    }
+
+    closePartnerSearch();
+    _fitBoundsNext = true;
+    saveState();
+    renderAll();
+    showToast('Партнёр привязан: ' + partner.name);
+
+    var orderIdx = orders.findIndex(function (o) { return o.id === orderId; });
+    if (orderIdx >= 0) {
+      var driverId = getOrderDriverId(orderIdx);
+      if (driverId) scheduleSyncDriver(String(driverId));
+    }
+  }
+
+  // ─── Create partner from distribution ─────────────────────
+  function openCreatePartnerModal() {
+    var existing = document.getElementById('dcCreatePartnerModal');
+    if (existing) existing.remove();
+
+    var overlay = document.createElement('div');
+    overlay.id = 'dcCreatePartnerModal';
+    overlay.className = 'dc-search-modal-overlay';
+    overlay.innerHTML = '<div class="dc-search-modal" style="max-width:520px;">' +
+      '<div class="dc-search-modal-header"><h3>Новый партнёр</h3><button class="dc-search-modal-close" title="Закрыть">&times;</button></div>' +
+      '<div class="dc-search-modal-body">' +
+      '<input id="dcNewPartnerName" class="dc-search-modal-input" type="text" placeholder="Название партнёра" />' +
+      '<input id="dcNewPartnerAddress" class="dc-search-modal-input" type="text" placeholder="Адрес партнёра" style="margin-top:8px;" />' +
+      '<div style="display:flex;gap:8px;margin-top:10px;">' +
+      '<button id="dcSavePartnerBtn" class="btn btn-primary">Сохранить</button>' +
+      '<button id="dcCancelPartnerBtn" class="btn btn-outline">Отмена</button>' +
+      '</div>' +
+      '</div></div>';
+    document.body.appendChild(overlay);
+
+    function close() { var el = document.getElementById('dcCreatePartnerModal'); if (el) el.remove(); }
+
+    overlay.querySelector('.dc-search-modal-close').addEventListener('click', close);
+    overlay.querySelector('#dcCancelPartnerBtn').addEventListener('click', close);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+
+    overlay.querySelector('#dcSavePartnerBtn').addEventListener('click', async function () {
+      var name = (overlay.querySelector('#dcNewPartnerName').value || '').trim();
+      var address = (overlay.querySelector('#dcNewPartnerAddress').value || '').trim();
+      if (!name) { showToast('Введите название партнёра', 'error'); return; }
+      if (!address) { showToast('Введите адрес партнёра', 'error'); return; }
+      try {
+        var geo = await window.DistributionGeocoder.geocodeAddress(address);
+        var client = getSupabaseClient();
+        if (!client) { showToast('Supabase не настроен', 'error'); return; }
+        var resp = await client.from('partners').insert([{
+          name: name,
+          address: address,
+          lat: geo.lat,
+          lon: geo.lng,
+        }]).select('*').single();
+        if (resp.error) throw resp.error;
+        await loadDbPartners();
+        close();
+        showToast('Партнёр создан');
+      } catch (e) {
+        showToast('Ошибка создания партнёра: ' + (e.message || e), 'error');
+      }
+    });
+
+    setTimeout(function () {
+      var inp = overlay.querySelector('#dcNewPartnerName');
+      if (inp) inp.focus();
+    }, 30);
+  }
+
   function showDistributeDialog() {
     var geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     if (geocodedCount === 0) { showToast('Нет геокодированных адресов', 'error'); return; }
@@ -1572,6 +1949,37 @@
           return;
         }
       }
+    }
+
+    // For partners: search partner DB first
+    if (order && order.isPartner) {
+      input.disabled = true;
+      await loadDbPartners();
+      var partner = findPartnerInDb(addr);
+      if (partner && partner.lat && partner.lon) {
+        rememberPartnerAlias(addr, partner);
+        var partnerDisplayName = (order.sourcePartnerName || order.partnerName || addr || order.address || partner.name);
+        orders = orders.map(function (o) {
+          if (o.id !== orderId) return o;
+          return Object.assign({}, o, {
+            address: partnerDisplayName,
+            partnerName: partnerDisplayName,
+            partnerDbId: partner.id,
+            partnerData: partner,
+            lat: partner.lat,
+            lng: partner.lon,
+            formattedAddress: partner.address || (partner.lat + ', ' + partner.lon),
+            geocoded: true,
+            error: null,
+            isPartner: true,
+          });
+        });
+        editingOrderId = null;
+        renderAll();
+        showToast('Партнёр найден в базе');
+        return;
+      }
+      input.disabled = false;
     }
 
     // For suppliers: search supplier DB first
@@ -1920,6 +2328,10 @@
         pointData.itemsSent = !!order.itemsSent;
         pointData.itemsSentText = order.itemsSentText || null;
       }
+      if (order.isPartner) {
+        pointData.isPartner = true;
+        pointData.partnerName = order.partnerName || order.address || null;
+      }
 
       // POI flag
       if (order.isPoi) {
@@ -2018,6 +2430,10 @@
         pt.items1c = order.items1c || null;
         pt.itemsSent = !!order.itemsSent;
         pt.itemsSentText = order.itemsSentText || null;
+      }
+      if (order.isPartner) {
+        pt.isPartner = true;
+        pt.partnerName = order.partnerName || order.address || null;
       }
       if (order.isPoi) { pt.isPoi = true; pt.poiLabel = order.poiLabel || null; }
       if (order.isKbt) {
@@ -2145,6 +2561,10 @@
         pt.items1c = order.items1c || null;
         pt.itemsSent = !!order.itemsSent;
         pt.itemsSentText = order.itemsSentText || null;
+      }
+      if (order.isPartner) {
+        pt.isPartner = true;
+        pt.partnerName = order.partnerName || order.address || null;
       }
       if (order.isKbt) {
         pt.isKbt = true;
@@ -2881,10 +3301,12 @@
       numBg = 'background:' + (hasSlot ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
     } else if (order.isSupplier) {
       numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
+    } else if (order.isPartner) {
+      numBg = hasSlot ? 'background:' + color + ';color:#fff;border-radius:6px;' : (isFailed ? 'background:#ef4444;color:#fff;border-radius:6px;' : 'background:#f97316;color:#fff;border-radius:6px;');
     } else {
       numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : 'background:#e0e0e0;color:#333;border:1px solid #999'));
     }
-    var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (order._displayNum || (idx + 1)));
+    var numLabel = order.isPoi ? (order.poiShort || 'П') : (order.isSupplier ? 'П' : (order.isPartner ? 'ПР' : (order._displayNum || (idx + 1))));
     html += '<div class="dc-order-num" style="' + numBg + '">' + numLabel + '</div>';
     html += '<div class="dc-order-info"><div class="dc-order-addr">' + order.address + '</div>';
     if (order.timeSlot || order.phone) {
@@ -2901,8 +3323,12 @@
       html += '<div style="font-size:10px;color:#10b981;margin-top:1px;">В базе</div>';
     } else if (order.isSupplier && !order.supplierDbId) {
       html += '<div class="dc-supplier-not-found" data-id="' + order.id + '" style="font-size:10px;color:#ef4444;margin-top:1px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;" title="Нажмите чтобы найти в базе">🔍 Не найден — нажмите для поиска</div>';
+    } else if (order.isPartner && order.partnerDbId) {
+      html += '<div style="font-size:10px;color:#f97316;margin-top:1px;">Партнёр выбран</div>';
+    } else if (order.isPartner && !order.partnerDbId) {
+      html += '<div class="dc-partner-not-found" data-id="' + order.id + '" style="font-size:10px;color:#f97316;margin-top:1px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;" title="Нажмите чтобы найти партнёра">🔎 Не выбран — нажмите для поиска</div>';
     }
-    if (order.telegramSent) {
+    if (order.isSupplier && order.telegramSent) {
       if (!order.items1c) {
         html += '<div style="font-size:10px;color:var(--muted);margin-top:2px;">⏳ Товар от 1С ещё не поступил</div>';
       } else if (order.itemsSentText && order.itemsSentText === order.items1c) {
@@ -2911,9 +3337,9 @@
         html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;">📋 Товар из 1С загружен</div>';
         html += '<button class="btn btn-outline btn-sm dc-send-items-btn" data-id="' + order.id + '" style="font-size:9px;color:#a78bfa;border-color:#a78bfa;margin-top:2px;padding:1px 6px;" title="Дослать товар водителю в Telegram">📋 Дослать товар</button>';
       }
-    } else if (!order.items1c) {
+    } else if (order.isSupplier && !order.items1c) {
       html += '<div style="font-size:10px;color:var(--muted);margin-top:2px;">⏳ Товар от 1С ещё не поступил</div>';
-    } else {
+    } else if (order.isSupplier) {
       html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;">📋 Товар из 1С загружен</div>';
     }
     // Inline driver assignment — directly from DB drivers list
@@ -2971,6 +3397,9 @@
       if (order.isSupplier && !order.supplierDbId) {
         html += '<button class="btn btn-outline btn-sm dc-create-supplier-btn" data-id="' + order.id + '" title="Создать поставщика в базе" style="color:#10b981;border-color:#10b981;font-size:10px;">+ В базу</button>';
       }
+      if (order.isPartner && !order.partnerDbId) {
+        html += '<button class="btn btn-outline btn-sm dc-partner-search-btn" data-id="' + order.id + '" title="Выбрать партнёра в базе" style="color:#f97316;border-color:#f97316;font-size:10px;">🔎 Найти</button>';
+      }
       html += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить">✕</button>';
       html += '</div>';
     } else if (isSettlementOnly) {
@@ -2985,6 +3414,9 @@
       html += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
       if (order.isSupplier && !order.supplierDbId) {
         html += '<button class="btn btn-outline btn-sm dc-create-supplier-btn" data-id="' + order.id + '" title="Создать поставщика в базе" style="color:#10b981;border-color:#10b981;font-size:10px;">+ В базу</button>';
+      }
+      if (order.isPartner && !order.partnerDbId) {
+        html += '<button class="btn btn-outline btn-sm dc-partner-search-btn" data-id="' + order.id + '" title="Выбрать партнёра в базе" style="color:#f97316;border-color:#f97316;font-size:10px;">🔎 Найти</button>';
       }
       html += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Переместить на карте">📍</button>';
       html += '<button class="btn btn-outline btn-sm dc-del-btn dc-del-visible" data-id="' + order.id + '" title="Удалить">✕</button>';
@@ -3009,12 +3441,16 @@
     // Keep unsent textarea content across any sidebar re-render (e.g. Telegram status updates)
     var supplierInputEl = sidebar.querySelector('#dcSupplierInput');
     if (supplierInputEl) supplierInputDraft = supplierInputEl.value;
+    var partnerInputEl = sidebar.querySelector('#dcPartnerInput');
+    if (partnerInputEl) partnerInputDraft = partnerInputEl.value;
     var addressInputEl = sidebar.querySelector('#dcAddressInput');
     if (addressInputEl) addressInputDraft = addressInputEl.value;
 
     // Preserve collapsed/expanded state before re-render
     var suppDetails = sidebar.querySelector('.dc-details-suppliers');
     if (suppDetails) _supplierListOpen = suppDetails.open;
+    var partnerDetails = sidebar.querySelector('.dc-details-partners');
+    if (partnerDetails) _partnerListOpen = partnerDetails.open;
     var addrDetails = sidebar.querySelector('.dc-details-addresses');
     if (addrDetails) _addressListOpen = addrDetails.open;
     var drvDetails = sidebar.querySelector('.dc-details-drivers');
@@ -3022,7 +3458,8 @@
 
     const allOrders = orders.map(function (o, i) { return Object.assign({}, o, { globalIndex: i }); });
     const supplierItems = allOrders.filter(function (o) { return o.isSupplier; }).reverse();
-    const addressItems = allOrders.filter(function (o) { return !o.isSupplier; }).reverse();
+    const partnerItems = allOrders.filter(function (o) { return o.isPartner; }).reverse();
+    const addressItems = allOrders.filter(function (o) { return !o.isSupplier && !o.isPartner; }).reverse();
 
     const geocodedCount = orders.filter(function (o) { return o.geocoded; }).length;
     const failedCount = orders.filter(function (o) { return !o.geocoded && o.error; }).length;
@@ -3169,6 +3606,35 @@
       supplierListHtml += '</div></details></div>';
     }
 
+    // ─── Partner list (collapsible) ──────────────────────────
+    var filteredPartners;
+    if (editingDriverId) {
+      filteredPartners = partnerItems.filter(function (o) {
+        var did = getOrderDriverId(o.globalIndex);
+        return !did || String(did) === String(editingDriverId);
+      });
+    } else if (selectedDriver !== null) {
+      filteredPartners = partnerItems.filter(function (o) {
+        var did = getOrderDriverId(o.globalIndex);
+        return selectedDriver === '__unassigned__' ? !did : (did != null && String(did) === String(selectedDriver));
+      });
+    } else {
+      filteredPartners = partnerItems;
+    }
+    var partnerListHtml = '';
+    if (partnerItems.length > 0) {
+      partnerListHtml = '<div class="dc-section"><details class="dc-list-details dc-details-partners"' + (_partnerListOpen ? ' open' : '') + '>' +
+        '<summary class="dc-section-title dc-list-toggle" style="cursor:pointer;user-select:none;">Партнёры <span style="font-weight:400;color:#888;">(' + filteredPartners.length + ')</span></summary>' +
+        '<div class="dc-orders-list">';
+      filteredPartners.forEach(function (order) {
+        partnerListHtml += renderOrderItem(order, order.globalIndex);
+      });
+      if (filteredPartners.length === 0) {
+        partnerListHtml += '<div style="padding:12px;color:#888;font-size:12px;text-align:center;">Нет партнёров по фильтру</div>';
+      }
+      partnerListHtml += '</div></details></div>';
+    }
+
     // ─── Address list (collapsible) ──────────────────────────
     var filteredAddresses;
     if (editingDriverId) {
@@ -3198,16 +3664,17 @@
 
     var emptyHtml = '';
     if (orders.length === 0) {
-      emptyHtml = '<div class="dc-empty">Вставьте поставщиков или адреса и нажмите «На карту»</div>';
+      emptyHtml = '<div class="dc-empty">Вставьте поставщиков, партнёров или адреса и нажмите «На карту»</div>';
     }
 
     var hasSupplierOrders = supplierItems.length > 0;
+    var hasPartnerOrders = partnerItems.length > 0;
     var hasAddressOrders = addressItems.length > 0;
 
     sidebar.innerHTML =
       // ─── Supplier paste section ──────────────────────────
       '<div class="dc-section dc-bulk-section">' +
-      '<details class="dc-bulk-details"' + (!hasSupplierOrders && !hasAddressOrders ? ' open' : '') + '>' +
+      '<details class="dc-bulk-details"' + (!hasSupplierOrders && !hasPartnerOrders && !hasAddressOrders ? ' open' : '') + '>' +
       '<summary class="dc-section-title dc-bulk-toggle">Вставить список поставщиков</summary>' +
       '<div class="dc-supplier-search" style="position:relative;margin-bottom:6px;">' +
       '<input id="dcSupplierSearch" class="dc-search-input" type="text" placeholder="Поиск поставщика по базе..." autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;" />' +
@@ -3220,9 +3687,25 @@
         : '<button class="btn btn-primary dc-btn-append-suppliers" ' + (isLoadingSuppliers ? 'disabled' : '') + '>' + (isLoadingSuppliers ? '<span id="dcSupplierProgress">...</span>' : '+ Добавить') + '</button>'
       ) +
       '</div></details></div>' +
+      // ─── Partner paste section ───────────────────────────
+      '<div class="dc-section dc-bulk-section">' +
+      '<details class="dc-bulk-details"' + (!hasPartnerOrders && !hasSupplierOrders && !hasAddressOrders ? ' open' : '') + '>' +
+      '<summary class="dc-section-title dc-bulk-toggle">Вставить список партнёров</summary>' +
+      '<div class="dc-partner-search" style="position:relative;margin-bottom:6px;">' +
+      '<input id="dcPartnerSearch" class="dc-search-input" type="text" placeholder="Поиск партнёра по базе..." autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px;" />' +
+      '<div id="dcPartnerSuggest" class="dc-suggest-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e1e2e;color:#e0e0e0;border:1px solid #444;border-top:none;border-radius:0 0 6px 6px;max-height:200px;overflow-y:auto;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.4);"></div>' +
+      '</div>' +
+      '<textarea id="dcPartnerInput" class="dc-textarea" placeholder="Вставьте названия партнёров, каждый с новой строки" ' + (isLoadingPartners ? 'disabled' : '') + '>' + escapeHtml(partnerInputDraft) + '</textarea>' +
+      '<div class="dc-buttons" style="margin-top:6px;">' +
+      '<button class="btn btn-outline dc-btn-create-partner" style="border-color:#f97316;color:#f97316;">+ Новый партнёр</button>' +
+      (!hasPartnerOrders
+        ? '<button class="btn btn-primary dc-btn-load-partners" ' + (isLoadingPartners ? 'disabled' : '') + '>' + (isLoadingPartners ? '<span>...</span>' : 'Добавить список') + '</button>'
+        : '<button class="btn btn-primary dc-btn-append-partners" ' + (isLoadingPartners ? 'disabled' : '') + '>' + (isLoadingPartners ? '<span>...</span>' : '+ Добавить') + '</button>'
+      ) +
+      '</div></details></div>' +
       // ─── Address paste section ───────────────────────────
       '<div class="dc-section dc-bulk-section">' +
-      '<details class="dc-bulk-details"' + (!hasAddressOrders && !hasSupplierOrders ? ' open' : '') + '>' +
+      '<details class="dc-bulk-details"' + (!hasAddressOrders && !hasSupplierOrders && !hasPartnerOrders ? ' open' : '') + '>' +
       '<summary class="dc-section-title dc-bulk-toggle">Вставить список адресов</summary>' +
       '<textarea id="dcAddressInput" class="dc-textarea" placeholder="Вставьте адреса, каждый с новой строки\\nФормат: адрес [TAB] телефон [TAB] время" ' + (isGeocoding ? 'disabled' : '') + '>' + escapeHtml(addressInputDraft) + '</textarea>' +
       '<div class="dc-buttons" style="margin-top:6px;">' +
@@ -3232,7 +3715,7 @@
       ) +
       '</div></details></div>' +
       // Info + controls
-      (orders.length > 0 ? '<div class="dc-info">Всего точек: <strong>' + orders.length + '</strong> (поставщики: ' + supplierItems.length + ', адреса: ' + addressItems.length + ', найдено: ' + geocodedCount + (settlementOnlyCount > 0 ? ', <span style="color:#f59e0b;">уточнить: ' + settlementOnlyCount + '</span>' : '') + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
+      (orders.length > 0 ? '<div class="dc-info">Всего точек: <strong>' + orders.length + '</strong> (поставщики: ' + supplierItems.length + ', партнёры: ' + partnerItems.length + ', адреса: ' + addressItems.length + ', найдено: ' + geocodedCount + (settlementOnlyCount > 0 ? ', <span style="color:#f59e0b;">уточнить: ' + settlementOnlyCount + '</span>' : '') + (failedCount > 0 ? ', ошибок: ' + failedCount : '') + ')</div>' : '') +
       '<div class="dc-section"><div class="dc-controls">' +
       '<div class="dc-control-group"><label>Водителей</label><input type="number" id="dcDriverCount" class="dc-count-input" min="1" max="12" value="' + driverCount + '"></div>' +
       '<div class="dc-buttons">' +
@@ -3257,7 +3740,7 @@
         '</div>' +
         '<div id="dcPointSearchResults" style="display:none;margin-top:4px;max-height:200px;overflow-y:auto;border:1px solid #444;border-radius:8px;background:#1e1e2e;"></div>' +
         '</div>' : '') +
-      supplierListHtml + addressListHtml + emptyHtml;
+      supplierListHtml + partnerListHtml + addressListHtml + emptyHtml;
 
     // Bind events
     bindSidebarEvents();
@@ -3272,6 +3755,12 @@
     if (supplierInput) {
       supplierInput.addEventListener('input', function () {
         supplierInputDraft = supplierInput.value;
+      });
+    }
+    var partnerInput = sidebar.querySelector('#dcPartnerInput');
+    if (partnerInput) {
+      partnerInput.addEventListener('input', function () {
+        partnerInputDraft = partnerInput.value;
       });
     }
     var addressInput = sidebar.querySelector('#dcAddressInput');
@@ -3321,7 +3810,7 @@
               var c = di >= 0 ? COLORS[di % COLORS.length] : '#888';
               drvInfo = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + ';margin-right:4px;"></span>';
             }
-            var icon = o.isSupplier ? '📦' : '📍';
+            var icon = o.isSupplier ? '📦' : (o.isPartner ? '🤝' : '📍');
             var addr = escapeHtml(o.address);
             var fAddr = o.formattedAddress ? '<div style="font-size:10px;color:#888;margin-top:1px;">' + escapeHtml(o.formattedAddress) + '</div>' : '';
             html += '<div class="dc-point-search-item" data-order-id="' + o.id + '" data-lat="' + (o.lat || '') + '" data-lng="' + (o.lng || '') + '" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #333;transition:background .15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.05)\'" onmouseout="this.style.background=\'transparent\'">' +
@@ -3421,6 +3910,15 @@
     if (loadSuppliersBtn) loadSuppliersBtn.addEventListener('click', function () { loadSuppliers(false); });
     const appendSuppliersBtn = sidebar.querySelector('.dc-btn-append-suppliers');
     if (appendSuppliersBtn) appendSuppliersBtn.addEventListener('click', function () { loadSuppliers(true); });
+    const loadPartnersBtn = sidebar.querySelector('.dc-btn-load-partners');
+    if (loadPartnersBtn) loadPartnersBtn.addEventListener('click', function () { loadPartners(false); });
+    const appendPartnersBtn = sidebar.querySelector('.dc-btn-append-partners');
+    if (appendPartnersBtn) appendPartnersBtn.addEventListener('click', function () { loadPartners(true); });
+    const createPartnerBtn = sidebar.querySelector('.dc-btn-create-partner');
+    if (createPartnerBtn) createPartnerBtn.addEventListener('click', function (e) {
+      e.preventDefault();
+      openCreatePartnerModal();
+    });
 
     // Supplier autocomplete search
     const searchInput = sidebar.querySelector('#dcSupplierSearch');
@@ -3468,6 +3966,53 @@
       searchInput.addEventListener('focus', function () {
         if (searchInput.value.trim().length >= 1) {
           searchInput.dispatchEvent(new Event('input'));
+        }
+      });
+    }
+
+    // Partner autocomplete search
+    const partnerSearchInput = sidebar.querySelector('#dcPartnerSearch');
+    const partnerSuggestBox = sidebar.querySelector('#dcPartnerSuggest');
+    if (partnerSearchInput && partnerSuggestBox) {
+      partnerSearchInput.addEventListener('input', function () {
+        var q = partnerSearchInput.value.trim();
+        if (q.length < 1) { partnerSuggestBox.style.display = 'none'; partnerSuggestBox.innerHTML = ''; return; }
+        var results = searchPartners(q, 10);
+        if (results.length === 0) {
+          partnerSuggestBox.innerHTML = '<div style="padding:8px 12px;color:#888;font-size:12px;">Не найдено</div>';
+          partnerSuggestBox.style.display = 'block';
+          return;
+        }
+        partnerSuggestBox.innerHTML = results.map(function (p) {
+          return '<div class="dc-partner-suggest-item" data-name="' + escapeHtml(p.name) + '" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #333;transition:background .1s;color:#e0e0e0;">' +
+            '<div style="font-weight:600;color:#fff;">' + escapeHtml(p.name) + '</div>' +
+            (p.address ? '<div style="font-size:11px;color:#aaa;">' + escapeHtml(p.address) + '</div>' : '') +
+            '</div>';
+        }).join('');
+        partnerSuggestBox.style.display = 'block';
+        partnerSuggestBox.querySelectorAll('.dc-partner-suggest-item').forEach(function (item) {
+          item.addEventListener('mouseenter', function () { item.style.background = '#2a2a3e'; });
+          item.addEventListener('mouseleave', function () { item.style.background = ''; });
+          item.addEventListener('click', function () {
+            var partnerName = item.dataset.name;
+            var textarea = sidebar.querySelector('#dcPartnerInput');
+            if (textarea) {
+              var existing = textarea.value.trim();
+              textarea.value = (existing ? existing + '\n' : '') + partnerName;
+            }
+            partnerSearchInput.value = '';
+            partnerSuggestBox.style.display = 'none';
+            partnerSuggestBox.innerHTML = '';
+            partnerSearchInput.focus();
+          });
+        });
+      });
+      partnerSearchInput.addEventListener('blur', function () {
+        setTimeout(function () { partnerSuggestBox.style.display = 'none'; }, 200);
+      });
+      partnerSearchInput.addEventListener('focus', function () {
+        if (partnerSearchInput.value.trim().length >= 1) {
+          partnerSearchInput.dispatchEvent(new Event('input'));
         }
       });
     }
@@ -3638,6 +4183,12 @@
         openSupplierSearch(el.dataset.id);
       });
     });
+    sidebar.querySelectorAll('.dc-partner-not-found, .dc-partner-search-btn').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openPartnerSearch(el.dataset.id);
+      });
+    });
 
     // Enter in edit inputs
     sidebar.querySelectorAll('.dc-edit-input').forEach(function (input) {
@@ -3727,8 +4278,9 @@
   // ─── Init on tab switch ───────────────────────────────────
   async function onSectionActivated() {
     loadSupplierAliases();
+    loadPartnerAliases();
     // Load drivers and suppliers from DB
-    await Promise.all([loadDbDrivers(), loadDbSuppliers()]);
+    await Promise.all([loadDbDrivers(), loadDbSuppliers(), loadDbPartners()]);
     // Apply custom driver colors
     loadDriverColors();
     applyCustomColors();
