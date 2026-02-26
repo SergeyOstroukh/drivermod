@@ -867,10 +867,10 @@
         });
       } else if (order.isPartner) {
         // Partner: rounded square marker
-        var partnerColor = !isUnassigned ? color : '#f97316';
+        var partnerColor = !isUnassigned ? color : '#e0e0e0';
         var partnerOpacity = isVisible ? 1 : 0.25;
-        var partnerTextColor = '#fff';
-        var partnerBorder = '2px solid rgba(255,255,255,.9)';
+        var partnerTextColor = !isUnassigned ? '#fff' : '#333';
+        var partnerBorder = !isUnassigned ? '2px solid rgba(255,255,255,.9)' : '2px solid #888';
         var partnerHtml = '<div style="width:26px;height:26px;border-radius:7px;background:' + partnerColor + ';display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:' + partnerBorder + ';opacity:' + partnerOpacity + ';">' +
           '<span style="color:' + partnerTextColor + ';font-size:9px;font-weight:800;">ПР</span></div>';
         var partnerLayout = ymaps.templateLayoutFactory.createClass(partnerHtml);
@@ -1383,22 +1383,77 @@
         var rawLine = names[i].replace(/^\d+[\.):\-\s]+\s*/, '').trim();
         if (!rawLine) continue;
         orderCounter++;
-        partnerOrders.push({
-          id: 'partner-' + orderCounter + '-' + i,
-          sourcePartnerName: rawLine,
-          partnerName: rawLine,
-          address: rawLine,
-          phone: '',
-          timeSlot: null,
-          geocoded: false,
-          lat: null,
-          lng: null,
-          formattedAddress: null,
-          error: 'Выберите партнёра из поиска',
-          isPartner: true,
-          partnerDbId: null,
-          partnerData: null,
-        });
+        var partner = findPartnerInDb(rawLine);
+        if (partner) {
+          rememberPartnerAlias(rawLine, partner);
+          if (partner.lat != null && partner.lon != null) {
+            partnerOrders.push({
+              id: 'partner-' + orderCounter + '-' + i,
+              sourcePartnerName: rawLine,
+              partnerName: rawLine,
+              address: rawLine,
+              phone: '',
+              timeSlot: null,
+              geocoded: true,
+              lat: Number(partner.lat),
+              lng: Number(partner.lon),
+              formattedAddress: partner.address || (partner.lat + ', ' + partner.lon),
+              error: null,
+              isPartner: true,
+              partnerDbId: partner.id,
+              partnerData: partner,
+            });
+          } else {
+            var geocoded = false;
+            var lat = null;
+            var lng = null;
+            var formatted = null;
+            var errText = 'Нет координат — выберите точку на карте';
+            if (partner.address) {
+              try {
+                var geo = await window.DistributionGeocoder.geocodeAddress(partner.address);
+                lat = geo.lat;
+                lng = geo.lng;
+                formatted = geo.formattedAddress;
+                geocoded = true;
+                errText = null;
+              } catch (e) { /* keep unresolved */ }
+            }
+            partnerOrders.push({
+              id: 'partner-' + orderCounter + '-' + i,
+              sourcePartnerName: rawLine,
+              partnerName: rawLine,
+              address: rawLine,
+              phone: '',
+              timeSlot: null,
+              geocoded: geocoded,
+              lat: lat,
+              lng: lng,
+              formattedAddress: formatted,
+              error: errText,
+              isPartner: true,
+              partnerDbId: partner.id,
+              partnerData: partner,
+            });
+          }
+        } else {
+          partnerOrders.push({
+            id: 'partner-' + orderCounter + '-' + i,
+            sourcePartnerName: rawLine,
+            partnerName: rawLine,
+            address: rawLine,
+            phone: '',
+            timeSlot: null,
+            geocoded: false,
+            lat: null,
+            lng: null,
+            formattedAddress: null,
+            error: 'Не найден в базе — выберите из поиска',
+            isPartner: true,
+            partnerDbId: null,
+            partnerData: null,
+          });
+        }
       }
 
       orders = orders.concat(partnerOrders);
@@ -1412,7 +1467,9 @@
       _fitBoundsNext = true;
       textarea.value = '';
       partnerInputDraft = '';
-      showToast('Партнёры добавлены: ' + partnerOrders.length + '. Выберите каждого через поиск.');
+      var autoLinkedCount = partnerOrders.filter(function (p) { return !!p.partnerDbId; }).length;
+      var unresolvedCount = partnerOrders.length - autoLinkedCount;
+      showToast('Партнёры добавлены: ' + partnerOrders.length + '. Авто-привязано: ' + autoLinkedCount + (unresolvedCount > 0 ? ', требуется выбор: ' + unresolvedCount : ''));
     } catch (err) {
       console.error('loadPartners error:', err);
       showToast('Ошибка загрузки партнёров: ' + err.message, 'error');
@@ -3259,7 +3316,7 @@
     } else if (order.isSupplier) {
       numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
     } else if (order.isPartner) {
-      numBg = hasSlot ? 'background:' + color + ';color:#fff;border-radius:6px;' : (isFailed ? 'background:#ef4444;color:#fff;border-radius:6px;' : 'background:#f97316;color:#fff;border-radius:6px;');
+      numBg = hasSlot ? 'background:' + color + ';color:#fff;border-radius:6px;' : (isFailed ? 'background:#ef4444;color:#fff;border-radius:6px;' : 'background:#e0e0e0;color:#333;border:1px solid #999;border-radius:6px;');
     } else {
       numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : (isSettlementOnly ? 'background:#f59e0b;color:#fff' : 'background:#e0e0e0;color:#333;border:1px solid #999'));
     }
