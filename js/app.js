@@ -2,6 +2,7 @@
 	"use strict";
 
 	const suppliersListEl = document.getElementById("suppliersList");
+	const partnersListEl = document.getElementById("partnersList");
 	const geoStatusEl = document.getElementById("geoStatus");
 	const detectBtn = document.getElementById("detectLocationBtn");
 	const officeBtn = document.getElementById("officeBtn");
@@ -19,11 +20,14 @@
 	let currentPosition = null; // { lat, lon, accuracy }
 	let suppliers = [];
 	let filteredSuppliers = [];
+	let partners = [];
+	let filteredPartners = [];
 	let searchQuery = "";
 	let openInfoMenu = null;
 	let selectedSuppliers = new Set(); // Set of supplier names (unique identifier)
 	let pendingRoute = null; // { type: 'single' | 'multi', data: {...} }
 	let editingSupplierId = null; // ID поставщика, который редактируется
+	let editingPartnerId = null; // ID партнёра, который редактируется
 	let viewMode = localStorage.getItem("suppliersViewMode") || "cards"; // 'cards' | 'list'
 	let expandedListItem = null; // ID раскрытого элемента в списочном виде
 
@@ -612,6 +616,109 @@
 		}
 	}
 
+	function isPartnersSectionActive() {
+		const section = document.getElementById("partnersSection");
+		return !!(section && section.classList.contains("active"));
+	}
+
+	function renderPartners(list = filteredPartners) {
+		if (!partnersListEl) return;
+		partnersListEl.innerHTML = "";
+		if (!list.length) {
+			partnersListEl.innerHTML = '<li class="card">Партнёры не найдены</li>';
+			return;
+		}
+
+		for (const partner of list) {
+			const li = document.createElement("li");
+			li.className = "card";
+
+			const header = document.createElement("div");
+			header.className = "card-header";
+
+			const titleWrap = document.createElement("div");
+			titleWrap.style.display = "flex";
+			titleWrap.style.flexDirection = "column";
+
+			const name = document.createElement("h2");
+			name.textContent = partner.name || "Без названия";
+			titleWrap.appendChild(name);
+
+			if (partner.address) {
+				const addr = document.createElement("p");
+				addr.className = "card-additional-info";
+				addr.textContent = partner.address;
+				titleWrap.appendChild(addr);
+			}
+
+			const coords = document.createElement("div");
+			coords.className = "coords";
+			coords.textContent = formatCoords(partner.lat, partner.lon);
+
+			header.appendChild(titleWrap);
+			header.appendChild(coords);
+
+			const actions = document.createElement("div");
+			actions.className = "actions";
+
+			const openBtn = document.createElement("button");
+			openBtn.className = "btn btn-outline";
+			openBtn.type = "button";
+			openBtn.textContent = "Открыть точку";
+			openBtn.addEventListener("click", () => {
+				const naviPlace = buildYandexNavigatorPlaceUrl(partner.lat, partner.lon, partner.name || "");
+				const mapsPlace = buildYandexPlaceUrl(partner.lat, partner.lon);
+				openWithFallback(naviPlace, mapsPlace);
+			});
+
+			const editBtn = document.createElement("button");
+			editBtn.className = "btn btn-outline btn-icon-only";
+			editBtn.type = "button";
+			editBtn.title = "Редактировать";
+			editBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+				<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+			</svg>`;
+			editBtn.addEventListener("click", () => {
+				openPartnerModal(partner);
+			});
+
+			actions.appendChild(openBtn);
+			actions.appendChild(editBtn);
+
+			li.appendChild(header);
+			li.appendChild(actions);
+			partnersListEl.appendChild(li);
+		}
+	}
+
+	function applyPartnersFilter() {
+		const q = (searchQuery || "").trim().toLowerCase();
+		if (!q) {
+			filteredPartners = partners.slice();
+		} else {
+			filteredPartners = partners.filter((p) => (p.name || "").toLowerCase().includes(q));
+		}
+		renderPartners(filteredPartners);
+	}
+
+	async function loadPartners() {
+		try {
+			const connection = await window.PartnersDB.checkConnection();
+			if (!connection.connected) {
+				partners = [];
+				filteredPartners = [];
+				return;
+			}
+			partners = await window.PartnersDB.getAllWithId();
+			filteredPartners = partners.slice();
+		} catch (err) {
+			console.error("Ошибка загрузки партнёров:", err);
+			partners = [];
+			filteredPartners = [];
+		}
+	}
+
 	// ============================================
 	// ПЕРЕКЛЮЧЕНИЕ ВИДА (карточки / список)
 	// ============================================
@@ -1119,6 +1226,89 @@
 		}
 	}
 
+	function openPartnerModal(partner = null) {
+		const modal = document.getElementById("partnerModal");
+		const form = document.getElementById("partnerForm");
+		const title = document.getElementById("partnerModalTitle");
+		const deleteBtn = document.getElementById("deletePartnerBtn");
+		if (!modal || !form) return;
+
+		editingPartnerId = partner ? partner.id : null;
+		if (partner) {
+			title.textContent = "Редактировать партнёра";
+			document.getElementById("partnerName").value = partner.name || "";
+			document.getElementById("partnerAddress").value = partner.address || "";
+			document.getElementById("partnerLat").value = partner.lat || "";
+			document.getElementById("partnerLon").value = partner.lon || "";
+			deleteBtn.style.display = "block";
+		} else {
+			title.textContent = "Добавить партнёра";
+			form.reset();
+			deleteBtn.style.display = "none";
+		}
+
+		modal.classList.add("is-open");
+	}
+
+	function closePartnerModal() {
+		const modal = document.getElementById("partnerModal");
+		if (modal) modal.classList.remove("is-open");
+		editingPartnerId = null;
+	}
+
+	async function savePartner(formData) {
+		try {
+			const partner = {
+				name: formData.get("name").trim(),
+				address: formData.get("address")?.trim() || "",
+				lat: parseFloat(formData.get("lat")),
+				lon: parseFloat(formData.get("lon"))
+			};
+
+			if (!partner.name) {
+				alert("Название обязательно для заполнения");
+				return false;
+			}
+			if (isNaN(partner.lat) || isNaN(partner.lon)) {
+				alert("Координаты должны быть числами");
+				return false;
+			}
+
+			if (editingPartnerId) {
+				await window.PartnersDB.update(editingPartnerId, partner);
+			} else {
+				await window.PartnersDB.add(partner);
+			}
+
+			await loadPartners();
+			applyPartnersFilter();
+			closePartnerModal();
+			if (window._onPartnerSaved) {
+				try { window._onPartnerSaved(partner); } catch (e) { console.warn(e); }
+				window._onPartnerSaved = null;
+			}
+			return true;
+		} catch (err) {
+			console.error("Ошибка сохранения партнёра:", err);
+			alert("Не удалось сохранить партнёра: " + err.message);
+			return false;
+		}
+	}
+
+	async function deletePartner() {
+		if (!editingPartnerId) return;
+		if (!confirm("Вы уверены, что хотите удалить этого партнёра?")) return;
+		try {
+			await window.PartnersDB.delete(editingPartnerId);
+			await loadPartners();
+			applyPartnersFilter();
+			closePartnerModal();
+		} catch (err) {
+			console.error("Ошибка удаления партнёра:", err);
+			alert("Не удалось удалить партнёра: " + err.message);
+		}
+	}
+
 	function attachEvents() {
 		// Кнопка переключения вида
 		const viewToggleBtn = document.getElementById("viewToggleBtn");
@@ -1139,6 +1329,10 @@
 		const addSupplierBtn = document.getElementById("addSupplierBtn");
 		if (addSupplierBtn) {
 			addSupplierBtn.addEventListener("click", () => openSupplierModal());
+		}
+		const addPartnerBtn = document.getElementById("addPartnerBtn");
+		if (addPartnerBtn) {
+			addPartnerBtn.addEventListener("click", () => openPartnerModal());
 		}
 		const buildRouteBtn = document.getElementById("buildRouteBtn");
 		if (buildRouteBtn) {
@@ -1192,10 +1386,38 @@
 		if (deleteSupplierBtn) {
 			deleteSupplierBtn.addEventListener("click", deleteSupplier);
 		}
+		const partnerModal = document.getElementById("partnerModal");
+		if (partnerModal) {
+			partnerModal.addEventListener("click", (e) => {
+				if (e.target === partnerModal) {
+					closePartnerModal();
+				}
+			});
+		}
+		const partnerForm = document.getElementById("partnerForm");
+		if (partnerForm) {
+			partnerForm.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				const formData = new FormData(e.target);
+				await savePartner(formData);
+			});
+		}
+		const cancelPartnerBtn = document.getElementById("cancelPartnerBtn");
+		if (cancelPartnerBtn) {
+			cancelPartnerBtn.addEventListener("click", closePartnerModal);
+		}
+		const deletePartnerBtn = document.getElementById("deletePartnerBtn");
+		if (deletePartnerBtn) {
+			deletePartnerBtn.addEventListener("click", deletePartner);
+		}
 		if (searchInput) {
 			searchInput.addEventListener("input", (e) => {
 				searchQuery = e.target.value;
-				applyFilter();
+				if (isPartnersSectionActive()) {
+					applyPartnersFilter();
+				} else {
+					applyFilter();
+				}
 			});
 		}
 	}
@@ -1204,7 +1426,7 @@
 		setYear();
 		attachEvents();
 		updateViewToggleIcon();
-		await loadSuppliers();
+		await Promise.all([loadSuppliers(), loadPartners()]);
 		applyCurrentView();
 		detectLocation();
 	}
@@ -1213,6 +1435,18 @@
 	window.SupplierModal = {
 		open: openSupplierModal,
 		close: closeSupplierModal,
+	};
+	window.PartnersUI = {
+		onSectionActivated: async function () {
+			await loadPartners();
+			applyPartnersFilter();
+		},
+		openModal: openPartnerModal,
+		closeModal: closePartnerModal,
+	};
+	window.PartnersModal = {
+		open: openPartnerModal,
+		close: closePartnerModal,
 	};
 
 	document.addEventListener("DOMContentLoaded", init);

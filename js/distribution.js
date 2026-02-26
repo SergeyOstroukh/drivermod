@@ -1733,58 +1733,15 @@
 
   // ─── Create partner from distribution ─────────────────────
   function openCreatePartnerModal() {
-    var existing = document.getElementById('dcCreatePartnerModal');
-    if (existing) existing.remove();
-
-    var overlay = document.createElement('div');
-    overlay.id = 'dcCreatePartnerModal';
-    overlay.className = 'dc-search-modal-overlay';
-    overlay.innerHTML = '<div class="dc-search-modal" style="max-width:520px;">' +
-      '<div class="dc-search-modal-header"><h3>Новый партнёр</h3><button class="dc-search-modal-close" title="Закрыть">&times;</button></div>' +
-      '<div class="dc-search-modal-body">' +
-      '<input id="dcNewPartnerName" class="dc-search-modal-input" type="text" placeholder="Название партнёра" />' +
-      '<input id="dcNewPartnerAddress" class="dc-search-modal-input" type="text" placeholder="Адрес партнёра" style="margin-top:8px;" />' +
-      '<div style="display:flex;gap:8px;margin-top:10px;">' +
-      '<button id="dcSavePartnerBtn" class="btn btn-primary">Сохранить</button>' +
-      '<button id="dcCancelPartnerBtn" class="btn btn-outline">Отмена</button>' +
-      '</div>' +
-      '</div></div>';
-    document.body.appendChild(overlay);
-
-    function close() { var el = document.getElementById('dcCreatePartnerModal'); if (el) el.remove(); }
-
-    overlay.querySelector('.dc-search-modal-close').addEventListener('click', close);
-    overlay.querySelector('#dcCancelPartnerBtn').addEventListener('click', close);
-    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
-
-    overlay.querySelector('#dcSavePartnerBtn').addEventListener('click', async function () {
-      var name = (overlay.querySelector('#dcNewPartnerName').value || '').trim();
-      var address = (overlay.querySelector('#dcNewPartnerAddress').value || '').trim();
-      if (!name) { showToast('Введите название партнёра', 'error'); return; }
-      if (!address) { showToast('Введите адрес партнёра', 'error'); return; }
-      try {
-        var geo = await window.DistributionGeocoder.geocodeAddress(address);
-        var client = getSupabaseClient();
-        if (!client) { showToast('Supabase не настроен', 'error'); return; }
-        var resp = await client.from('partners').insert([{
-          name: name,
-          address: address,
-          lat: geo.lat,
-          lon: geo.lng,
-        }]).select('*').single();
-        if (resp.error) throw resp.error;
-        await loadDbPartners();
-        close();
-        showToast('Партнёр создан');
-      } catch (e) {
-        showToast('Ошибка создания партнёра: ' + (e.message || e), 'error');
-      }
-    });
-
-    setTimeout(function () {
-      var inp = overlay.querySelector('#dcNewPartnerName');
-      if (inp) inp.focus();
-    }, 30);
+    if (!window.PartnersModal || !window.PartnersModal.open) {
+      showToast('Модуль партнёров не загружен', 'error');
+      return;
+    }
+    window._onPartnerSaved = async function () {
+      await loadDbPartners();
+      showToast('Партнёр создан');
+    };
+    window.PartnersModal.open(null);
   }
 
   function showDistributeDialog() {

@@ -16,6 +16,7 @@
 	<header class="header">
 		<nav class="nav-tabs">
 			<button class="nav-tab active" data-section="suppliers">Поставщики</button>
+			<button class="nav-tab" data-section="partners">Партнёры</button>
 			<button class="nav-tab" data-section="drivers">Водители</button>
 			<button class="nav-tab" data-section="vehicles">Автомобили</button>
 			<button class="nav-tab" data-section="distribution" id="distributionTab" style="display:none;">Распределение</button>
@@ -42,6 +43,13 @@
 					<line x1="5" y1="12" x2="19" y2="12"></line>
 				</svg>
 				Добавить
+			</button>
+			<button id="addPartnerBtn" class="btn btn-primary" type="button" style="display:none;">
+				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<line x1="12" y1="5" x2="12" y2="19"></line>
+					<line x1="5" y1="12" x2="19" y2="12"></line>
+				</svg>
+				Добавить партнёра
 			</button>
 			<button id="officeBtn" class="btn btn-secondary" type="button">
 				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -85,6 +93,13 @@
 			<div id="suppliersAlphaList" class="alpha-list"></div>
 		</section>
 	</div>
+
+		<!-- Раздел Партнёры -->
+		<div id="partnersSection" class="content-section">
+			<section>
+				<ul id="partnersList" class="cards"></ul>
+			</section>
+		</div>
 
 		<!-- Раздел Водители -->
 		<div id="driversSection" class="content-section">
@@ -546,6 +561,35 @@
 		</div>
 	</div>
 
+	<div id="partnerModal" class="modal">
+		<div class="modal-content modal-content-large">
+			<h3 class="modal-title" id="partnerModalTitle">Добавить партнёра</h3>
+			<form id="partnerForm" class="supplier-form">
+				<div class="form-group">
+					<label for="partnerName" class="form-label">Название *</label>
+					<input type="text" id="partnerName" name="name" class="form-input" required placeholder="Например: Тривист" />
+				</div>
+				<div class="form-group">
+					<label for="partnerAddress" class="form-label">Адрес</label>
+					<input type="text" id="partnerAddress" name="address" class="form-input" placeholder="Можно оставить пустым" />
+				</div>
+				<div class="form-group">
+					<label for="partnerLat" class="form-label">Широта (lat) *</label>
+					<input type="number" id="partnerLat" name="lat" class="form-input" step="any" required placeholder="53.905398" />
+				</div>
+				<div class="form-group">
+					<label for="partnerLon" class="form-label">Долгота (lon) *</label>
+					<input type="number" id="partnerLon" name="lon" class="form-input" step="any" required placeholder="27.333704" />
+				</div>
+				<div class="form-actions">
+					<button type="submit" class="btn btn-primary modal-btn">Сохранить</button>
+					<button type="button" id="cancelPartnerBtn" class="btn btn-outline modal-btn">Отмена</button>
+					<button type="button" id="deletePartnerBtn" class="btn btn-danger modal-btn" style="display: none;">Удалить</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
 	<!-- Модальное окно для водителя -->
 	<div id="driverModal" class="modal">
 		<div class="modal-content modal-content-large">
@@ -734,7 +778,7 @@
 	<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
 	<script>
 	(function(){var v=__v,s=[
-		'js/config.js','js/db.js','js/db-vehicles.js','js/app.js',
+		'js/config.js','js/db.js','js/db-partners.js','js/db-vehicles.js','js/app.js',
 		'js/vehicles.js','js/distribution-parser.js','js/distribution-geocoder.js',
 		'js/distribution-algo.js','js/distribution.js'
 	];s.forEach(function(f){document.write('<script src="'+f+'?v='+v+'"><\/script>');});})();

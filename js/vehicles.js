@@ -49,7 +49,7 @@
 
 		// Скрываем все разделы (основные + подсекции)
 		const allSections = [
-			"suppliersSection", "driversSection", "vehiclesSection",
+			"suppliersSection", "partnersSection", "driversSection", "vehiclesSection",
 			"historySection", "mileageSection", "maintenanceSection",
 			"distributionSection", "driverRouteSection", "distributedSuppliersSection"
 		];
@@ -77,6 +77,7 @@
 		// Обновляем заголовок
 		const titles = {
 			suppliers: "Поставщики",
+			partners: "Партнёры",
 			drivers: "Водители",
 			vehicles: "Автомобили",
 			distribution: "Распределение маршрутов"
@@ -107,6 +108,21 @@
 					const btn = document.getElementById(id);
 					if (btn) btn.style.display = "";
 				});
+				const addPartnerBtn = document.getElementById("addPartnerBtn");
+				if (addPartnerBtn) addPartnerBtn.style.display = "none";
+			}
+		} else if (section === "partners") {
+			if (headerTop) headerTop.style.display = "";
+			if (appContainer) appContainer.classList.remove("dc-fullwidth");
+			if (searchInput) searchInput.style.display = "block";
+			if (headerActions) {
+				headerActions.style.display = "flex";
+				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn", "viewToggleBtn"].forEach(id => {
+					const btn = document.getElementById(id);
+					if (btn) btn.style.display = "none";
+				});
+				const addPartnerBtn = document.getElementById("addPartnerBtn");
+				if (addPartnerBtn) addPartnerBtn.style.display = "";
 			}
 		} else {
 			if (headerTop) headerTop.style.display = "";
@@ -114,7 +130,7 @@
 			if (searchInput) searchInput.style.display = "none";
 			if (headerActions) {
 				// Скрываем кнопки поставщиков
-				["addSupplierBtn", "officeBtn", "warehouseBtn", "detectLocationBtn", "viewToggleBtn"].forEach(id => {
+				["addSupplierBtn", "addPartnerBtn", "officeBtn", "warehouseBtn", "detectLocationBtn", "viewToggleBtn"].forEach(id => {
 					const btn = document.getElementById(id);
 					if (btn) btn.style.display = "none";
 				});
@@ -124,6 +140,10 @@
 		// Загружаем данные при переключении
 		if (section === "drivers") {
 			loadDrivers();
+		} else if (section === "partners") {
+			if (window.PartnersUI && window.PartnersUI.onSectionActivated) {
+				window.PartnersUI.onSectionActivated();
+			}
 		} else if (section === "vehicles") {
 			loadVehicles();
 		} else if (section === "distribution") {
