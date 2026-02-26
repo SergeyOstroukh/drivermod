@@ -266,6 +266,12 @@
     do {
       prev = cleaned;
       cleaned = cleaned.replace(/^\s*(?:общество\s+с\s+ограниченной\s+ответственностью|частное\s+предприятие|частное\s+унитарное\s+предприятие|частное\s+торговое\s+унитарное\s+предприятие|частное\s+производственное\s+унитарное\s+предприятие|индивидуальный\s+предприниматель|закрытое\s+акционерное\s+общество|открытое\s+акционерное\s+общество|публичное\s+акционерное\s+общество|акционерное\s+общество|ООО|ОДО|ЧУП|УП|ИП|ЗАО|ОАО|ПАО|АО|ЧТУП|СООО|ИООО|ЧП|СП|ФГУП|МУП)\s*/i, '');
+    } while (cleaned !== prev);
+    // If quoted company name exists, prefer it over any trailing service text.
+    var quotedMatch = cleaned.match(/[«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂]\s*([^«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂]{2,}?)\s*[«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂]/);
+    if (quotedMatch && quotedMatch[1]) cleaned = quotedMatch[1];
+    do {
+      prev = cleaned;
       cleaned = cleaned.replace(/^\s*[«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂]+\s*/g, '');
     } while (cleaned !== prev);
     // Remove all types of quotes
@@ -298,6 +304,12 @@
       prev = c;
       // Remove full and short legal forms at start (can be repeated with quotes/spaces).
       c = c.replace(/^\s*(?:общество\s+с\s+ограниченной\s+ответственностью|частное\s+предприятие|частное\s+унитарное\s+предприятие|частное\s+торговое\s+унитарное\s+предприятие|частное\s+производственное\s+унитарное\s+предприятие|индивидуальный\s+предприниматель|закрытое\s+акционерное\s+общество|открытое\s+акционерное\s+общество|публичное\s+акционерное\s+общество|акционерное\s+общество|ооо|одо|чуп|уп|ип|зао|оао|пао|ао|чтуп|сооо|иооо|чп|сп|фгуп|муп)\s*/i, '');
+    } while (c !== prev);
+    // If quoted company name exists, match by this core name only.
+    var coreQuoted = c.match(/[«»"""''\"\'„"‟❝❞⹂〝〞〟＂]\s*([^«»"""''\"\'„"‟❝❞⹂〝〞〟＂]{2,}?)\s*[«»"""''\"\'„"‟❝❞⹂〝〞〟＂]/);
+    if (coreQuoted && coreQuoted[1]) c = coreQuoted[1];
+    do {
+      prev = c;
       c = c.replace(/^\s*[«»"""''\"\'„"‟❝❞⹂〝〞〟＂]+\s*/g, '');
     } while (c !== prev);
     // Remove all quotes, punctuation, dashes, spaces
