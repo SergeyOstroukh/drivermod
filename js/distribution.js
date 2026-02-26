@@ -260,8 +260,14 @@
 
   // Strip organizational form and quotes: ООО "Название" → Название
   function stripOrgForm(s) {
-    // Remove org form prefixes: ООО, ОДО, ЧУП, УП, ИП, ЗАО, ОАО, ЧТУП, СООО, ИООО, etc.
-    var cleaned = s.replace(/^(?:ООО|ОДО|ЧУП|УП|ИП|ЗАО|ОАО|ЧТУП|СООО|ИООО|ЧП|СП)\s*/i, '');
+    var cleaned = String(s || '');
+    // Remove legal form prefixes (short and full forms), including "Частное предприятие".
+    var prev;
+    do {
+      prev = cleaned;
+      cleaned = cleaned.replace(/^\s*(?:общество\s+с\s+ограниченной\s+ответственностью|частное\s+предприятие|частное\s+унитарное\s+предприятие|частное\s+торговое\s+унитарное\s+предприятие|частное\s+производственное\s+унитарное\s+предприятие|индивидуальный\s+предприниматель|закрытое\s+акционерное\s+общество|открытое\s+акционерное\s+общество|публичное\s+акционерное\s+общество|акционерное\s+общество|ООО|ОДО|ЧУП|УП|ИП|ЗАО|ОАО|ПАО|АО|ЧТУП|СООО|ИООО|ЧП|СП|ФГУП|МУП)\s*/i, '');
+      cleaned = cleaned.replace(/^\s*[«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂]+\s*/g, '');
+    } while (cleaned !== prev);
     // Remove all types of quotes
     cleaned = cleaned.replace(/[«»""\"\"''\'\'„"‟❝❞⹂〝〞〟＂]/g, '');
     return cleaned.trim();
@@ -286,16 +292,14 @@
 
   // Compact string for comparison: strip org form, quotes, ALL spaces, punctuation → single slug
   function compactName(s) {
-    var c = s.toLowerCase();
-    // Remove full org forms first ("Общество с ограниченной ответственностью" etc.)
-    c = c.replace(/^общество\s+с\s+ограниченной\s+ответственностью\s*/i, '');
-    c = c.replace(/^индивидуальный\s+предприниматель\s*/i, '');
-    c = c.replace(/^закрытое\s+акционерное\s+общество\s*/i, '');
-    c = c.replace(/^открытое\s+акционерное\s+общество\s*/i, '');
-    c = c.replace(/^публичное\s+акционерное\s+общество\s*/i, '');
-    c = c.replace(/^акционерное\s+общество\s*/i, '');
-    // Remove short org forms
-    c = c.replace(/^(?:ооо|одо|чуп|уп|ип|зао|оао|пао|ао|чтуп|сооо|иооо|чп|сп|фгуп|муп)\s*/i, '');
+    var c = String(s || '').toLowerCase();
+    var prev;
+    do {
+      prev = c;
+      // Remove full and short legal forms at start (can be repeated with quotes/spaces).
+      c = c.replace(/^\s*(?:общество\s+с\s+ограниченной\s+ответственностью|частное\s+предприятие|частное\s+унитарное\s+предприятие|частное\s+торговое\s+унитарное\s+предприятие|частное\s+производственное\s+унитарное\s+предприятие|индивидуальный\s+предприниматель|закрытое\s+акционерное\s+общество|открытое\s+акционерное\s+общество|публичное\s+акционерное\s+общество|акционерное\s+общество|ооо|одо|чуп|уп|ип|зао|оао|пао|ао|чтуп|сооо|иооо|чп|сп|фгуп|муп)\s*/i, '');
+      c = c.replace(/^\s*[«»"""''\"\'„"‟❝❞⹂〝〞〟＂]+\s*/g, '');
+    } while (c !== prev);
     // Remove all quotes, punctuation, dashes, spaces
     c = c.replace(/[«»"""''\"\'„"‟❝❞⹂〝〞〟＂\s\-–—.,;:!?()[\]{}/\\+&]/g, '');
     // ё → е
