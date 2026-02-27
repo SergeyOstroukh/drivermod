@@ -55,6 +55,19 @@ serve(async (req) => {
         return new Response("OK", { status: 200 });
       }
 
+      // Load latest confirmation row for this order (if any)
+      const { data: existing } = await supabase
+        .from("telegram_confirmations")
+        .select("id,status,message_id")
+        .eq("order_id", orderId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      const existingRow = existing && existing.length > 0 ? existing[0] : null;
+      const isDuplicate =
+        !!existingRow &&
+        existingRow.status === newStatus &&
+        Number(existingRow.message_id || 0) === Number(messageId || 0);
+
       // 1. Answer callback query immediately (driver sees popup)
       const answerText = action === "accept" ? "✅ Принято!"
         : action === "pickup" ? "📦 Отмечено как забранное!"
@@ -69,8 +82,8 @@ serve(async (req) => {
         }),
       });
 
-      // 2. Update inline buttons based on action
-      if (chatId && messageId) {
+      // 2. Update inline buttons based on action (skip duplicate retries)
+      if (!isDuplicate && chatId && messageId) {
         if (action === "accept") {
           // Replace with "Забрал" button
           await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
@@ -137,19 +150,11 @@ serve(async (req) => {
       }
 
       // 3. Save confirmation to database
-      // Try to update existing record first, insert if not found
-      const { data: existing } = await supabase
-        .from("telegram_confirmations")
-        .select("id")
-        .eq("order_id", orderId)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (existing && existing.length > 0) {
+      if (existingRow) {
         await supabase
           .from("telegram_confirmations")
           .update({ status: newStatus, updated_at: new Date().toISOString() })
-          .eq("id", existing[0].id);
+          .eq("id", existingRow.id);
       } else {
         await supabase.from("telegram_confirmations").insert({
           order_id: orderId,
