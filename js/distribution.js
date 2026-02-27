@@ -38,6 +38,8 @@
   let _lastAppliedCloudTs = 0;
   let _lastLocalMutationTs = 0;
   let _selectedOrderIds = {};
+  let _mapSelectMode = false;
+  let _lastSavedStateSig = '';
 
   // Водители из БД
   let dbDrivers = [];
@@ -535,6 +537,15 @@
     });
   }
 
+  function toggleSelectedOrder(orderId, forceValue) {
+    if (!orderId) return;
+    if (typeof forceValue === 'boolean') {
+      _selectedOrderIds[orderId] = forceValue;
+    } else {
+      _selectedOrderIds[orderId] = !_selectedOrderIds[orderId];
+    }
+  }
+
   function getDriverFullName(slotIdx) {
     const driverId = driverSlots[slotIdx];
     if (!driverId) return 'Водитель ' + (slotIdx + 1);
@@ -560,6 +571,18 @@
     };
   }
 
+  function buildStateSignature() {
+    return JSON.stringify({
+      orders: orders,
+      assignments: assignments,
+      driverCount: driverCount,
+      activeVariant: activeVariant,
+      driverSlots: driverSlots,
+      poiCoords: poiCoords,
+      schemaVersion: 1,
+    });
+  }
+
   function applyStateSnapshot(data) {
     if (!data || !Array.isArray(data.orders)) return false;
     orders = data.orders;
@@ -575,6 +598,7 @@
       variants = [];
       activeVariant = -1;
     }
+    _lastSavedStateSig = buildStateSignature();
     return true;
   }
 
@@ -673,6 +697,9 @@
 
   function saveState() {
     try {
+      var sig = buildStateSignature();
+      if (sig === _lastSavedStateSig) return;
+      _lastSavedStateSig = sig;
       var data = buildStateSnapshot();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       if (!_isApplyingCloudState) {
@@ -1206,12 +1233,33 @@
           var el = document.querySelector('.dc-order-item[data-order-id="' + orderId + '"]');
           if (el) el.classList.remove('dc-order-highlighted');
         });
+        pm.events.add('click', function (e) {
+          if (!_mapSelectMode) return;
+          try { e.preventDefault(); } catch (err) { /* ignore */ }
+          toggleSelectedOrder(orderId);
+          renderAll();
+          showToast('Выбор на карте: ' + (Object.keys(_selectedOrderIds).filter(function (id) { return _selectedOrderIds[id]; }).length));
+        });
       })(order.id);
 
       pm.__orderId = order.id;
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
       bounds.push([plat, plng]);
+
+      // Selection ring for map-selection mode
+      if (_selectedOrderIds[order.id]) {
+        var selRingHtml = '<div style="width:34px;height:34px;border-radius:50%;border:3px solid #22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.35);background:rgba(34,197,94,.08);pointer-events:none;"></div>';
+        var selLayout = ymaps.templateLayoutFactory.createClass(selRingHtml);
+        var selRing = new ymaps.Placemark([plat, plng], {}, {
+          iconLayout: selLayout,
+          iconOffset: [-17, -17],
+          iconShape: { type: 'Circle', coordinates: [17, 17], radius: 17 },
+          zIndex: 4500,
+        });
+        mapInstance.geoObjects.add(selRing);
+        placemarks.push(selRing);
+      }
 
       // KBT ring (circle inside circle)
       if (order.isKbt && isVisible) {
@@ -3645,7 +3693,6 @@
     var hasSlot = slotIdx >= 0;
     var isSelected = !!_selectedOrderIds[order.id];
     var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (hasSlot ? 'border-left-color:' + color + ';' : '') + (isSelected ? 'box-shadow:inset 0 0 0 2px #22c55e;' : '') + '">';
-    html += '<label style="display:flex;align-items:center;gap:4px;margin-right:6px;cursor:pointer;"><input type="checkbox" class="dc-select-order" data-id="' + order.id + '"' + (isSelected ? ' checked' : '') + '><span style="font-size:10px;color:#6ee7b7;">✓</span></label>';
     var numBg;
     if (order.isPoi) {
       numBg = 'background:' + (hasSlot ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
@@ -3918,7 +3965,10 @@
       bulkAssignHtml = '<div class="dc-section" style="border:1px solid #2f3c2f;border-radius:10px;padding:8px;background:rgba(34,197,94,0.08);">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">' +
         '<div style="font-size:12px;color:#a7f3d0;">Выбрано точек: <b style="color:#22c55e;">' + selectedCount + '</b></div>' +
+        '<div style="display:flex;gap:4px;">' +
+        '<button class="btn btn-outline btn-sm dc-map-select-toggle" style="font-size:10px;padding:2px 8px;border-color:' + (_mapSelectMode ? '#22c55e' : '#555') + ';color:' + (_mapSelectMode ? '#22c55e' : '#999') + ';">' + (_mapSelectMode ? 'Выбор на карте: ВКЛ' : 'Выбор на карте') + '</button>' +
         '<button class="btn btn-outline btn-sm dc-clear-selection" style="font-size:10px;padding:2px 8px;">Снять выбор</button>' +
+        '</div>' +
         '</div>' +
         '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + bulkButtons + '</div>' +
         '</div>';
@@ -4468,14 +4518,16 @@
       });
     });
 
-    // Multi-select checkboxes
-    sidebar.querySelectorAll('.dc-select-order').forEach(function (cb) {
-      cb.addEventListener('click', function (e) { e.stopPropagation(); });
-      cb.addEventListener('change', function () {
-        _selectedOrderIds[cb.dataset.id] = !!cb.checked;
+    // Toggle map selection mode
+    var mapSelectBtn = sidebar.querySelector('.dc-map-select-toggle');
+    if (mapSelectBtn) {
+      mapSelectBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        _mapSelectMode = !_mapSelectMode;
         renderAll();
+        showToast(_mapSelectMode ? 'Режим выбора на карте включен' : 'Режим выбора на карте выключен');
       });
-    });
+    }
     // Clear selection
     var clearSelBtn = sidebar.querySelector('.dc-clear-selection');
     if (clearSelBtn) {
