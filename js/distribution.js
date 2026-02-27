@@ -36,6 +36,8 @@
   let _isApplyingCloudState = false;
   let _allowEmptyCloudWriteUntil = 0;
   let _lastAppliedCloudTs = 0;
+  let _lastLocalMutationTs = 0;
+  let _selectedOrderIds = {};
 
   // Водители из БД
   let dbDrivers = [];
@@ -521,6 +523,18 @@
     return d ? d.name.split(' ')[0] : '?';
   }
 
+  function markLocalMutation() {
+    _lastLocalMutationTs = Date.now();
+  }
+
+  function pruneSelectedOrders() {
+    var alive = {};
+    orders.forEach(function (o) { alive[o.id] = true; });
+    Object.keys(_selectedOrderIds).forEach(function (id) {
+      if (!alive[id]) delete _selectedOrderIds[id];
+    });
+  }
+
   function getDriverFullName(slotIdx) {
     const driverId = driverSlots[slotIdx];
     if (!driverId) return 'Водитель ' + (slotIdx + 1);
@@ -691,6 +705,7 @@
 
   async function pullCloudStateIfNewer(silent) {
     if (_cloudTableMissing || _isApplyingCloudState) return;
+    if (Date.now() - _lastLocalMutationTs < 3500) return;
     if (editingOrderId || placingOrderId || isGeocoding) return;
     var ae = document.activeElement;
     if (ae && (ae.id === 'dcSupplierInput' || ae.id === 'dcAddressInput' || ae.id === 'dcPartnerInput')) return;
@@ -1275,6 +1290,7 @@
   // even if its DOM element is destroyed during renderAll().
 
   window.__dc_assign = function (globalIdx, driverIdx) {
+    markLocalMutation();
     if (!assignments) {
       assignments = [];
       for (var i = 0; i < orders.length; i++) assignments.push(-1);
@@ -1289,6 +1305,7 @@
 
   // Direct assignment by driver_id (no distribute needed)
   window.__dc_assignDirect = function (globalIdx, driverId) {
+    markLocalMutation();
     var order = orders[globalIdx];
     if (!order) return;
     var oldDriverId = getOrderDriverId(globalIdx);
@@ -1310,6 +1327,41 @@
     if (driverId) scheduleSyncDriver(String(driverId));
     if (oldDriverId && String(oldDriverId) !== String(driverId)) scheduleSyncDriver(String(oldDriverId));
   };
+
+  function bulkAssignSelectedToDriver(driverId) {
+    var selectedIds = Object.keys(_selectedOrderIds).filter(function (id) { return _selectedOrderIds[id]; });
+    if (selectedIds.length === 0) {
+      showToast('Сначала выберите точки');
+      return;
+    }
+    markLocalMutation();
+    var affected = {};
+    var assignedCount = 0;
+    selectedIds.forEach(function (oid) {
+      var idx = orders.findIndex(function (o) { return o.id === oid; });
+      if (idx < 0) return;
+      var order = orders[idx];
+      var oldDriverId = getOrderDriverId(idx);
+      var normalizedDriverId = driverId;
+      if (driverId != null && dbDrivers.length > 0) {
+        var match = dbDrivers.find(function (d) { return String(d.id) === String(driverId); });
+        normalizedDriverId = match ? match.id : driverId;
+      }
+      order.assignedDriverId = normalizedDriverId || null;
+      if (!normalizedDriverId && assignments && assignments[idx] >= 0) {
+        assignments = assignments.slice();
+        assignments[idx] = -1;
+      }
+      if (normalizedDriverId) affected[String(normalizedDriverId)] = true;
+      if (oldDriverId && String(oldDriverId) !== String(normalizedDriverId)) affected[String(oldDriverId)] = true;
+      assignedCount++;
+    });
+    activeVariant = -1;
+    _selectedOrderIds = {};
+    renderAll();
+    Object.keys(affected).forEach(function (did) { scheduleSyncDriver(did); });
+    showToast('Назначено точек: ' + assignedCount);
+  }
 
   // Debounced auto-sync: batches rapid assignments into one DB call per driver
   var _syncTimers = {};
@@ -3591,7 +3643,9 @@
     if (isPlacing) itemClass += ' placing';
 
     var hasSlot = slotIdx >= 0;
-    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (hasSlot ? 'border-left-color:' + color : '') + '">';
+    var isSelected = !!_selectedOrderIds[order.id];
+    var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (hasSlot ? 'border-left-color:' + color + ';' : '') + (isSelected ? 'box-shadow:inset 0 0 0 2px #22c55e;' : '') + '">';
+    html += '<label style="display:flex;align-items:center;gap:4px;margin-right:6px;cursor:pointer;"><input type="checkbox" class="dc-select-order" data-id="' + order.id + '"' + (isSelected ? ' checked' : '') + '><span style="font-size:10px;color:#6ee7b7;">✓</span></label>';
     var numBg;
     if (order.isPoi) {
       numBg = 'background:' + (hasSlot ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
@@ -3852,6 +3906,24 @@
         '</div>';
     }
 
+    pruneSelectedOrders();
+    var selectedCount = Object.keys(_selectedOrderIds).filter(function (id) { return _selectedOrderIds[id]; }).length;
+    var bulkAssignHtml = '';
+    if (orders.length > 0) {
+      var bulkButtons = dbDrivers.map(function (dr, di) {
+        var c = COLORS[di % COLORS.length];
+        var shortName = escapeHtml((dr.name || '').split(' ')[0] || ('Водитель ' + (di + 1)));
+        return '<button class="dc-bulk-assign-btn" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:10px;border:1px solid #2a2a2a;background:' + c + ';color:#fff;cursor:pointer;font-size:11px;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.5);"></span>' + shortName + '</button>';
+      }).join('');
+      bulkAssignHtml = '<div class="dc-section" style="border:1px solid #2f3c2f;border-radius:10px;padding:8px;background:rgba(34,197,94,0.08);">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">' +
+        '<div style="font-size:12px;color:#a7f3d0;">Выбрано точек: <b style="color:#22c55e;">' + selectedCount + '</b></div>' +
+        '<button class="btn btn-outline btn-sm dc-clear-selection" style="font-size:10px;padding:2px 8px;">Снять выбор</button>' +
+        '</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' + bulkButtons + '</div>' +
+        '</div>';
+    }
+
     // ─── Supplier list (collapsible) ─────────────────────────
     var filteredSuppliers = supplierItems;
     if (editingDriverId) {
@@ -4028,7 +4100,7 @@
       }).join('') +
       '</div></div>' +
       variantsHtml +
-      driverListHtml + finishHtml +
+      driverListHtml + finishHtml + bulkAssignHtml +
       // ─── Search through loaded points ───────────────────────
       (orders.length > 0 ? '<div class="dc-section dc-search-section" style="position:relative;">' +
         '<div style="display:flex;align-items:center;gap:6px;">' +
@@ -4393,6 +4465,32 @@
         var idx = parseInt(btn.dataset.idx);
         var driverId = btn.dataset.driverId;
         window.__dc_assignDirect(idx, parseInt(driverId));
+      });
+    });
+
+    // Multi-select checkboxes
+    sidebar.querySelectorAll('.dc-select-order').forEach(function (cb) {
+      cb.addEventListener('click', function (e) { e.stopPropagation(); });
+      cb.addEventListener('change', function () {
+        _selectedOrderIds[cb.dataset.id] = !!cb.checked;
+        renderAll();
+      });
+    });
+    // Clear selection
+    var clearSelBtn = sidebar.querySelector('.dc-clear-selection');
+    if (clearSelBtn) {
+      clearSelBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        _selectedOrderIds = {};
+        renderAll();
+      });
+    }
+    // Bulk assign selected points
+    sidebar.querySelectorAll('.dc-bulk-assign-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        bulkAssignSelectedToDriver(parseInt(btn.dataset.driverId, 10));
       });
     });
 
