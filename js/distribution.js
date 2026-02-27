@@ -683,7 +683,8 @@
   async function pullCloudStateIfNewer(silent) {
     if (_cloudTableMissing || _isApplyingCloudState) return;
     if (editingOrderId || placingOrderId || isGeocoding) return;
-    if (supplierInputDraft || addressInputDraft || partnerInputDraft) return;
+    var ae = document.activeElement;
+    if (ae && (ae.id === 'dcSupplierInput' || ae.id === 'dcAddressInput' || ae.id === 'dcPartnerInput')) return;
 
     var local = readLocalState();
     var localTs = local && local.updatedAt ? Number(local.updatedAt) : 0;
@@ -706,6 +707,7 @@
 
   function startCloudStatePolling() {
     stopCloudStatePolling();
+    pullCloudStateIfNewer(true);
     _cloudPullTimer = setInterval(function () {
       if (document.hidden) return;
       var section = document.getElementById('distributionSection');
