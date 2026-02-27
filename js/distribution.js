@@ -31,8 +31,10 @@
   let editingOrderId = null;
   let _cloudSaveTimer = null;
   let _cloudPullTimer = null;
+  let _cloudRealtimeChannel = null;
   let _cloudTableMissing = false;
   let _isApplyingCloudState = false;
+  let _allowEmptyCloudWriteUntil = 0;
 
   // Водители из БД
   let dbDrivers = [];
@@ -601,6 +603,10 @@
   async function saveCloudState(snapshot) {
     var client = getSupabaseClient();
     if (!client || _cloudTableMissing) return;
+    // Safety: do not overwrite shared cloud state with an accidental empty payload.
+    if ((!snapshot.orders || snapshot.orders.length === 0) && Date.now() > _allowEmptyCloudWriteUntil) {
+      return;
+    }
     try {
       var routeDate = getStateDateKey();
       var resp = await client
@@ -627,7 +633,10 @@
 
   function flushCloudStateSave() {
     clearTimeout(_cloudSaveTimer);
-    saveCloudState(buildStateSnapshot());
+    var snap = buildStateSnapshot();
+    if (snap.orders && snap.orders.length > 0) {
+      saveCloudState(snap);
+    }
   }
 
   async function clearCloudState() {
@@ -691,6 +700,12 @@
     var cloud = await loadCloudState();
     var cloudTs = cloud && cloud.updatedAt ? Number(cloud.updatedAt) : 0;
 
+    // Safety: never auto-replace non-empty local work with empty cloud payload.
+    if (local && Array.isArray(local.orders) && local.orders.length > 0 &&
+        cloud && cloud.state && Array.isArray(cloud.state.orders) && cloud.state.orders.length === 0) {
+      return;
+    }
+
     if (!cloud || !cloud.state || cloudTs <= localTs) return;
     if (!applyStateSnapshot(cloud.state)) return;
 
@@ -723,9 +738,41 @@
     }
   }
 
+  function startCloudRealtimeSync() {
+    stopCloudRealtimeSync();
+    var client = getSupabaseClient();
+    if (!client || _cloudTableMissing) return;
+    var routeDate = getStateDateKey();
+    try {
+      _cloudRealtimeChannel = client
+        .channel('dc_distribution_state_' + routeDate)
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: DISTRIBUTION_STATE_TABLE,
+          filter: 'state_date=eq.' + routeDate
+        }, function () {
+          if (document.hidden) return;
+          pullCloudStateIfNewer(true);
+        })
+        .subscribe();
+    } catch (e) {
+      console.warn('Cloud realtime subscribe error:', e);
+    }
+  }
+
+  function stopCloudRealtimeSync() {
+    var client = getSupabaseClient();
+    if (_cloudRealtimeChannel && client && client.removeChannel) {
+      try { client.removeChannel(_cloudRealtimeChannel); } catch (e) { /* ignore */ }
+    }
+    _cloudRealtimeChannel = null;
+  }
+
   function clearState() {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
     clearTimeout(_cloudSaveTimer);
+    _allowEmptyCloudWriteUntil = Date.now() + 5000;
     clearCloudState();
   }
 
@@ -733,8 +780,10 @@
     if (document.visibilityState === 'hidden') {
       flushCloudStateSave();
       stopCloudStatePolling();
+      stopCloudRealtimeSync();
     } else {
       startCloudStatePolling();
+      startCloudRealtimeSync();
     }
   });
   window.addEventListener('beforeunload', function () {
@@ -2512,6 +2561,11 @@
       orders = keep;
       assignments = keepA.length > 0 ? keepA : null;
       variants = []; activeVariant = -1;
+
+      // If everything was removed via partial clear, clear shared state explicitly.
+      if (orders.length === 0) {
+        clearState();
+      }
 
       var label = type === 'suppliers' ? 'поставщиков' : (type === 'addresses' ? 'адресов' : 'точек');
       var who = isAll ? '' : (' у ' + driverName);
@@ -4544,6 +4598,7 @@
     var hasPending = orders.some(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; });
     if (hasPending) startTelegramPolling();
     startCloudStatePolling();
+    startCloudRealtimeSync();
   }
 
   // Expose for navigation
