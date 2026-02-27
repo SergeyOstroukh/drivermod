@@ -11,6 +11,7 @@
   const COLORS = window.DistributionAlgo.DRIVER_COLORS;
   const ORIGINAL_COLORS = COLORS.slice();
   const STORAGE_KEY = 'dc_distribution_data';
+  const DISTRIBUTION_STATE_TABLE = 'distribution_state';
   const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
   const PARTNER_ALIASES_KEY = 'dc_partner_aliases';
 
@@ -28,6 +29,8 @@
   let _hoveredOrderPlacemark = null;
   let placingOrderId = null;
   let editingOrderId = null;
+  let _cloudSaveTimer = null;
+  let _cloudTableMissing = false;
 
   // Водители из БД
   let dbDrivers = [];
@@ -520,52 +523,171 @@
     return d ? d.name : 'Водитель ' + (slotIdx + 1);
   }
 
-  // ─── Persistence (localStorage) ───────────────────────────
+  // ─── Persistence (localStorage + Supabase cloud state) ────
+  function getStateDateKey() {
+    return new Date().toISOString().split('T')[0];
+  }
+
+  function buildStateSnapshot() {
+    return {
+      orders: orders,
+      assignments: assignments,
+      driverCount: driverCount,
+      activeVariant: activeVariant,
+      driverSlots: driverSlots,
+      poiCoords: poiCoords,
+      updatedAt: Date.now(),
+      schemaVersion: 1,
+    };
+  }
+
+  function applyStateSnapshot(data) {
+    if (!data || !Array.isArray(data.orders)) return false;
+    orders = data.orders;
+    assignments = data.assignments || null;
+    driverCount = data.driverCount || 3;
+    activeVariant = data.activeVariant != null ? data.activeVariant : -1;
+    driverSlots = data.driverSlots || [];
+    poiCoords = data.poiCoords || {};
+    while (driverSlots.length < driverCount) driverSlots.push(null);
+    if (assignments && orders.length > 0) {
+      variants = window.DistributionAlgo.generateVariants(orders, driverCount);
+    } else {
+      variants = [];
+      activeVariant = -1;
+    }
+    return true;
+  }
+
+  function readLocalState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || !Array.isArray(data.orders)) return null;
+      return data;
+    } catch (e) {
+      console.warn('localStorage load error:', e);
+      return null;
+    }
+  }
+
+  async function loadCloudState() {
+    var client = getSupabaseClient();
+    if (!client || _cloudTableMissing) return null;
+    try {
+      var routeDate = getStateDateKey();
+      var resp = await client
+        .from(DISTRIBUTION_STATE_TABLE)
+        .select('state_json, updated_at')
+        .eq('state_date', routeDate)
+        .limit(1)
+        .maybeSingle();
+      if (resp.error) {
+        if (resp.error.code === '42P01') _cloudTableMissing = true;
+        return null;
+      }
+      if (!resp.data || !resp.data.state_json) return null;
+      var ts = Date.parse(resp.data.updated_at || '') || 0;
+      return { state: resp.data.state_json, updatedAt: ts };
+    } catch (e) {
+      console.warn('Cloud state load error:', e);
+      return null;
+    }
+  }
+
+  async function saveCloudState(snapshot) {
+    var client = getSupabaseClient();
+    if (!client || _cloudTableMissing) return;
+    try {
+      var routeDate = getStateDateKey();
+      var resp = await client
+        .from(DISTRIBUTION_STATE_TABLE)
+        .upsert({
+          state_date: routeDate,
+          state_json: snapshot,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'state_date' });
+      if (resp.error && resp.error.code === '42P01') {
+        _cloudTableMissing = true;
+      }
+    } catch (e) {
+      console.warn('Cloud state save error:', e);
+    }
+  }
+
+  function scheduleCloudStateSave(snapshot) {
+    clearTimeout(_cloudSaveTimer);
+    _cloudSaveTimer = setTimeout(function () {
+      saveCloudState(snapshot);
+    }, 1200);
+  }
+
+  function flushCloudStateSave() {
+    clearTimeout(_cloudSaveTimer);
+    saveCloudState(buildStateSnapshot());
+  }
+
+  async function clearCloudState() {
+    var client = getSupabaseClient();
+    if (!client || _cloudTableMissing) return;
+    try {
+      var routeDate = getStateDateKey();
+      var resp = await client
+        .from(DISTRIBUTION_STATE_TABLE)
+        .delete()
+        .eq('state_date', routeDate);
+      if (resp.error && resp.error.code === '42P01') {
+        _cloudTableMissing = true;
+      }
+    } catch (e) {
+      console.warn('Cloud state clear error:', e);
+    }
+  }
+
   function saveState() {
     try {
-      const data = {
-        orders: orders,
-        assignments: assignments,
-        driverCount: driverCount,
-        activeVariant: activeVariant,
-        driverSlots: driverSlots,
-        poiCoords: poiCoords,
-      };
+      var data = buildStateSnapshot();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      scheduleCloudStateSave(data);
     } catch (e) {
       console.warn('localStorage save error:', e);
     }
   }
 
   function loadState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const data = JSON.parse(raw);
-      if (data.orders && data.orders.length > 0) {
-        orders = data.orders;
-        assignments = data.assignments || null;
-        driverCount = data.driverCount || 3;
-        activeVariant = data.activeVariant != null ? data.activeVariant : -1;
-        driverSlots = data.driverSlots || [];
-        poiCoords = data.poiCoords || {};
-        // Ensure driverSlots has correct length
-        while (driverSlots.length < driverCount) driverSlots.push(null);
-        // Regenerate variants if we had assignments
-        if (assignments && orders.length > 0) {
-          variants = window.DistributionAlgo.generateVariants(orders, driverCount);
-        }
+    var local = readLocalState();
+    return local ? applyStateSnapshot(local) : false;
+  }
+
+  async function loadBestAvailableState() {
+    var local = readLocalState();
+    var cloud = await loadCloudState();
+    var localTs = local && local.updatedAt ? Number(local.updatedAt) : 0;
+    var cloudTs = cloud && cloud.updatedAt ? Number(cloud.updatedAt) : 0;
+
+    if (cloud && cloud.state && cloudTs >= localTs) {
+      if (applyStateSnapshot(cloud.state)) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cloud.state)); } catch (e) { /* ignore */ }
         return true;
       }
-    } catch (e) {
-      console.warn('localStorage load error:', e);
     }
+    if (local) return applyStateSnapshot(local);
     return false;
   }
 
   function clearState() {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
+    clearTimeout(_cloudSaveTimer);
+    clearCloudState();
   }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushCloudStateSave();
+  });
+  window.addEventListener('beforeunload', function () {
+    flushCloudStateSave();
+  });
 
   // ─── Driver custom colors ─────────────────────────────────
   function loadDriverColors() {
@@ -4352,9 +4474,9 @@
     // Apply custom driver colors
     loadDriverColors();
     applyCustomColors();
-    // Restore saved data on first activation
+    // Restore saved data on first activation (prefer freshest: cloud vs local)
     if (orders.length === 0) {
-      loadState();
+      await loadBestAvailableState();
     }
     // Ensure 1C items are loaded even after page refresh/session restore.
     if (orders.some(function (o) { return o.isSupplier; })) {
