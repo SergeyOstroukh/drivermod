@@ -3158,6 +3158,8 @@
 						items1c: pt.items1c || null,
 						itemsSent: !!pt.itemsSent,
 						itemsSentText: pt.itemsSentText || null,
+						_source: 'history',
+						_routeCreatedAt: route.created_at || null,
 					});
 				});
 			});
@@ -3199,46 +3201,17 @@
 			allDrivers = [];
 		}
 
-		// For today, enrich history rows with actual in-memory telegram state
-		// from DistributionUI (status can change after route snapshot was saved).
+		// For today, append live rows from DistributionUI.
+		// They represent the current assignment and should win over history snapshots.
 		if (isTodaySelected && window.DistributionUI && window.DistributionUI.getDistributedSuppliers) {
 			const liveRows = window.DistributionUI.getDistributedSuppliers() || [];
-			const normalize = function (s) { return String(s || '').trim().toLowerCase(); };
-			const keyOf = function (r) {
-				return normalize(r.supplierName || r.address) + '|' + String(r.driverId || '');
-			};
-			const liveByKey = {};
 			liveRows.forEach(function (r) {
-				liveByKey[keyOf(r)] = r;
-			});
-
-			allSuppliers = allSuppliers.map(function (row) {
-				const live = liveByKey[keyOf(row)];
-				if (!live) return row;
-				return {
-					...row,
-					telegramStatus: live.telegramStatus || row.telegramStatus || null,
-					telegramSent: !!(live.telegramSent || row.telegramSent),
-					items1c: live.items1c || row.items1c || null,
-					itemsSent: !!(live.itemsSent || row.itemsSent),
-					itemsSentText: live.itemsSentText || row.itemsSentText || null,
-				};
-			});
-
-			// Include live-only rows too (e.g. still active, not in saved history yet)
-			const existingKeys = {};
-			allSuppliers.forEach(function (r) { existingKeys[keyOf(r)] = true; });
-			liveRows.forEach(function (r) {
-				const k = keyOf(r);
-				if (!existingKeys[k]) {
-					allSuppliers.push({ ...r });
-					existingKeys[k] = true;
-				}
+				allSuppliers.push({ ...r, _source: 'live', _routeCreatedAt: null });
 			});
 		}
 
-		// Keep one factual row per supplier+driver to avoid duplicate entries
-		// when multiple route snapshots/trips were saved during the day.
+		// Keep one factual row per supplier.
+		// This prevents showing old driver assignments after reassignment.
 		const statusWeight = {
 			'picked_up': 3,
 			'confirmed': 2,
@@ -3246,10 +3219,14 @@
 			'rejected': 0
 		};
 		const bySupplier = {};
+		const toTs = function (v) {
+			if (!v) return 0;
+			const ts = Date.parse(v);
+			return Number.isFinite(ts) ? ts : 0;
+		};
 		allSuppliers.forEach(function (r) {
-			const nameKey = String(r.supplierName || r.address || '').trim().toLowerCase();
-			const driverKey = String(r.driverId || '');
-			const key = nameKey + '|' + driverKey;
+			const key = String(r.supplierName || r.address || '').trim().toLowerCase();
+			const nameKey = key;
 			if (!nameKey) return;
 
 			if (!bySupplier[key]) {
@@ -3258,6 +3235,26 @@
 			}
 
 			const prev = bySupplier[key];
+			const prevLive = prev._source === 'live';
+			const nextLive = r._source === 'live';
+
+			// Current in-memory row always wins over saved route snapshots.
+			if (nextLive && !prevLive) {
+				bySupplier[key] = { ...prev, ...r };
+				return;
+			}
+			if (!nextLive && prevLive) {
+				return;
+			}
+
+			// Prefer newer route snapshot when both rows are from history.
+			const prevTs = toTs(prev._routeCreatedAt);
+			const nextTs = toTs(r._routeCreatedAt);
+			if (nextTs > prevTs) {
+				bySupplier[key] = { ...prev, ...r };
+				return;
+			}
+
 			const prevWeight = statusWeight[prev.telegramStatus] != null ? statusWeight[prev.telegramStatus] : -1;
 			const nextWeight = statusWeight[r.telegramStatus] != null ? statusWeight[r.telegramStatus] : -1;
 

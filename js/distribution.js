@@ -1109,6 +1109,8 @@
     });
 
     var bounds = [];
+    var renderedByOverlap = {};
+    var overlapAnchors = {};
     geocoded.forEach(function (order) {
       try {
       var globalIdx = orders.indexOf(order);
@@ -1246,6 +1248,11 @@
       mapInstance.geoObjects.add(pm);
       placemarks.push(pm);
       bounds.push([plat, plng]);
+      var orderOverlapKey = overlapKey(order);
+      renderedByOverlap[orderOverlapKey] = (renderedByOverlap[orderOverlapKey] || 0) + 1;
+      if (!overlapAnchors[orderOverlapKey]) {
+        overlapAnchors[orderOverlapKey] = [order.lat, order.lng];
+      }
 
       // Selection ring for map-selection mode
       if (_selectedOrderIds[order.id]) {
@@ -1274,6 +1281,24 @@
         placemarks.push(ring);
       }
       } catch (e) { console.error('Placemark error for order', order.id, e); }
+    });
+
+    // Overlap count badge (one compact number per place with 2+ visible points)
+    Object.keys(renderedByOverlap).forEach(function (k) {
+      var count = renderedByOverlap[k];
+      if (count < 2) return;
+      var anchor = overlapAnchors[k];
+      if (!anchor) return;
+      var badgeHtml = '<div style="min-width:15px;height:15px;padding:0 4px;border-radius:999px;background:rgba(17,24,39,.92);border:1px solid rgba(255,255,255,.65);color:#fff;font-size:10px;font-weight:700;line-height:13px;text-align:center;box-shadow:0 1px 4px rgba(0,0,0,.4);pointer-events:none;">' + count + '</div>';
+      var badgeLayout = ymaps.templateLayoutFactory.createClass(badgeHtml);
+      var badgePm = new ymaps.Placemark(anchor, {}, {
+        iconLayout: badgeLayout,
+        iconOffset: [-8, -31],
+        iconShape: { type: 'Circle', coordinates: [0, 0], radius: 0 },
+        zIndex: 4600,
+      });
+      mapInstance.geoObjects.add(badgePm);
+      placemarks.push(badgePm);
     });
 
     if (_fitBoundsNext && bounds.length > 0) {
@@ -1676,6 +1701,19 @@
       }
     }
 
+    // Add supplier orders immediately so UI shows rows right away.
+    // Suppliers without coordinates will appear on map progressively as geocoding resolves.
+    orders = orders.concat(supplierOrders);
+    if (prevAssignments) {
+      assignments = prevAssignments.slice();
+      for (var a = 0; a < supplierOrders.length; a++) assignments.push(-1);
+    } else if (!append) {
+      // Reset distribution since we replaced suppliers
+      assignments = null; variants = []; activeVariant = -1;
+    }
+    _fitBoundsNext = true;
+    renderAll();
+
     // Geocode suppliers that have address in DB but no coordinates
     for (var g = 0; g < needGeocode.length; g++) {
       var so = needGeocode[g];
@@ -1689,17 +1727,8 @@
         so.error = null;
         found++;
         notFound--;
+        renderAll();
       } catch (e) { /* keep as not found */ }
-    }
-
-    // Add supplier orders to main orders array
-    orders = orders.concat(supplierOrders);
-    if (prevAssignments) {
-      assignments = prevAssignments.slice();
-      for (var a = 0; a < supplierOrders.length; a++) assignments.push(-1);
-    } else if (!append) {
-      // Reset distribution since we replaced suppliers
-      assignments = null; variants = []; activeVariant = -1;
     }
 
     _fitBoundsNext = true;
