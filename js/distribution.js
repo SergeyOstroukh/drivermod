@@ -35,6 +35,7 @@
   let _cloudTableMissing = false;
   let _isApplyingCloudState = false;
   let _allowEmptyCloudWriteUntil = 0;
+  let _lastAppliedCloudTs = 0;
 
   // Водители из БД
   let dbDrivers = [];
@@ -676,11 +677,10 @@
   async function loadBestAvailableState() {
     var local = readLocalState();
     var cloud = await loadCloudState();
-    var localTs = local && local.updatedAt ? Number(local.updatedAt) : 0;
-    var cloudTs = cloud && cloud.updatedAt ? Number(cloud.updatedAt) : 0;
-
-    if (cloud && cloud.state && cloudTs >= localTs) {
+    // Cloud is the source of truth across computers.
+    if (cloud && cloud.state) {
       if (applyStateSnapshot(cloud.state)) {
+        _lastAppliedCloudTs = cloud.updatedAt || 0;
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cloud.state)); } catch (e) { /* ignore */ }
         return true;
       }
@@ -695,19 +695,19 @@
     var ae = document.activeElement;
     if (ae && (ae.id === 'dcSupplierInput' || ae.id === 'dcAddressInput' || ae.id === 'dcPartnerInput')) return;
 
-    var local = readLocalState();
-    var localTs = local && local.updatedAt ? Number(local.updatedAt) : 0;
     var cloud = await loadCloudState();
     var cloudTs = cloud && cloud.updatedAt ? Number(cloud.updatedAt) : 0;
 
     // Safety: never auto-replace non-empty local work with empty cloud payload.
+    var local = readLocalState();
     if (local && Array.isArray(local.orders) && local.orders.length > 0 &&
         cloud && cloud.state && Array.isArray(cloud.state.orders) && cloud.state.orders.length === 0) {
       return;
     }
 
-    if (!cloud || !cloud.state || cloudTs <= localTs) return;
+    if (!cloud || !cloud.state || cloudTs <= _lastAppliedCloudTs) return;
     if (!applyStateSnapshot(cloud.state)) return;
+    _lastAppliedCloudTs = cloudTs;
 
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cloud.state)); } catch (e) { /* ignore */ }
 
