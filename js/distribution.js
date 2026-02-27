@@ -30,7 +30,9 @@
   let placingOrderId = null;
   let editingOrderId = null;
   let _cloudSaveTimer = null;
+  let _cloudPullTimer = null;
   let _cloudTableMissing = false;
+  let _isApplyingCloudState = false;
 
   // Водители из БД
   let dbDrivers = [];
@@ -649,7 +651,9 @@
     try {
       var data = buildStateSnapshot();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      scheduleCloudStateSave(data);
+      if (!_isApplyingCloudState) {
+        scheduleCloudStateSave(data);
+      }
     } catch (e) {
       console.warn('localStorage save error:', e);
     }
@@ -676,6 +680,47 @@
     return false;
   }
 
+  async function pullCloudStateIfNewer(silent) {
+    if (_cloudTableMissing || _isApplyingCloudState) return;
+    if (editingOrderId || placingOrderId || isGeocoding) return;
+    if (supplierInputDraft || addressInputDraft || partnerInputDraft) return;
+
+    var local = readLocalState();
+    var localTs = local && local.updatedAt ? Number(local.updatedAt) : 0;
+    var cloud = await loadCloudState();
+    var cloudTs = cloud && cloud.updatedAt ? Number(cloud.updatedAt) : 0;
+
+    if (!cloud || !cloud.state || cloudTs <= localTs) return;
+    if (!applyStateSnapshot(cloud.state)) return;
+
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cloud.state)); } catch (e) { /* ignore */ }
+
+    _isApplyingCloudState = true;
+    try {
+      renderAll();
+      if (!silent) showToast('Данные распределения обновлены из облака');
+    } finally {
+      _isApplyingCloudState = false;
+    }
+  }
+
+  function startCloudStatePolling() {
+    stopCloudStatePolling();
+    _cloudPullTimer = setInterval(function () {
+      if (document.hidden) return;
+      var section = document.getElementById('distributionSection');
+      if (!section || section.offsetParent === null) return;
+      pullCloudStateIfNewer(true);
+    }, 5000);
+  }
+
+  function stopCloudStatePolling() {
+    if (_cloudPullTimer) {
+      clearInterval(_cloudPullTimer);
+      _cloudPullTimer = null;
+    }
+  }
+
   function clearState() {
     try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
     clearTimeout(_cloudSaveTimer);
@@ -683,7 +728,12 @@
   }
 
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'hidden') flushCloudStateSave();
+    if (document.visibilityState === 'hidden') {
+      flushCloudStateSave();
+      stopCloudStatePolling();
+    } else {
+      startCloudStatePolling();
+    }
   });
   window.addEventListener('beforeunload', function () {
     flushCloudStateSave();
@@ -4491,6 +4541,7 @@
     // Start auto-polling if there are pending Telegram confirmations
     var hasPending = orders.some(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; });
     if (hasPending) startTelegramPolling();
+    startCloudStatePolling();
   }
 
   // Expose for navigation
