@@ -1301,8 +1301,9 @@
       placemarks.push(badgePm);
     });
 
+    // Don't change map zoom/center automatically when points change.
+    // Just reset the flag so future renders behave normally.
     if (_fitBoundsNext && bounds.length > 0) {
-      mapInstance.setBounds(ymaps.util.bounds.fromPoints(bounds), { checkZoomRange: true, zoomMargin: 40 });
       _fitBoundsNext = false;
     }
 
