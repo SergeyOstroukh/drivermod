@@ -40,6 +40,9 @@
   let _selectedOrderIds = {};
   let _mapSelectMode = false;
   let _lastSavedStateSig = '';
+  let _autoCompletedDateKey = '';
+  let _yesterdayCompletedKey = '';
+  let _dayRolloverCheckTimer = null;
 
   // Водители из БД
   let dbDrivers = [];
@@ -3178,6 +3181,149 @@
     }
   }
 
+  // ─── Auto-complete at 23:00 (prevent day carry-over) ───
+  async function finishAllForDriver(driverId) {
+    var routeDate = getStateDateKey();
+    var points = [];
+    var orderIndicesToRemove = [];
+
+    orders.forEach(function (order, idx) {
+      if (order.isPoi || !order.geocoded) return;
+      var did = getOrderDriverId(idx);
+      if (!did || String(did) !== String(driverId)) return;
+
+      var pt = {
+        address: order.address,
+        lat: order.lat,
+        lng: order.lng,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        formattedAddress: order.formattedAddress || null,
+        orderNum: points.length + 1,
+      };
+      if (order.isSupplier) {
+        pt.isSupplier = true;
+        pt.telegramSent = !!order.telegramSent;
+        pt.telegramStatus = order.telegramStatus || null;
+        pt.items1c = order.items1c || null;
+        pt.itemsSent = !!order.itemsSent;
+        pt.itemsSentText = order.itemsSentText || null;
+      }
+      if (order.isPartner) {
+        pt.isPartner = true;
+        pt.partnerName = order.partnerName || order.address || null;
+      }
+      if (order.isKbt) {
+        pt.isKbt = true;
+        if (order.helperDriverSlot != null) {
+          var helperDrv = dbDrivers[order.helperDriverSlot];
+          pt.helperDriverName = helperDrv ? helperDrv.name : '?';
+          pt.helperDriverId = helperDrv ? helperDrv.id : null;
+        }
+      }
+      points.push(pt);
+      orderIndicesToRemove.push(idx);
+    });
+
+    if (points.length === 0) return;
+    var savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId, 10), routeDate, points);
+    if (savedRoute && savedRoute.id) {
+      await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+    }
+    orderIndicesToRemove.sort(function (a, b) { return b - a; });
+    orderIndicesToRemove.forEach(function (idx) {
+      orders.splice(idx, 1);
+      if (assignments) assignments.splice(idx, 1);
+    });
+    variants = [];
+    activeVariant = -1;
+  }
+
+  async function autoCompleteDayAt2300() {
+    var routeDate = getStateDateKey();
+    if (_autoCompletedDateKey === routeDate) return;
+    if (orders.length === 0) {
+      _autoCompletedDateKey = routeDate;
+      return;
+    }
+
+    var driverIds = {};
+    orders.forEach(function (o, idx) {
+      if (!o.geocoded || o.isPoi) return;
+      var did = getOrderDriverId(idx);
+      if (!did) return;
+      driverIds[String(did)] = true;
+    });
+    var dids = Object.keys(driverIds);
+    if (dids.length === 0) {
+      _autoCompletedDateKey = routeDate;
+      return;
+    }
+
+    try {
+      for (var i = 0; i < dids.length; i++) {
+        await finishAllForDriver(dids[i]);
+      }
+      _autoCompletedDateKey = routeDate;
+      _allowEmptyCloudWriteUntil = Date.now() + 10000;
+      renderAll();
+      flushCloudStateSave();
+      showToast('Маршруты автоматически завершены в 23:00. Данные сохранены за ' + routeDate);
+    } catch (err) {
+      console.warn('autoCompleteDayAt2300 error:', err);
+    }
+  }
+
+  async function completeYesterdayActiveRoutes() {
+    var now = new Date();
+    if (now.getHours() !== 0 || now.getMinutes() > 5) return;
+    var yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    var yesterdayStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
+    if (_yesterdayCompletedKey === yesterdayStr) return;
+    if (!window.VehiclesDB || !window.VehiclesDB.getActiveRoutes || !window.VehiclesDB.completeDriverRoute) return;
+    try {
+      var routes = await window.VehiclesDB.getActiveRoutes(yesterdayStr);
+      for (var i = 0; i < (routes || []).length; i++) {
+        if (routes[i] && routes[i].id) {
+          await window.VehiclesDB.completeDriverRoute(routes[i].id);
+        }
+      }
+      _yesterdayCompletedKey = yesterdayStr;
+      if (routes && routes.length > 0) {
+        showToast('Активные маршруты за ' + yesterdayStr + ' отмечены как завершённые');
+      }
+    } catch (e) {
+      console.warn('completeYesterdayActiveRoutes error:', e);
+    }
+  }
+
+  function runDayRolloverCheck() {
+    var now = new Date();
+    var todayKey = now.toISOString().split('T')[0];
+    var hour = now.getHours();
+    var min = now.getMinutes();
+
+    if (hour === 0 && min < 5) {
+      completeYesterdayActiveRoutes();
+    }
+    if (hour === 23 && _autoCompletedDateKey !== todayKey) {
+      autoCompleteDayAt2300();
+    }
+  }
+
+  function startDayRolloverCheck() {
+    stopDayRolloverCheck();
+    runDayRolloverCheck();
+    _dayRolloverCheckTimer = setInterval(runDayRolloverCheck, 60000);
+  }
+
+  function stopDayRolloverCheck() {
+    if (_dayRolloverCheckTimer) {
+      clearInterval(_dayRolloverCheckTimer);
+      _dayRolloverCheckTimer = null;
+    }
+  }
+
   // ─── Send all unsent suppliers to Telegram ─────────────
   async function sendToTelegram() {
     var botToken = window.TELEGRAM_BOT_TOKEN;
@@ -4707,6 +4853,7 @@
     if (hasPending) startTelegramPolling();
     startCloudStatePolling();
     startCloudRealtimeSync();
+    startDayRolloverCheck();
   }
 
   // Expose for navigation
@@ -4774,6 +4921,7 @@
 
   // Auto-init if section is already visible
   document.addEventListener('DOMContentLoaded', function () {
+    startDayRolloverCheck();
     const section = document.getElementById('distributionSection');
     if (section && section.classList.contains('active')) {
       onSectionActivated();
