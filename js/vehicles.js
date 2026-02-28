@@ -314,13 +314,13 @@
 
 	// ─── График смен (общая таблица) ─────────────────────────────
 	const DAY_LABELS = ["ВС", "ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
-	const STATUS_NEXT = { work: "off", off: "sick", sick: "extra", extra: "work" };
-	const STATUS_LETTER = { work: "P", off: "В", sick: "Б", extra: "Д" };
+	const STATUS_LETTER = { work: "P", off: "В", sick: "Б", extra: "Д", vacation: "О" };
 	const STATUS_STYLE = {
 		work: "background:rgba(74,222,128,0.25);color:#22c55e;border:1px solid rgba(34,197,94,0.4);",
 		off: "background:rgba(148,163,184,0.2);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);",
 		sick: "background:rgba(96,165,250,0.2);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);",
-		extra: "background:rgba(250,204,21,0.2);color:#eab308;border:1px solid rgba(250,204,21,0.4);"
+		extra: "background:rgba(250,204,21,0.2);color:#eab308;border:1px solid rgba(250,204,21,0.4);",
+		vacation: "background:rgba(168,85,247,0.2);color:#a78bfa;border:1px solid rgba(168,85,247,0.4);"
 	};
 	let scheduleSelectedCells = [];
 
@@ -496,14 +496,14 @@
 				td.dataset.status = status;
 				if (canEdit) {
 					td.style.cursor = "pointer";
-					td.title = "Клик: смена. Ctrl+клик: выбор. Shift+клик: диапазон.";
-					td.addEventListener("click", async (e) => {
-						const driverId = driver.id;
+					td.title = "Ctrl+клик: выбор ячеек. Shift+клик: диапазон. Кнопки ниже — применить статус.";
+					td.addEventListener("click", (e) => {
 						if (e.ctrlKey || e.metaKey) {
 							const idx = scheduleSelectedCells.indexOf(td);
 							if (idx >= 0) scheduleSelectedCells.splice(idx, 1);
 							else scheduleSelectedCells.push(td);
 							updateScheduleSelectionUI();
+							lastClickedCell = td;
 							return;
 						}
 						if (e.shiftKey && lastClickedCell) {
@@ -519,11 +519,6 @@
 							}
 							return;
 						}
-						if (scheduleSelectedCells.length > 0) return;
-						const next = STATUS_NEXT[status];
-						applyStatusToCell(td, next);
-						await window.VehiclesDB.setDriverScheduleSlot(driverId, dateStr, next);
-						status = next;
 						lastClickedCell = td;
 					});
 				}
@@ -532,6 +527,21 @@
 			tbody.appendChild(tr);
 		});
 
+		const today = new Date();
+		const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+		const workingToday = visible.filter(d => {
+			const override = overrides[d.id]?.[todayStr];
+			const st = override || getStatusByScheme(d.schedule_scheme || "5x2", today.getFullYear(), today.getMonth() + 1, today.getDate());
+			return st === "work" || st === "extra";
+		});
+		const listEl = document.getElementById("scheduleTodayList");
+		if (listEl) {
+			if (workingToday.length) {
+				listEl.innerHTML = workingToday.map(d => d.name || "—").join("<br>");
+			} else {
+				listEl.textContent = "Никого";
+			}
+		}
 	}
 
 	async function applyStatusToSelectedCells(status) {
@@ -552,8 +562,9 @@
 		if (openBtn) openBtn.addEventListener("click", openSchedule);
 		if (backBtn) backBtn.addEventListener("click", closeSchedule);
 		if (monthInput) monthInput.addEventListener("change", () => renderScheduleTable());
-		["work", "off", "sick", "extra"].forEach(s => {
-			const btn = document.getElementById("scheduleSet" + (s === "work" ? "Work" : s === "off" ? "Off" : s === "sick" ? "Sick" : "Extra"));
+		["work", "off", "sick", "extra", "vacation"].forEach(s => {
+			const id = "scheduleSet" + (s === "work" ? "Work" : s === "off" ? "Off" : s === "sick" ? "Sick" : s === "extra" ? "Extra" : "Vacation");
+			const btn = document.getElementById(id);
 			if (btn) btn.addEventListener("click", () => applyStatusToSelectedCells(s));
 		});
 		const clearBtn = document.getElementById("scheduleClearSelection");

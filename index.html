@@ -144,13 +144,14 @@
 				<label class="form-label" style="margin:0;">Месяц:</label>
 				<input type="month" id="scheduleMonthInput" class="form-input" style="width:auto;" />
 			</div>
-			<p style="margin:0;font-size:12px;color:var(--muted);">P — рабочий, В — выходной, Б — больничный, Д — доп. Ctrl+клик — выбор нескольких дней, Shift+клик — диапазон. Редактировать может только логист.</p>
+			<p style="margin:0;font-size:12px;color:var(--muted);">P — рабочий, В — выходной, Б — больничный, Д — доп, О — отпуск. Только Ctrl+клик — выбор ячеек, Shift+клик — диапазон, кнопки ниже — применить статус. Редактировать может только логист.</p>
 			<div id="scheduleToolbar" style="display:none;align-items:center;gap:8px;margin-top:8px;">
 				<span style="font-size:12px;color:var(--muted);">Выбрано дней: <strong id="scheduleSelectedCount">0</strong></span>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetWork">P — рабочий</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetOff">В — выходной</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetSick">Б — больничный</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetExtra">Д — доп</button>
+				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetVacation">О — отпуск</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleClearSelection">Снять выбор</button>
 			</div>
 		</section>
@@ -158,12 +159,18 @@
 			<span style="color:var(--muted);">Вне графика:</span>
 			<span id="scheduleHiddenDriversList"></span>
 		</div>
-		<section class="schedule-table-wrap" style="overflow-x:auto;">
-			<table id="scheduleTable" class="schedule-table" style="min-width:800px;border-collapse:collapse;">
-				<thead id="scheduleTableHead"></thead>
-				<tbody id="scheduleTableBody"></tbody>
-			</table>
-		</section>
+		<div class="schedule-layout" style="display:flex;gap:16px;align-items:flex-start;">
+			<section class="schedule-table-wrap" style="overflow-x:auto;flex:1;min-width:0;">
+				<table id="scheduleTable" class="schedule-table" style="min-width:800px;border-collapse:collapse;">
+					<thead id="scheduleTableHead"></thead>
+					<tbody id="scheduleTableBody"></tbody>
+				</table>
+			</section>
+			<aside id="scheduleTodayPanel" class="schedule-today-panel" style="flex-shrink:0;min-width:180px;padding:12px;background:rgba(15,23,42,0.6);border-radius:8px;border:1px solid rgba(71,85,105,0.5);">
+				<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--muted);">Сегодня на смене</div>
+				<div id="scheduleTodayList" style="font-size:12px;line-height:1.6;"></div>
+			</aside>
+		</div>
 	</div>
 
 	<!-- Раздел Распределённые поставщики -->
