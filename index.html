@@ -144,13 +144,14 @@
 				<label class="form-label" style="margin:0;">Месяц:</label>
 				<input type="month" id="scheduleMonthInput" class="form-input" style="width:auto;" />
 			</div>
-			<p style="margin:0;font-size:12px;color:var(--muted);">P — рабочий, В — выходной, Б — больничный, Д — доп, О — отпуск. Только Ctrl+клик — выбор ячеек, Shift+клик — диапазон, кнопки ниже — применить статус. Редактировать может только логист.</p>
+			<p style="margin:0;font-size:12px;color:var(--muted);">P — рабочий, В — выходной, Б — больничный, доп — доп, Д — дежурный, О — отпуск. Пробег обязателен только для P и доп. Только Ctrl+клик — выбор ячеек.</p>
 			<div id="scheduleToolbar" style="display:none;align-items:center;gap:8px;margin-top:8px;">
 				<span style="font-size:12px;color:var(--muted);">Выбрано дней: <strong id="scheduleSelectedCount">0</strong></span>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetWork">P — рабочий</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetOff">В — выходной</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetSick">Б — больничный</button>
-				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetExtra">Д — доп</button>
+				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetExtra">доп</button>
+				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetDuty">Д — дежурный</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleSetVacation">О — отпуск</button>
 				<button type="button" class="btn btn-outline btn-sm" id="scheduleClearSelection">Снять выбор</button>
 			</div>
@@ -167,7 +168,7 @@
 				</table>
 			</section>
 			<aside id="scheduleTodayPanel" class="schedule-today-panel" style="flex-shrink:0;min-width:180px;padding:12px;background:rgba(15,23,42,0.6);border-radius:8px;border:1px solid rgba(71,85,105,0.5);">
-				<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--muted);">Сегодня на смене</div>
+				<div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--muted);">Сегодня на смене (P, доп, Д)</div>
 				<div id="scheduleTodayList" style="font-size:12px;line-height:1.6;"></div>
 			</aside>
 		</div>

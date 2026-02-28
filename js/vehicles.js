@@ -314,13 +314,14 @@
 
 	// ─── График смен (общая таблица) ─────────────────────────────
 	const DAY_LABELS = ["ВС", "ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
-	const STATUS_LETTER = { work: "P", off: "В", sick: "Б", extra: "Д", vacation: "О" };
+	const STATUS_LETTER = { work: "P", off: "В", sick: "Б", extra: "доп", vacation: "О", duty: "Д" };
 	const STATUS_STYLE = {
 		work: "background:rgba(74,222,128,0.25);color:#22c55e;border:1px solid rgba(34,197,94,0.4);",
 		off: "background:rgba(148,163,184,0.2);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);",
 		sick: "background:rgba(96,165,250,0.2);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);",
 		extra: "background:rgba(250,204,21,0.2);color:#eab308;border:1px solid rgba(250,204,21,0.4);",
-		vacation: "background:rgba(168,85,247,0.2);color:#a78bfa;border:1px solid rgba(168,85,247,0.4);"
+		vacation: "background:rgba(168,85,247,0.2);color:#a78bfa;border:1px solid rgba(168,85,247,0.4);",
+		duty: "background:rgba(251,146,60,0.2);color:#fb923c;border:1px solid rgba(251,146,60,0.4);"
 	};
 	let scheduleSelectedCells = [];
 
@@ -532,7 +533,7 @@
 		const workingToday = visible.filter(d => {
 			const override = overrides[d.id]?.[todayStr];
 			const st = override || getStatusByScheme(d.schedule_scheme || "5x2", today.getFullYear(), today.getMonth() + 1, today.getDate());
-			return st === "work" || st === "extra";
+			return st === "work" || st === "extra" || st === "duty";
 		});
 		const listEl = document.getElementById("scheduleTodayList");
 		if (listEl) {
@@ -562,8 +563,8 @@
 		if (openBtn) openBtn.addEventListener("click", openSchedule);
 		if (backBtn) backBtn.addEventListener("click", closeSchedule);
 		if (monthInput) monthInput.addEventListener("change", () => renderScheduleTable());
-		["work", "off", "sick", "extra", "vacation"].forEach(s => {
-			const id = "scheduleSet" + (s === "work" ? "Work" : s === "off" ? "Off" : s === "sick" ? "Sick" : s === "extra" ? "Extra" : "Vacation");
+		["work", "off", "sick", "extra", "duty", "vacation"].forEach(s => {
+			const id = "scheduleSet" + (s === "work" ? "Work" : s === "off" ? "Off" : s === "sick" ? "Sick" : s === "extra" ? "Extra" : s === "duty" ? "Duty" : "Vacation");
 			const btn = document.getElementById(id);
 			if (btn) btn.addEventListener("click", () => applyStatusToSelectedCells(s));
 		});
