@@ -396,7 +396,26 @@
 	// ЛОГ ПРОБЕГА
 	// ============================================
 
-	async function getMileageLog(vehicleId, startDate = null, endDate = null) {
+		/**
+		 * Возвращает ID автомобилей, для которых заполнен пробег за указанную дату
+		 */
+		async function getMileageFilledVehicleIdsForDate(dateStr) {
+			try {
+				const client = initSupabase();
+				const { data, error } = await client
+					.from('vehicle_mileage_log')
+					.select('vehicle_id')
+					.eq('log_date', dateStr);
+				if (error) throw error;
+				const ids = [...new Set((data || []).map(r => r.vehicle_id))];
+				return ids;
+			} catch (err) {
+				console.error('Ошибка getMileageFilledVehicleIdsForDate:', err);
+				return [];
+			}
+		}
+
+		async function getMileageLog(vehicleId, startDate = null, endDate = null) {
 		try {
 			const client = initSupabase();
 			let query = client
@@ -1029,6 +1048,7 @@
 		updateHistoryEntry,
 		deleteHistoryEntry,
 		// Лог пробега
+		getMileageFilledVehicleIdsForDate,
 		getMileageLog,
 		addMileageLog,
 		updateMileageLog,

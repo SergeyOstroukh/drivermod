@@ -617,6 +617,19 @@
 				<small class="form-hint">Для рассылки маршрутов. Водитель должен написать боту /start</small>
 			</div>
 			<div class="form-group">
+				<label class="form-label">График работы</label>
+				<div class="driver-work-days" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+					<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" name="work_days" value="1" class="driver-work-day-cb" /> Пн</label>
+					<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" name="work_days" value="2" class="driver-work-day-cb" /> Вт</label>
+					<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" name="work_days" value="3" class="driver-work-day-cb" /> Ср</label>
+					<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" name="work_days" value="4" class="driver-work-day-cb" /> Чт</label>
+					<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" name="work_days" value="5" class="driver-work-day-cb" /> Пт</label>
+					<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" name="work_days" value="6" class="driver-work-day-cb" /> Сб</label>
+					<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" name="work_days" value="7" class="driver-work-day-cb" /> Вс</label>
+				</div>
+				<small class="form-hint">Отметьте дни выхода на смену. Пусто = все дни</small>
+			</div>
+			<div class="form-group">
 				<label for="driverNotes" class="form-label">Примечания</label>
 				<textarea id="driverNotes" name="notes" class="form-textarea" rows="3" placeholder="Дополнительная информация..."></textarea>
 			</div>

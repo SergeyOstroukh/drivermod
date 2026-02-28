@@ -3,6 +3,8 @@
 
 	let drivers = [];
 	let vehicles = [];
+	/** ID автомобилей, для которых заполнен пробег за сегодня (для индикатора на карточке) */
+	let mileageFilledTodayVehicleIds = new Set();
 	let editingDriverId = null;
 	let editingVehicleId = null;
 	let currentRole = null; // 'driver' or 'logist'
@@ -231,6 +233,16 @@
 				titleWrap.appendChild(tgInfo);
 			}
 
+			const dayNames = ["", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+			if (driver.work_days) {
+				const days = driver.work_days.toString().split(",").map(s => s.trim()).filter(Boolean);
+				const labels = days.map(d => dayNames[parseInt(d, 10)] || d).filter(Boolean);
+				const scheduleLine = document.createElement("p");
+				scheduleLine.className = "card-subtitle";
+				scheduleLine.textContent = "📅 График: " + (labels.length ? labels.join(", ") : "все дни");
+				titleWrap.appendChild(scheduleLine);
+			}
+
 			if (driver.notes) {
 				const notes = document.createElement("p");
 				notes.className = "card-additional-info";
@@ -288,10 +300,15 @@
 			document.getElementById("driverLicenseExpiry").value = driver.license_expiry || "";
 			document.getElementById("driverTelegram").value = driver.telegram_chat_id || "";
 			document.getElementById("driverNotes").value = driver.notes || "";
+			const workDays = (driver.work_days || "").toString().split(",").map(s => s.trim()).filter(Boolean);
+			form.querySelectorAll(".driver-work-day-cb").forEach(cb => {
+				cb.checked = workDays.indexOf(cb.value) !== -1;
+			});
 			deleteBtn.style.display = "block";
 		} else {
 			title.textContent = "Добавить водителя";
 			form.reset();
+			form.querySelectorAll(".driver-work-day-cb").forEach(cb => { cb.checked = false; });
 			deleteBtn.style.display = "none";
 		}
 
@@ -308,13 +325,20 @@
 
 	async function saveDriver(formData) {
 		try {
+			const driverForm = document.getElementById("driverForm");
+			const workDaysChecked = driverForm ? driverForm.querySelectorAll(".driver-work-day-cb:checked") : [];
+			let work_days = null;
+			if (workDaysChecked.length > 0 && workDaysChecked.length < 7) {
+				work_days = Array.from(workDaysChecked).map(cb => cb.value).sort().join(",");
+			}
 			const driver = {
 				name: formData.get("name").trim(),
 				phone: formData.get("phone")?.trim() || null,
 				license_number: formData.get("license_number")?.trim() || null,
 				license_expiry: formData.get("license_expiry") || null,
 				telegram_chat_id: formData.get("telegram_chat_id") ? parseInt(formData.get("telegram_chat_id")) : null,
-				notes: formData.get("notes")?.trim() || null
+				notes: formData.get("notes")?.trim() || null,
+				work_days: work_days
 			};
 
 			if (!driver.name) {
@@ -718,11 +742,15 @@
 	async function loadVehicles() {
 		try {
 			vehicles = await window.VehiclesDB.getAllVehicles();
-			await loadDrivers(); // Загружаем водителей для выпадающего списка
+			await loadDrivers();
+			const today = new Date().toISOString().split("T")[0];
+			const filledIds = await window.VehiclesDB.getMileageFilledVehicleIdsForDate(today);
+			mileageFilledTodayVehicleIds = new Set(filledIds || []);
 			renderVehicles();
 		} catch (err) {
 			console.error("Ошибка загрузки автомобилей:", err);
 			vehicles = [];
+			mileageFilledTodayVehicleIds = new Set();
 			renderVehicles();
 		}
 	}
@@ -805,6 +833,21 @@
 				mileageInfo.textContent = `📊 Пробег: ${vehicle.mileage.toLocaleString()} км`;
 				titleWrap.appendChild(mileageInfo);
 			}
+
+			// Индикатор: пробег за смену заполнен сегодня
+			const mileageFilledToday = mileageFilledTodayVehicleIds.has(vehicle.id);
+			const shiftMileageLine = document.createElement("p");
+			shiftMileageLine.className = "card-subtitle";
+			shiftMileageLine.style.fontWeight = "500";
+			if (mileageFilledToday) {
+				shiftMileageLine.style.color = "var(--success, #22c55e)";
+				shiftMileageLine.textContent = "✅ Пробег за смену: заполнен";
+			} else {
+				shiftMileageLine.style.color = "var(--danger, #ef4444)";
+				shiftMileageLine.textContent = "⚠️ Пробег за смену: не заполнен";
+			}
+			shiftMileageLine.title = mileageFilledToday ? "Данные за сегодня внесены" : "Введите пробег за смену";
+			titleWrap.appendChild(shiftMileageLine);
 
 			// Расход топлива
 			if (vehicle.fuel_consumption) {
