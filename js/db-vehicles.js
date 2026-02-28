@@ -98,6 +98,60 @@
 	}
 
 	// ============================================
+	// ГРАФИК СМЕН (driver_schedule)
+	// ============================================
+
+	async function getDriverScheduleForMonth(driverIds, year, month) {
+		if (!driverIds || driverIds.length === 0) return {};
+		try {
+			const client = initSupabase();
+			const start = `${year}-${String(month).padStart(2, '0')}-01`;
+			const lastDay = new Date(year, month, 0).getDate();
+			const end = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+			const { data, error } = await client
+				.from('driver_schedule')
+				.select('driver_id, schedule_date, status')
+				.in('driver_id', driverIds)
+				.gte('schedule_date', start)
+				.lte('schedule_date', end);
+			if (error) throw error;
+			const byDriver = {};
+			(driverIds || []).forEach(id => { byDriver[id] = {}; });
+			(data || []).forEach(row => {
+				if (!byDriver[row.driver_id]) byDriver[row.driver_id] = {};
+				byDriver[row.driver_id][row.schedule_date] = row.status;
+			});
+			return byDriver;
+		} catch (err) {
+			console.error('Ошибка getDriverScheduleForMonth:', err);
+			return {};
+		}
+	}
+
+	async function setDriverScheduleSlot(driverId, scheduleDate, status) {
+		try {
+			const client = initSupabase();
+			await client
+				.from('driver_schedule')
+				.upsert({ driver_id: driverId, schedule_date: scheduleDate, status }, { onConflict: 'driver_id,schedule_date' });
+		} catch (err) {
+			console.error('Ошибка setDriverScheduleSlot:', err);
+			throw err;
+		}
+	}
+
+	async function updateDriverScheduleScheme(driverId, scheme) {
+		try {
+			const client = initSupabase();
+			const { error } = await client.from('drivers').update({ schedule_scheme: scheme || '5x2' }).eq('id', driverId);
+			if (error) throw error;
+		} catch (err) {
+			console.error('Ошибка updateDriverScheduleScheme:', err);
+			throw err;
+		}
+	}
+
+	// ============================================
 	// АВТОМОБИЛИ
 	// ============================================
 
@@ -1037,6 +1091,9 @@
 		addDriver,
 		updateDriver,
 		deleteDriver,
+		getDriverScheduleForMonth,
+		setDriverScheduleSlot,
+		updateDriverScheduleScheme,
 		// Автомобили
 		getAllVehicles,
 		addVehicle,

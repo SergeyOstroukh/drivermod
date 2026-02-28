@@ -14,11 +14,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// День недели 1=Пн .. 7=Вс (как в work_days)
-function getDayOfWeek(dateStr: string): number {
-  const d = new Date(dateStr + "T12:00:00Z");
-  const day = d.getUTCDay(); // 0=Sun, 1=Mon, ...
-  return day === 0 ? 7 : day;
+// По схеме 5x2, 3x3, 2x2 — рабочий ли день (year, month, day)
+function worksByScheme(scheme: string, year: number, month: number, day: number): boolean {
+  const d = new Date(year, month - 1, day);
+  const dayOfWeek = d.getDay();
+  if (scheme === "5x2") return dayOfWeek >= 1 && dayOfWeek <= 5;
+  if (scheme === "3x3") return (day - 1) % 6 < 3;
+  if (scheme === "2x2") return (day - 1) % 4 < 2;
+  return true;
 }
 
 serve(async (req) => {
@@ -39,16 +42,15 @@ serve(async (req) => {
     const url = new URL(req.url);
     const dateParam = url.searchParams.get("date");
     const today = dateParam || new Date().toISOString().slice(0, 10);
-    const dayNum = getDayOfWeek(today);
+    const [y, m, day] = today.split("-").map(Number);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Водители: у кого сегодня рабочий день (work_days пусто = все дни, иначе строка содержит dayNum)
     const { data: drivers, error: driversErr } = await supabase
       .from("drivers")
-      .select("id, name, telegram_chat_id, work_days")
+      .select("id, name, telegram_chat_id, schedule_scheme")
       .not("telegram_chat_id", "is", null);
 
     if (driversErr) {
@@ -59,11 +61,19 @@ serve(async (req) => {
       });
     }
 
+    const driverIds = (drivers || []).map((d) => d.id);
+    const { data: overrides } = await supabase
+      .from("driver_schedule")
+      .select("driver_id, status")
+      .eq("schedule_date", today)
+      .in("driver_id", driverIds);
+    const overrideMap = new Map<number, string>();
+    (overrides || []).forEach((r: { driver_id: number; status: string }) => overrideMap.set(r.driver_id, r.status));
+
     const workingToday = (drivers || []).filter((d) => {
-      const wd = (d.work_days || "").toString().trim();
-      if (!wd) return true;
-      const days = wd.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => n >= 1 && n <= 7);
-      return days.includes(dayNum);
+      const override = overrideMap.get(d.id);
+      if (override) return override === "work";
+      return worksByScheme(d.schedule_scheme || "5x2", y, m, day);
     });
 
     if (workingToday.length === 0) {
@@ -134,7 +144,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ ok: true, date: today, dayOfWeek: dayNum, sent, driversChecked: workingToday.length }),
+      JSON.stringify({ ok: true, date: today, sent, driversChecked: workingToday.length }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e) {

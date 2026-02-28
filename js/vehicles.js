@@ -53,7 +53,7 @@
 		const allSections = [
 			"suppliersSection", "partnersSection", "driversSection", "vehiclesSection",
 			"historySection", "mileageSection", "maintenanceSection",
-			"distributionSection", "driverRouteSection", "distributedSuppliersSection"
+			"distributionSection", "driverRouteSection", "distributedSuppliersSection", "scheduleSection"
 		];
 		allSections.forEach(sectionId => {
 			const sec = document.getElementById(sectionId);
@@ -233,16 +233,6 @@
 				titleWrap.appendChild(tgInfo);
 			}
 
-			const dayNames = ["", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-			if (driver.work_days) {
-				const days = driver.work_days.toString().split(",").map(s => s.trim()).filter(Boolean);
-				const labels = days.map(d => dayNames[parseInt(d, 10)] || d).filter(Boolean);
-				const scheduleLine = document.createElement("p");
-				scheduleLine.className = "card-subtitle";
-				scheduleLine.textContent = "📅 График: " + (labels.length ? labels.join(", ") : "все дни");
-				titleWrap.appendChild(scheduleLine);
-			}
-
 			if (driver.notes) {
 				const notes = document.createElement("p");
 				notes.className = "card-additional-info";
@@ -300,15 +290,10 @@
 			document.getElementById("driverLicenseExpiry").value = driver.license_expiry || "";
 			document.getElementById("driverTelegram").value = driver.telegram_chat_id || "";
 			document.getElementById("driverNotes").value = driver.notes || "";
-			const workDays = (driver.work_days || "").toString().split(",").map(s => s.trim()).filter(Boolean);
-			form.querySelectorAll(".driver-work-day-cb").forEach(cb => {
-				cb.checked = workDays.indexOf(cb.value) !== -1;
-			});
 			deleteBtn.style.display = "block";
 		} else {
 			title.textContent = "Добавить водителя";
 			form.reset();
-			form.querySelectorAll(".driver-work-day-cb").forEach(cb => { cb.checked = false; });
 			deleteBtn.style.display = "none";
 		}
 
@@ -323,22 +308,149 @@
 		editingDriverId = null;
 	}
 
+	// ─── График смен (общая таблица) ─────────────────────────────
+	const DAY_LABELS = ["ВС", "ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
+	const STATUS_NEXT = { work: "off", off: "sick", sick: "work" };
+	const STATUS_LETTER = { work: "P", off: "B", sick: "Б" };
+	const STATUS_STYLE = { work: "background:#fef08a;color:#000;", off: "background:#fecaca;color:#000;", sick: "background:#bae6fd;color:#000;" };
+
+	function getStatusByScheme(scheme, year, month, day) {
+		const d = new Date(year, month - 1, day);
+		const dayOfWeek = d.getDay();
+		const dayOfMonth = day;
+		if (scheme === "5x2") {
+			return dayOfWeek >= 1 && dayOfWeek <= 5 ? "work" : "off";
+		}
+		if (scheme === "3x3") {
+			return (dayOfMonth - 1) % 6 < 3 ? "work" : "off";
+		}
+		if (scheme === "2x2") {
+			return (dayOfMonth - 1) % 4 < 2 ? "work" : "off";
+		}
+		return "work";
+	}
+
+	function openSchedule() {
+		document.getElementById("driversSection").style.display = "none";
+		const sec = document.getElementById("scheduleSection");
+		if (sec) {
+			sec.style.display = "block";
+			sec.classList.add("active");
+		}
+		const monthInput = document.getElementById("scheduleMonthInput");
+		if (monthInput && !monthInput.value) {
+			const now = new Date();
+			monthInput.value = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0");
+		}
+		renderScheduleTable();
+	}
+
+	function closeSchedule() {
+		document.getElementById("scheduleSection").style.display = "none";
+		const sec = document.getElementById("scheduleSection");
+		if (sec) sec.classList.remove("active");
+		document.getElementById("driversSection").style.display = "block";
+	}
+
+	async function renderScheduleTable() {
+		const monthInput = document.getElementById("scheduleMonthInput");
+		const thead = document.getElementById("scheduleTableHead");
+		const tbody = document.getElementById("scheduleTableBody");
+		if (!monthInput || !thead || !tbody) return;
+		const [year, month] = monthInput.value.split("-").map(Number);
+		if (!year || !month) return;
+		const daysInMonth = new Date(year, month, 0).getDate();
+		const canEdit = currentRole === "logist";
+
+		await loadDrivers();
+		const driverIds = drivers.map(d => d.id);
+		const overrides = await window.VehiclesDB.getDriverScheduleForMonth(driverIds, year, month);
+
+		thead.innerHTML = "";
+		tbody.innerHTML = "";
+		const headerRow = document.createElement("tr");
+		headerRow.innerHTML = "<th style=\"min-width:140px;text-align:left;padding:6px 8px;border:1px solid #333;\">ФИО</th><th style=\"width:70px;padding:6px 8px;border:1px solid #333;\">Схема</th>";
+		for (let d = 1; d <= daysInMonth; d++) {
+			const th = document.createElement("th");
+			th.style.cssText = "min-width:28px;padding:4px;border:1px solid #333;font-size:11px;text-align:center;";
+			th.textContent = d;
+			const dow = new Date(year, month - 1, d).getDay();
+			th.title = DAY_LABELS[dow];
+			headerRow.appendChild(th);
+		}
+		thead.appendChild(headerRow);
+
+		drivers.forEach(driver => {
+			const tr = document.createElement("tr");
+			const scheme = driver.schedule_scheme || "5x2";
+			const nameCell = document.createElement("td");
+			nameCell.style.cssText = "padding:6px 8px;border:1px solid #333;";
+			nameCell.textContent = driver.name || "";
+			tr.appendChild(nameCell);
+			const schemeCell = document.createElement("td");
+			schemeCell.style.cssText = "padding:4px;border:1px solid #333;";
+			if (canEdit) {
+				const sel = document.createElement("select");
+				sel.style.cssText = "width:100%;font-size:12px;padding:2px;";
+				sel.innerHTML = "<option value=\"5x2\">5×2</option><option value=\"3x3\">3×3</option><option value=\"2x2\">2×2</option>";
+				sel.value = scheme;
+				sel.addEventListener("change", async () => {
+					await window.VehiclesDB.updateDriverScheduleScheme(driver.id, sel.value);
+					driver.schedule_scheme = sel.value;
+					renderScheduleTable();
+				});
+				schemeCell.appendChild(sel);
+			} else {
+				schemeCell.textContent = scheme;
+			}
+			tr.appendChild(schemeCell);
+			const driverOverrides = overrides[driver.id] || {};
+			for (let day = 1; day <= daysInMonth; day++) {
+				const dateStr = year + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+				let status = driverOverrides[dateStr];
+				if (!status) status = getStatusByScheme(scheme, year, month, day);
+				const td = document.createElement("td");
+				td.style.cssText = "min-width:28px;padding:2px;border:1px solid #333;text-align:center;font-weight:700;font-size:12px;" + STATUS_STYLE[status];
+				td.textContent = STATUS_LETTER[status];
+				td.dataset.driverId = driver.id;
+				td.dataset.date = dateStr;
+				td.dataset.status = status;
+				if (canEdit) {
+					td.style.cursor = "pointer";
+					td.title = "Клик: сменить (Рабочий → Выходной → Больничный)";
+					td.addEventListener("click", async () => {
+						const next = STATUS_NEXT[status];
+						td.dataset.status = next;
+						td.textContent = STATUS_LETTER[next];
+						td.style.cssText = "min-width:28px;padding:2px;border:1px solid #333;text-align:center;font-weight:700;font-size:12px;" + STATUS_STYLE[next];
+						await window.VehiclesDB.setDriverScheduleSlot(driver.id, dateStr, next);
+						status = next;
+					});
+				}
+				tr.appendChild(td);
+			}
+			tbody.appendChild(tr);
+		});
+	}
+
+	function initScheduleSection() {
+		const openBtn = document.getElementById("openScheduleBtn");
+		const backBtn = document.getElementById("backFromScheduleBtn");
+		const monthInput = document.getElementById("scheduleMonthInput");
+		if (openBtn) openBtn.addEventListener("click", openSchedule);
+		if (backBtn) backBtn.addEventListener("click", closeSchedule);
+		if (monthInput) monthInput.addEventListener("change", () => renderScheduleTable());
+	}
+
 	async function saveDriver(formData) {
 		try {
-			const driverForm = document.getElementById("driverForm");
-			const workDaysChecked = driverForm ? driverForm.querySelectorAll(".driver-work-day-cb:checked") : [];
-			let work_days = null;
-			if (workDaysChecked.length > 0 && workDaysChecked.length < 7) {
-				work_days = Array.from(workDaysChecked).map(cb => cb.value).sort().join(",");
-			}
 			const driver = {
 				name: formData.get("name").trim(),
 				phone: formData.get("phone")?.trim() || null,
 				license_number: formData.get("license_number")?.trim() || null,
 				license_expiry: formData.get("license_expiry") || null,
 				telegram_chat_id: formData.get("telegram_chat_id") ? parseInt(formData.get("telegram_chat_id")) : null,
-				notes: formData.get("notes")?.trim() || null,
-				work_days: work_days
+				notes: formData.get("notes")?.trim() || null
 			};
 
 			if (!driver.name) {
@@ -2144,6 +2256,7 @@
 		if (addDriverBtn) {
 			addDriverBtn.addEventListener("click", () => openDriverModal());
 		}
+		initScheduleSection();
 
 		var fetchTgBtn = document.getElementById('fetchTelegramBtn');
 		if (fetchTgBtn) {
