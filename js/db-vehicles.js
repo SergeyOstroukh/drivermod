@@ -612,6 +612,37 @@
 		}
 	}
 
+	async function addRepairMileageEntry(vehicleId, dateStr, mileage) {
+		try {
+			const client = initSupabase();
+			const { data: existing } = await client
+				.from('vehicle_mileage_log')
+				.select('id')
+				.eq('vehicle_id', vehicleId)
+				.eq('log_date', dateStr)
+				.single();
+			if (existing) {
+				await client
+					.from('vehicle_mileage_log')
+					.update({ driver_id: null, notes: 'ремонт' })
+					.eq('id', existing.id);
+			} else {
+				await client
+					.from('vehicle_mileage_log')
+					.insert([{
+						vehicle_id: vehicleId,
+						driver_id: null,
+						mileage: mileage || 0,
+						log_date: dateStr,
+						notes: 'ремонт'
+					}]);
+			}
+		} catch (err) {
+			console.error('Ошибка addRepairMileageEntry:', err);
+			throw err;
+		}
+	}
+
 	async function deleteMileageLog(id) {
 		try {
 			const client = initSupabase();
@@ -1108,6 +1139,7 @@
 		getMileageFilledVehicleIdsForDate,
 		getMileageLog,
 		addMileageLog,
+		addRepairMileageEntry,
 		updateMileageLog,
 		deleteMileageLog,
 		// Журнал ТО

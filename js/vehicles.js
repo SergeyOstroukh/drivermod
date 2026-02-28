@@ -5,6 +5,8 @@
 	let vehicles = [];
 	/** ID автомобилей, для которых заполнен пробег за сегодня (для индикатора на карточке) */
 	let mileageFilledTodayVehicleIds = new Set();
+	/** Статус водителя на сегодня: { driverId: 'work'|'off'|'sick'|'extra'|'vacation'|'duty' } */
+	let driverStatusToday = {};
 	let editingDriverId = null;
 	let editingVehicleId = null;
 	let currentRole = null; // 'driver' or 'logist'
@@ -987,13 +989,24 @@
 			vehicles = await window.VehiclesDB.getAllVehicles();
 			await loadDrivers();
 			const today = new Date().toISOString().split("T")[0];
+			const [y, m, d] = today.split("-").map(Number);
 			const filledIds = await window.VehiclesDB.getMileageFilledVehicleIdsForDate(today);
 			mileageFilledTodayVehicleIds = new Set(filledIds || []);
+
+			const driverIds = [...new Set(vehicles.map(v => v.driver_id).filter(Boolean))];
+			const overrides = driverIds.length ? await window.VehiclesDB.getDriverScheduleForMonth(driverIds, y, m) : {};
+			driverStatusToday = {};
+			drivers.forEach(dr => {
+				const ov = overrides[dr.id]?.[today];
+				driverStatusToday[dr.id] = ov || getStatusByScheme(dr.schedule_scheme || "5x2", y, m, d);
+			});
+
 			renderVehicles();
 		} catch (err) {
 			console.error("Ошибка загрузки автомобилей:", err);
 			vehicles = [];
 			mileageFilledTodayVehicleIds = new Set();
+			driverStatusToday = {};
 			renderVehicles();
 		}
 	}
@@ -1077,19 +1090,36 @@
 				titleWrap.appendChild(mileageInfo);
 			}
 
-			// Индикатор: пробег за смену заполнен сегодня
-			const mileageFilledToday = mileageFilledTodayVehicleIds.has(vehicle.id);
+			// Индикатор: пробег за смену / на ремонте / выходной
 			const shiftMileageLine = document.createElement("p");
 			shiftMileageLine.className = "card-subtitle";
 			shiftMileageLine.style.fontWeight = "500";
-			if (mileageFilledToday) {
-				shiftMileageLine.style.color = "var(--success, #22c55e)";
-				shiftMileageLine.textContent = "✅ Пробег за смену: заполнен";
+			if (vehicle.on_repair) {
+				shiftMileageLine.style.color = "var(--muted)";
+				shiftMileageLine.textContent = "🔧 На ремонте";
+				shiftMileageLine.title = "Автомобиль на ремонте";
 			} else {
-				shiftMileageLine.style.color = "var(--danger, #ef4444)";
-				shiftMileageLine.textContent = "⚠️ Пробег за смену: не заполнен";
+				const driverId = vehicle.driver_id || (driver && driver.id);
+				const status = driverId ? driverStatusToday[driverId] : null;
+				const mileageRequired = status === "work" || status === "extra";
+				const mileageFilledToday = mileageFilledTodayVehicleIds.has(vehicle.id);
+				if (mileageRequired) {
+					if (mileageFilledToday) {
+						shiftMileageLine.style.color = "var(--success, #22c55e)";
+						shiftMileageLine.textContent = "✅ Пробег за смену: заполнен";
+						shiftMileageLine.title = "Данные за сегодня внесены";
+					} else {
+						shiftMileageLine.style.color = "var(--danger, #ef4444)";
+						shiftMileageLine.textContent = "⚠️ Пробег за смену: не заполнен";
+						shiftMileageLine.title = "Введите пробег за смену";
+					}
+				} else {
+					shiftMileageLine.style.color = "var(--muted)";
+					const lbl = status === "off" ? "Выходной" : status === "duty" ? "Дежурный" : status === "vacation" ? "Отпуск" : status === "sick" ? "Больничный" : "—";
+					shiftMileageLine.textContent = lbl + (lbl !== "—" ? ", пробег не требуется" : "");
+					shiftMileageLine.title = "В этот день пробег не обязателен";
+				}
 			}
-			shiftMileageLine.title = mileageFilledToday ? "Данные за сегодня внесены" : "Введите пробег за смену";
 			titleWrap.appendChild(shiftMileageLine);
 
 			// Расход топлива
@@ -1245,6 +1275,29 @@
 				</svg>`;
 				maintenanceBtn.addEventListener("click", () => openMaintenanceSection(vehicle));
 
+				if (!vehicle.on_repair) {
+					const repairBtn = document.createElement("button");
+					repairBtn.className = "btn btn-outline btn-icon-only";
+					repairBtn.title = "Поставить на ремонт";
+					repairBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>`;
+					repairBtn.addEventListener("click", (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						putVehicleOnRepair(vehicle);
+					});
+					actions.appendChild(repairBtn);
+				} else {
+					const offRepairBtn = document.createElement("button");
+					offRepairBtn.className = "btn btn-outline btn-icon-only";
+					offRepairBtn.title = "Снять с ремонта";
+					offRepairBtn.innerHTML = `<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg>`;
+					offRepairBtn.addEventListener("click", (e) => {
+						e.preventDefault();
+						e.stopPropagation();
+						takeVehicleOffRepair(vehicle);
+					});
+					actions.appendChild(offRepairBtn);
+				}
 				actions.appendChild(mileageBtn);
 				actions.appendChild(historyBtn);
 				actions.appendChild(maintenanceBtn);
@@ -1313,6 +1366,81 @@
 			modal.classList.remove("is-open");
 		}
 		editingVehicleId = null;
+	}
+
+	async function putVehicleOnRepair(vehicle) {
+		if (!confirm(`Поставить ${vehicle.plate_number || "автомобиль"} на ремонт? Водитель будет снят.`)) return;
+		try {
+			const today = new Date().toISOString().split("T")[0];
+			await window.VehiclesDB.updateVehicle(vehicle.id, { driver_id: null, on_repair: true, repair_since: today });
+			await window.VehiclesDB.addRepairMileageEntry(vehicle.id, today, vehicle.mileage || 0);
+			await loadVehicles();
+		} catch (err) {
+			console.error("Ошибка постановки на ремонт:", err);
+			alert("Не удалось поставить на ремонт: " + err.message);
+		}
+	}
+
+	function takeVehicleOffRepair(vehicle) {
+		const overlay = document.createElement("div");
+		overlay.className = "modal-overlay";
+		overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;";
+		const box = document.createElement("div");
+		box.className = "modal-content";
+		box.style.cssText = "background:var(--card);padding:20px;border-radius:12px;min-width:280px;";
+		box.innerHTML = `<h3 style="margin:0 0 12px;">Снять с ремонта</h3><p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Назначить водителя для ${vehicle.plate_number || "автомобиля"}:</p>`;
+		const sel = document.createElement("select");
+		sel.className = "form-input";
+		sel.style.width = "100%";
+		sel.innerHTML = '<option value="">Выберите водителя</option>';
+		drivers.forEach(d => {
+			const opt = document.createElement("option");
+			opt.value = d.id;
+			opt.textContent = d.name;
+			sel.appendChild(opt);
+		});
+		box.appendChild(sel);
+		const btnRow = document.createElement("div");
+		btnRow.style.cssText = "display:flex;gap:8px;margin-top:16px;justify-content:flex-end;";
+		const okBtn = document.createElement("button");
+		okBtn.className = "btn btn-primary";
+		okBtn.textContent = "Назначить";
+		okBtn.addEventListener("click", async () => {
+			const driverId = sel.value ? parseInt(sel.value) : null;
+			if (!driverId) { alert("Выберите водителя"); return; }
+			try {
+				overlay.remove();
+				if (vehicle.repair_since) {
+					const today = new Date().toISOString().split("T")[0];
+					const logs = await window.VehiclesDB.getMileageLog(vehicle.id, vehicle.repair_since, today);
+					const existingDates = new Set(logs.map(e => e.log_date));
+					let d = new Date(vehicle.repair_since);
+					const end = new Date(today);
+					while (d <= end) {
+						const ds = d.toISOString().split("T")[0];
+						if (!existingDates.has(ds)) {
+							await window.VehiclesDB.addRepairMileageEntry(vehicle.id, ds, vehicle.mileage || 0);
+						}
+						d.setDate(d.getDate() + 1);
+					}
+				}
+				await window.VehiclesDB.updateVehicle(vehicle.id, { driver_id: driverId, on_repair: false, repair_since: null });
+				await loadVehicles();
+			} catch (err) {
+				console.error("Ошибка снятия с ремонта:", err);
+				alert("Не удалось снять с ремонта: " + err.message);
+			}
+		});
+		const cancelBtn = document.createElement("button");
+		cancelBtn.className = "btn btn-outline";
+		cancelBtn.textContent = "Отмена";
+		cancelBtn.addEventListener("click", () => overlay.remove());
+		btnRow.appendChild(cancelBtn);
+		btnRow.appendChild(okBtn);
+		box.appendChild(btnRow);
+		overlay.appendChild(box);
+		overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+		document.body.appendChild(overlay);
 	}
 
 		async function saveVehicle(formData) {
@@ -2757,7 +2885,33 @@
 			}
 
 			mileageLogEntries = await window.VehiclesDB.getMileageLog(vehicleId, startDate, endDate);
-			// Сортируем по дате (от старых к новым) для правильного расчета пробега за смену
+
+			if (currentVehicle && currentVehicle.on_repair && currentVehicle.repair_since) {
+				const repairSince = currentVehicle.repair_since;
+				const today = new Date().toISOString().split("T")[0];
+				const existingDates = new Set(mileageLogEntries.map(e => e.log_date));
+				let d = new Date(repairSince);
+				const end = new Date(today);
+				while (d <= end) {
+					const ds = d.toISOString().split("T")[0];
+					if (!existingDates.has(ds)) {
+						const inRange = (!startDate || ds >= startDate) && (!endDate || ds <= endDate);
+						if (inRange) {
+							mileageLogEntries.push({
+								id: null,
+								vehicle_id: vehicleId,
+								driver_id: null,
+								mileage: currentVehicle.mileage || 0,
+								log_date: ds,
+								notes: "ремонт",
+								is_repair: true
+							});
+						}
+					}
+					d.setDate(d.getDate() + 1);
+				}
+			}
+
 			mileageLogEntries.sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
 			renderMileageLog();
 		} catch (err) {
@@ -2832,6 +2986,12 @@
 		// Теперь создаем строки таблицы с расчетом всех полей
 		sortedEntries.forEach((entry, index) => {
 			const row = document.createElement("tr");
+			if (entry.notes === "ремонт" || entry.is_repair) {
+				const date = entry.log_date ? new Date(entry.log_date).toLocaleDateString("ru-RU") : "—";
+				row.innerHTML = `<td>${index + 1}</td><td>${date}</td><td colspan="9" style="color:var(--muted);">Ремонт</td>`;
+				mileageTableBody.appendChild(row);
+				return;
+			}
 
 			// 1. Номер смены (фактическое число управления ТС)
 			// Используем порядковый номер записи в отсортированном списке
