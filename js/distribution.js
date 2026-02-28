@@ -1559,6 +1559,7 @@
         if (progressEl) progressEl.textContent = cur + '/' + tot;
       });
       orders = orders.concat(geocoded);
+      markLocalMutation();
       if (prevAssignments) {
         assignments = prevAssignments.slice();
         for (let i = 0; i < geocoded.length; i++) {
@@ -1704,6 +1705,7 @@
     // Add supplier orders immediately so UI shows rows right away.
     // Suppliers without coordinates will appear on map progressively as geocoding resolves.
     orders = orders.concat(supplierOrders);
+    markLocalMutation();
     if (prevAssignments) {
       assignments = prevAssignments.slice();
       for (var a = 0; a < supplierOrders.length; a++) assignments.push(-1);
@@ -1863,6 +1865,7 @@
       }
 
       orders = orders.concat(partnerOrders);
+      markLocalMutation();
       if (prevAssignments) {
         assignments = prevAssignments.slice();
         for (var a = 0; a < partnerOrders.length; a++) assignments.push(-1);
