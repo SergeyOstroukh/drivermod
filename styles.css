@@ -2775,3 +2775,14 @@ body {
 	text-decoration: underline;
 	color: #f87171 !important;
 }
+
+/* График смен */
+.schedule-table {
+	background: rgba(15, 23, 42, 0.6);
+	border-radius: 8px;
+}
+.schedule-cell-selected {
+	outline: 2px solid var(--accent);
+	outline-offset: -1px;
+	box-shadow: 0 0 0 1px var(--accent);
+}

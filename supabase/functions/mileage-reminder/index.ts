@@ -14,13 +14,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// По схеме 5x2, 3x3, 2x2 — рабочий ли день (year, month, day)
+// По схеме 5x2, 3x3, 2x2 — рабочий ли день (year, month, day). Паттерн непрерывный по календарю.
 function worksByScheme(scheme: string, year: number, month: number, day: number): boolean {
   const d = new Date(year, month - 1, day);
   const dayOfWeek = d.getDay();
+  const ref = new Date(2020, 0, 1).getTime();
+  const dayIndex = Math.floor((d.getTime() - ref) / 86400000);
   if (scheme === "5x2") return dayOfWeek >= 1 && dayOfWeek <= 5;
-  if (scheme === "3x3") return (day - 1) % 6 < 3;
-  if (scheme === "2x2") return (day - 1) % 4 < 2;
+  if (scheme === "3x3") return dayIndex % 6 < 3;
+  if (scheme === "2x2") return dayIndex % 4 < 2;
   return true;
 }
 
@@ -72,7 +74,7 @@ serve(async (req) => {
 
     const workingToday = (drivers || []).filter((d) => {
       const override = overrideMap.get(d.id);
-      if (override) return override === "work";
+      if (override) return override === "work" || override === "extra";
       return worksByScheme(d.schedule_scheme || "5x2", y, m, day);
     });
 

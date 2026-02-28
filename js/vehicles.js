@@ -290,10 +290,14 @@
 			document.getElementById("driverLicenseExpiry").value = driver.license_expiry || "";
 			document.getElementById("driverTelegram").value = driver.telegram_chat_id || "";
 			document.getElementById("driverNotes").value = driver.notes || "";
+			const showInSchedule = document.getElementById("driverShowInSchedule");
+			if (showInSchedule) showInSchedule.checked = driver.show_in_schedule !== false;
 			deleteBtn.style.display = "block";
 		} else {
 			title.textContent = "Добавить водителя";
 			form.reset();
+			const showInSchedule = document.getElementById("driverShowInSchedule");
+			if (showInSchedule) showInSchedule.checked = true;
 			deleteBtn.style.display = "none";
 		}
 
@@ -310,22 +314,29 @@
 
 	// ─── График смен (общая таблица) ─────────────────────────────
 	const DAY_LABELS = ["ВС", "ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ"];
-	const STATUS_NEXT = { work: "off", off: "sick", sick: "work" };
-	const STATUS_LETTER = { work: "P", off: "B", sick: "Б" };
-	const STATUS_STYLE = { work: "background:#fef08a;color:#000;", off: "background:#fecaca;color:#000;", sick: "background:#bae6fd;color:#000;" };
+	const STATUS_NEXT = { work: "off", off: "sick", sick: "extra", extra: "work" };
+	const STATUS_LETTER = { work: "P", off: "В", sick: "Б", extra: "Д" };
+	const STATUS_STYLE = {
+		work: "background:rgba(74,222,128,0.25);color:#22c55e;border:1px solid rgba(34,197,94,0.4);",
+		off: "background:rgba(148,163,184,0.2);color:#94a3b8;border:1px solid rgba(148,163,184,0.3);",
+		sick: "background:rgba(96,165,250,0.2);color:#60a5fa;border:1px solid rgba(96,165,250,0.3);",
+		extra: "background:rgba(250,204,21,0.2);color:#eab308;border:1px solid rgba(250,204,21,0.4);"
+	};
+	let scheduleSelectedCells = [];
 
 	function getStatusByScheme(scheme, year, month, day) {
 		const d = new Date(year, month - 1, day);
 		const dayOfWeek = d.getDay();
-		const dayOfMonth = day;
+		const ref = new Date(2020, 0, 1).getTime();
+		const dayIndex = Math.floor((d.getTime() - ref) / 86400000);
 		if (scheme === "5x2") {
 			return dayOfWeek >= 1 && dayOfWeek <= 5 ? "work" : "off";
 		}
 		if (scheme === "3x3") {
-			return (dayOfMonth - 1) % 6 < 3 ? "work" : "off";
+			return dayIndex % 6 < 3 ? "work" : "off";
 		}
 		if (scheme === "2x2") {
-			return (dayOfMonth - 1) % 4 < 2 ? "work" : "off";
+			return dayIndex % 4 < 2 ? "work" : "off";
 		}
 		return "work";
 	}
@@ -352,6 +363,26 @@
 		document.getElementById("driversSection").style.display = "block";
 	}
 
+	const SCHEME_ORDER = { "5x2": 0, "3x3": 1, "2x2": 2 };
+	const SCHEDULE_BASE_STYLE = "min-width:28px;padding:2px;border:1px solid rgba(71,85,105,0.5);text-align:center;font-weight:600;font-size:12px;";
+
+	function updateScheduleSelectionUI() {
+		const toolbar = document.getElementById("scheduleToolbar");
+		const countEl = document.getElementById("scheduleSelectedCount");
+		if (toolbar) toolbar.style.display = scheduleSelectedCells.length ? "flex" : "none";
+		if (countEl) countEl.textContent = scheduleSelectedCells.length;
+		scheduleSelectedCells.forEach(el => el.classList.add("schedule-cell-selected"));
+		document.querySelectorAll(".schedule-cell").forEach(c => {
+			if (!scheduleSelectedCells.includes(c)) c.classList.remove("schedule-cell-selected");
+		});
+	}
+
+	function applyStatusToCell(td, status) {
+		td.dataset.status = status;
+		td.textContent = STATUS_LETTER[status];
+		td.style.cssText = SCHEDULE_BASE_STYLE + STATUS_STYLE[status];
+	}
+
 	async function renderScheduleTable() {
 		const monthInput = document.getElementById("scheduleMonthInput");
 		const thead = document.getElementById("scheduleTableHead");
@@ -361,18 +392,47 @@
 		if (!year || !month) return;
 		const daysInMonth = new Date(year, month, 0).getDate();
 		const canEdit = currentRole === "logist";
+		scheduleSelectedCells = [];
+		updateScheduleSelectionUI();
 
 		await loadDrivers();
-		const driverIds = drivers.map(d => d.id);
-		const overrides = await window.VehiclesDB.getDriverScheduleForMonth(driverIds, year, month);
+		const visible = drivers.filter(d => d.show_in_schedule !== false);
+		const hidden = drivers.filter(d => d.show_in_schedule === false);
+		visible.sort((a, b) => {
+			const sa = SCHEME_ORDER[a.schedule_scheme || "5x2"] ?? 99;
+			const sb = SCHEME_ORDER[b.schedule_scheme || "5x2"] ?? 99;
+			return sa !== sb ? sa - sb : (a.name || "").localeCompare(b.name || "");
+		});
+		const driverIds = visible.map(d => d.id);
+		const overrides = await window.VehiclesDB.getDriverScheduleForMonth(driverIds.length ? driverIds : [], year, month);
+
+		const hiddenWrap = document.getElementById("scheduleHiddenDrivers");
+		const hiddenList = document.getElementById("scheduleHiddenDriversList");
+		if (hiddenWrap && hiddenList) {
+			if (hidden.length && canEdit) {
+				hiddenWrap.style.display = "block";
+				hiddenList.innerHTML = hidden.map(d =>
+					`<button type="button" class="btn btn-outline btn-sm" style="margin:2px;" data-driver-id="${d.id}">${d.name || "Без имени"} ✓</button>`
+				).join("");
+				hiddenList.querySelectorAll("button").forEach(btn => {
+					btn.addEventListener("click", async () => {
+						await window.VehiclesDB.updateDriver(btn.dataset.driverId, { show_in_schedule: true });
+						await loadDrivers();
+						renderScheduleTable();
+					});
+				});
+			} else {
+				hiddenWrap.style.display = "none";
+			}
+		}
 
 		thead.innerHTML = "";
 		tbody.innerHTML = "";
 		const headerRow = document.createElement("tr");
-		headerRow.innerHTML = "<th style=\"min-width:140px;text-align:left;padding:6px 8px;border:1px solid #333;\">ФИО</th><th style=\"width:70px;padding:6px 8px;border:1px solid #333;\">Схема</th>";
+		headerRow.innerHTML = "<th style=\"min-width:140px;text-align:left;padding:6px 8px;border:1px solid rgba(71,85,105,0.5);\">ФИО</th><th style=\"width:70px;padding:6px 8px;border:1px solid rgba(71,85,105,0.5);\">Схема</th>";
 		for (let d = 1; d <= daysInMonth; d++) {
 			const th = document.createElement("th");
-			th.style.cssText = "min-width:28px;padding:4px;border:1px solid #333;font-size:11px;text-align:center;";
+			th.style.cssText = "min-width:28px;padding:4px;border:1px solid rgba(71,85,105,0.5);font-size:11px;text-align:center;";
 			th.textContent = d;
 			const dow = new Date(year, month - 1, d).getDay();
 			th.title = DAY_LABELS[dow];
@@ -380,15 +440,33 @@
 		}
 		thead.appendChild(headerRow);
 
-		drivers.forEach(driver => {
+		let lastClickedCell = null;
+		visible.forEach(driver => {
 			const tr = document.createElement("tr");
 			const scheme = driver.schedule_scheme || "5x2";
 			const nameCell = document.createElement("td");
-			nameCell.style.cssText = "padding:6px 8px;border:1px solid #333;";
-			nameCell.textContent = driver.name || "";
+			nameCell.style.cssText = "padding:6px 8px;border:1px solid rgba(71,85,105,0.5);";
+			const nameWrap = document.createElement("span");
+			nameWrap.textContent = driver.name || "";
+			nameCell.appendChild(nameWrap);
+			if (canEdit) {
+				const hideBtn = document.createElement("button");
+				hideBtn.type = "button";
+				hideBtn.className = "btn btn-outline btn-icon-only";
+				hideBtn.style.cssText = "margin-left:6px;padding:2px 6px;font-size:11px;";
+				hideBtn.title = "Убрать из графика";
+				hideBtn.textContent = "✕";
+				hideBtn.addEventListener("click", async (e) => {
+					e.stopPropagation();
+					await window.VehiclesDB.updateDriver(driver.id, { show_in_schedule: false });
+					await loadDrivers();
+					renderScheduleTable();
+				});
+				nameCell.appendChild(hideBtn);
+			}
 			tr.appendChild(nameCell);
 			const schemeCell = document.createElement("td");
-			schemeCell.style.cssText = "padding:4px;border:1px solid #333;";
+			schemeCell.style.cssText = "padding:4px;border:1px solid rgba(71,85,105,0.5);";
 			if (canEdit) {
 				const sel = document.createElement("select");
 				sel.style.cssText = "width:100%;font-size:12px;padding:2px;";
@@ -410,27 +488,61 @@
 				let status = driverOverrides[dateStr];
 				if (!status) status = getStatusByScheme(scheme, year, month, day);
 				const td = document.createElement("td");
-				td.style.cssText = "min-width:28px;padding:2px;border:1px solid #333;text-align:center;font-weight:700;font-size:12px;" + STATUS_STYLE[status];
+				td.className = "schedule-cell";
+				td.style.cssText = SCHEDULE_BASE_STYLE + STATUS_STYLE[status];
 				td.textContent = STATUS_LETTER[status];
 				td.dataset.driverId = driver.id;
 				td.dataset.date = dateStr;
 				td.dataset.status = status;
 				if (canEdit) {
 					td.style.cursor = "pointer";
-					td.title = "Клик: сменить (Рабочий → Выходной → Больничный)";
-					td.addEventListener("click", async () => {
+					td.title = "Клик: смена. Ctrl+клик: выбор. Shift+клик: диапазон.";
+					td.addEventListener("click", async (e) => {
+						const driverId = driver.id;
+						if (e.ctrlKey || e.metaKey) {
+							const idx = scheduleSelectedCells.indexOf(td);
+							if (idx >= 0) scheduleSelectedCells.splice(idx, 1);
+							else scheduleSelectedCells.push(td);
+							updateScheduleSelectionUI();
+							return;
+						}
+						if (e.shiftKey && lastClickedCell) {
+							const cells = Array.from(tbody.querySelectorAll(".schedule-cell"));
+							const i1 = cells.indexOf(lastClickedCell);
+							const i2 = cells.indexOf(td);
+							if (i1 >= 0 && i2 >= 0) {
+								const [lo, hi] = i1 < i2 ? [i1, i2] : [i2, i1];
+								for (let i = lo; i <= hi; i++) {
+									if (!scheduleSelectedCells.includes(cells[i])) scheduleSelectedCells.push(cells[i]);
+								}
+								updateScheduleSelectionUI();
+							}
+							return;
+						}
+						if (scheduleSelectedCells.length > 0) return;
 						const next = STATUS_NEXT[status];
-						td.dataset.status = next;
-						td.textContent = STATUS_LETTER[next];
-						td.style.cssText = "min-width:28px;padding:2px;border:1px solid #333;text-align:center;font-weight:700;font-size:12px;" + STATUS_STYLE[next];
-						await window.VehiclesDB.setDriverScheduleSlot(driver.id, dateStr, next);
+						applyStatusToCell(td, next);
+						await window.VehiclesDB.setDriverScheduleSlot(driverId, dateStr, next);
 						status = next;
+						lastClickedCell = td;
 					});
 				}
 				tr.appendChild(td);
 			}
 			tbody.appendChild(tr);
 		});
+
+	}
+
+	async function applyStatusToSelectedCells(status) {
+		for (const td of scheduleSelectedCells) {
+			const driverId = td.dataset.driverId;
+			const dateStr = td.dataset.date;
+			applyStatusToCell(td, status);
+			await window.VehiclesDB.setDriverScheduleSlot(driverId, dateStr, status);
+		}
+		scheduleSelectedCells = [];
+		updateScheduleSelectionUI();
 	}
 
 	function initScheduleSection() {
@@ -440,6 +552,12 @@
 		if (openBtn) openBtn.addEventListener("click", openSchedule);
 		if (backBtn) backBtn.addEventListener("click", closeSchedule);
 		if (monthInput) monthInput.addEventListener("change", () => renderScheduleTable());
+		["work", "off", "sick", "extra"].forEach(s => {
+			const btn = document.getElementById("scheduleSet" + (s === "work" ? "Work" : s === "off" ? "Off" : s === "sick" ? "Sick" : "Extra"));
+			if (btn) btn.addEventListener("click", () => applyStatusToSelectedCells(s));
+		});
+		const clearBtn = document.getElementById("scheduleClearSelection");
+		if (clearBtn) clearBtn.addEventListener("click", () => { scheduleSelectedCells = []; updateScheduleSelectionUI(); });
 	}
 
 	async function saveDriver(formData) {
@@ -450,7 +568,8 @@
 				license_number: formData.get("license_number")?.trim() || null,
 				license_expiry: formData.get("license_expiry") || null,
 				telegram_chat_id: formData.get("telegram_chat_id") ? parseInt(formData.get("telegram_chat_id")) : null,
-				notes: formData.get("notes")?.trim() || null
+				notes: formData.get("notes")?.trim() || null,
+				show_in_schedule: formData.has("show_in_schedule")
 			};
 
 			if (!driver.name) {
