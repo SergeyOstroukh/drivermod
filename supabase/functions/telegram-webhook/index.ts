@@ -168,6 +168,109 @@ serve(async (req) => {
       console.log(`Callback processed: order=${orderId}, action=${action}, driver=${driverName}`);
     }
 
+    // Handle private /start messages for driver Telegram linking
+    const msg = update.message || update.edited_message;
+    if (msg && msg.chat?.type === "private" && typeof msg.text === "string") {
+      const text = msg.text.trim();
+      if (text.startsWith("/start")) {
+        const chatId = msg.chat?.id;
+        const payload = text.split(" ").slice(1).join(" ").trim();
+
+        // No payload — show instruction
+        if (!payload) {
+          if (chatId) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text:
+                  "Чтобы привязать Telegram к вашему профилю водителя, откройте ссылку от диспетчера и нажмите Start.\n\n" +
+                  "Если ссылки нет — попросите её у диспетчера.",
+              }),
+            });
+          }
+          return new Response("OK", { status: 200 });
+        }
+
+        // Payload is expected to be a driver id
+        const driverId = Number.parseInt(payload, 10);
+        if (!Number.isFinite(driverId) || driverId <= 0) {
+          if (chatId) {
+            await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text:
+                  "Не понял код привязки.\n\n" +
+                  "Откройте ссылку от диспетчера (она выглядит как t.me/<bot>?start=123) и нажмите Start.",
+              }),
+            });
+          }
+          return new Response("OK", { status: 200 });
+        }
+
+        if (!chatId || typeof chatId !== "number" || chatId <= 0) {
+          return new Response("OK", { status: 200 });
+        }
+
+        // Verify driver exists, then set telegram_chat_id
+        const { data: driver, error: driverErr } = await supabase
+          .from("drivers")
+          .select("id,name,telegram_chat_id")
+          .eq("id", driverId)
+          .maybeSingle();
+
+        if (driverErr || !driver) {
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text:
+                "Код привязки не найден. Попросите у диспетчера актуальную ссылку.",
+            }),
+          });
+          return new Response("OK", { status: 200 });
+        }
+
+        const { error: updErr } = await supabase
+          .from("drivers")
+          .update({ telegram_chat_id: chatId })
+          .eq("id", driverId);
+
+        if (updErr) {
+          console.error("Failed to link Telegram:", updErr);
+          await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text:
+                "Не удалось привязать Telegram. Попробуйте позже или сообщите диспетчеру.",
+            }),
+          });
+          return new Response("OK", { status: 200 });
+        }
+
+        const already = Number(driver.telegram_chat_id || 0) === Number(chatId);
+        await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: already
+              ? `✅ Telegram уже привязан к водителю: ${driver.name}`
+              : `✅ Telegram привязан к водителю: ${driver.name}`,
+          }),
+        });
+
+        console.log(`Linked Telegram: driver_id=${driverId}, chat_id=${chatId}`);
+        return new Response("OK", { status: 200 });
+      }
+    }
+
     return new Response("OK", { status: 200 });
   } catch (err) {
     console.error("Webhook error:", err);

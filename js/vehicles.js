@@ -2379,56 +2379,13 @@
 
 	// ─── Telegram ID auto-fetch ──────────────────────────────
 	async function fetchTelegramUpdates() {
-		var botToken = window.TELEGRAM_BOT_TOKEN;
-		if (!botToken) {
-			alert('Telegram бот не настроен. Укажите токен в config.js');
-			return;
-		}
-
-		try {
-			var resp = await fetch('https://api.telegram.org/bot' + botToken + '/getUpdates?limit=100');
-			var data = await resp.json();
-			if (!data.ok) {
-				alert('Ошибка Telegram: ' + (data.description || 'unknown'));
-				return;
-			}
-
-			var updates = data.result || [];
-			if (updates.length === 0) {
-				alert('Нет новых сообщений от водителей.\n\nПопросите водителей написать боту /start в Telegram:\nt.me/drivecontrol_route_bot');
-				return;
-			}
-
-			// Collect unique users — ONLY from private chats (not groups!)
-			var tgUsers = {};
-			updates.forEach(function (upd) {
-				var msg = upd.message || upd.edited_message;
-				if (!msg || !msg.from) return;
-				// Skip group/supergroup messages — only private chats
-				if (msg.chat.type !== 'private') return;
-				var u = msg.from;
-				tgUsers[u.id] = {
-					chat_id: msg.chat.id,
-					first_name: u.first_name || '',
-					last_name: u.last_name || '',
-					username: u.username || ''
-				};
-			});
-
-			var userList = Object.values(tgUsers);
-			if (userList.length === 0) {
-				alert('Не найдено пользователей в сообщениях бота.');
-				return;
-			}
-
-			// Show assignment modal
-			showTelegramAssignModal(userList);
-		} catch (err) {
-			alert('Ошибка получения данных Telegram: ' + err.message);
-		}
+		// IMPORTANT:
+		// Bot uses webhook now. Telegram forbids getUpdates while webhook is active.
+		// Linking is done via deep-link: t.me/<bot>?start=<driverId>
+		showTelegramLinkModal();
 	}
 
-	function showTelegramAssignModal(tgUsers) {
+	function showTelegramLinkModal() {
 		// Remove existing modal if any
 		var existing = document.getElementById('tgAssignModal');
 		if (existing) existing.remove();
@@ -2438,33 +2395,32 @@
 		modal.className = 'modal is-open';
 		modal.style.cssText = 'z-index:10000;';
 
-		var html = '<div class="modal-content modal-content-large" style="max-width:600px;">';
-		html += '<h3 class="modal-title">Привязка Telegram к водителям</h3>';
-		html += '<p style="margin-bottom:12px;color:var(--text-secondary);font-size:13px;">Выберите водителя для каждого Telegram-аккаунта. Только выбранные будут привязаны.</p>';
+		var botUser = (window.TELEGRAM_BOT_USERNAME || 'drivecontrol_route_bot').replace(/^@/, '').trim();
+		var html = '<div class="modal-content modal-content-large" style="max-width:760px;">';
+		html += '<h3 class="modal-title">Привязка Telegram</h3>';
+		html += '<p style="margin-bottom:12px;color:var(--text-secondary);font-size:13px;">Telegram-бот работает через webhook, поэтому <b>привязка делается ссылкой</b>. Отправьте ссылку водителю: он откроет её и нажмёт <b>Start</b> — Telegram привяжется автоматически.</p>';
+		html += '<p style="margin-bottom:14px;color:var(--text-secondary);font-size:12px;">Если водитель уже нажимал Start раньше — ничего страшного: просто пусть откроет ссылку и нажмёт Start ещё раз.</p>';
 
-		tgUsers.forEach(function (u, idx) {
-			var displayName = u.first_name + (u.last_name ? ' ' + u.last_name : '');
-			if (u.username) displayName += ' (@' + u.username + ')';
-			var alreadyLinked = drivers.find(function (d) { return d.telegram_chat_id === u.chat_id; });
-
-			html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:8px;background:var(--bg-card);border-radius:8px;">';
-			html += '<div style="flex:1;">';
-			html += '<div style="font-weight:600;font-size:14px;">✈️ ' + displayName + '</div>';
-			html += '<div style="font-size:12px;color:var(--text-secondary);">Chat ID: ' + u.chat_id + '</div>';
+		html += '<div style="display:flex;flex-direction:column;gap:10px;max-height:55vh;overflow:auto;padding-right:6px;">';
+		(drivers || []).forEach(function (d) {
+			var link = 'https://t.me/' + encodeURIComponent(botUser) + '?start=' + encodeURIComponent(String(d.id));
+			var linked = !!d.telegram_chat_id;
+			html += '<div style="display:flex;gap:10px;align-items:center;padding:10px;background:var(--bg-card);border-radius:10px;border:1px solid var(--border-color);">';
+			html += '<div style="flex:1;min-width:0;">';
+			html += '<div style="font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(d.name || ('Водитель #' + d.id)) + '</div>';
+			html += '<div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">' + (linked ? ('✈️ Уже привязан (chat_id: ' + d.telegram_chat_id + ')') : 'Не привязан') + '</div>';
+			html += '<input class="form-input tg-link-input" readonly value="' + escapeHtml(link) + '" style="margin-top:8px;font-size:12px;" />';
 			html += '</div>';
-			html += '<select class="form-input tg-driver-select" data-chatid="' + u.chat_id + '" style="max-width:200px;font-size:13px;">';
-			html += '<option value="">— Не привязывать —</option>';
-			drivers.forEach(function (d) {
-				var selected = (alreadyLinked && alreadyLinked.id === d.id) ? ' selected' : '';
-				html += '<option value="' + d.id + '"' + selected + '>' + d.name + (d.telegram_chat_id ? ' ✈️' : '') + '</option>';
-			});
-			html += '</select>';
+			html += '<div style="display:flex;flex-direction:column;gap:8px;">';
+			html += '<button type="button" class="btn btn-primary tg-copy-link-btn" data-link="' + escapeHtml(link) + '">' + (linked ? 'Перепривязать (ссылка)' : 'Скопировать ссылку') + '</button>';
+			html += '<a class="btn btn-outline" href="' + link + '" target="_blank" rel="noopener noreferrer" style="text-align:center;">Открыть</a>';
+			html += '</div>';
 			html += '</div>';
 		});
+		html += '</div>';
 
 		html += '<div class="form-actions" style="margin-top:16px;">';
-		html += '<button type="button" id="tgAssignSaveBtn" class="btn btn-primary modal-btn">Сохранить привязки</button>';
-		html += '<button type="button" id="tgAssignCancelBtn" class="btn btn-outline modal-btn">Отмена</button>';
+		html += '<button type="button" id="tgAssignCancelBtn" class="btn btn-outline modal-btn">Закрыть</button>';
 		html += '</div>';
 		html += '</div>';
 
@@ -2476,36 +2432,43 @@
 			modal.remove();
 		});
 
-		document.getElementById('tgAssignSaveBtn').addEventListener('click', async function () {
-			var selects = modal.querySelectorAll('.tg-driver-select');
-			var updates = [];
-			selects.forEach(function (sel) {
-				var driverId = sel.value ? parseInt(sel.value) : null;
-				var chatId = parseInt(sel.dataset.chatid);
-				if (driverId && chatId) {
-					updates.push({ driverId: driverId, chatId: chatId });
+		var copyBtns = modal.querySelectorAll('.tg-copy-link-btn');
+		copyBtns.forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var link = btn.dataset.link || '';
+				try {
+					if (navigator.clipboard && navigator.clipboard.writeText) {
+						await navigator.clipboard.writeText(link);
+					} else {
+						// Fallback for older browsers
+						var tmp = document.createElement('textarea');
+						tmp.value = link;
+						tmp.style.position = 'fixed';
+						tmp.style.left = '-9999px';
+						document.body.appendChild(tmp);
+						tmp.focus();
+						tmp.select();
+						document.execCommand('copy');
+						tmp.remove();
+					}
+					btn.textContent = 'Скопировано';
+					setTimeout(function () {
+						btn.textContent = (btn.textContent === 'Скопировано') ? 'Скопировать ссылку' : btn.textContent;
+					}, 900);
+				} catch (e) {
+					alert('Не удалось скопировать. Скопируйте вручную из поля.');
 				}
 			});
-
-			if (updates.length === 0) {
-				alert('Не выбрано ни одной привязки');
-				return;
-			}
-
-			try {
-				for (var i = 0; i < updates.length; i++) {
-					await window.VehiclesDB.updateDriver(updates[i].driverId, {
-						telegram_chat_id: updates[i].chatId
-					});
-				}
-				alert('Привязано: ' + updates.length + ' водитель(ей)');
-				modal.remove();
-				await loadDrivers();
-				renderDrivers();
-			} catch (err) {
-				alert('Ошибка сохранения: ' + err.message);
-			}
 		});
+	}
+
+	function escapeHtml(str) {
+		return String(str)
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#039;');
 	}
 
 	// Инициализация
