@@ -86,10 +86,3 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
-
-/* Таблицы (путевой лист и т.д.) */
-.table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.table th, .table td { padding: 8px 10px; border: 1px solid var(--border); text-align: left; }
-.table th { background: var(--bg-secondary); font-weight: 600; }
-.table tbody tr:hover { background: var(--bg-hover, rgba(255,255,255,0.05)); }
-.table .muted { color: var(--text-muted); }

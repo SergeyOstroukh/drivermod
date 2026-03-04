@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchPartners, createPartner, updatePartner, deletePartner } from '../../../shared/api/partnersApi.js';
-import { buildYandexPlaceUrl, buildYandexNavigatorPlaceUrl, openWithFallback } from '../../../shared/utils/yandexMaps.js';
 
 export default function PartnersPage() {
   const [list, setList] = useState([]);
@@ -78,12 +77,6 @@ export default function PartnersPage() {
     }
   };
 
-  const openPoint = (item) => {
-    const navi = buildYandexNavigatorPlaceUrl(item.lat, item.lon, item.name || '');
-    const maps = buildYandexPlaceUrl(item.lat, item.lon);
-    openWithFallback(navi, maps);
-  };
-
   return (
     <section className="content-section active">
       <section className="section-header">
@@ -104,7 +97,6 @@ export default function PartnersPage() {
                 <p className="card-meta">Координаты: {item.lat}, {item.lon}</p>
               </div>
               <div className="card-actions">
-                <button type="button" className="btn btn-outline btn-sm" onClick={() => openPoint(item)}>Открыть точку</button>
                 <button type="button" className="btn btn-outline btn-sm" onClick={() => openEdit(item)}>Изменить</button>
                 <button type="button" className="btn btn-outline btn-sm" style={{ color: 'var(--danger)', borderColor: 'var(--danger)' }} onClick={() => handleDelete(item.id)}>Удалить</button>
               </div>
