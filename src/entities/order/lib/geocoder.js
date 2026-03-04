@@ -1,6 +1,7 @@
 import { cleanAddressForGeocoding } from '../../order/model/parser.js';
 
-function waitForYmaps(timeout = 20000) {
+/** Ждём Яндекс.Карты не более 2.5 сек — иначе сразу переходим на Nominatim, чтобы не блокировать страницу */
+function waitForYmaps(timeout = 2500) {
   return new Promise((resolve, reject) => {
     if (window.ymaps && window.ymaps.geocode) {
       window.ymaps.ready(() => resolve(window.ymaps));
@@ -15,13 +16,13 @@ function waitForYmaps(timeout = 20000) {
         clearInterval(interval);
         reject(new Error('Яндекс Карты не загрузились'));
       }
-    }, 300);
+    }, 150);
   });
 }
 
-async function yandexGeocode(searchQuery) {
-  const ymaps = await waitForYmaps();
-  const result = await ymaps.geocode(searchQuery, {
+async function yandexGeocode(searchQuery, ymaps) {
+  const api = ymaps || await waitForYmaps();
+  const result = await api.geocode(searchQuery, {
     results: 1,
     boundedBy: [[53.75, 27.25], [54.15, 27.90]],
     strictBounds: false,
@@ -66,6 +67,9 @@ async function nominatimGeocode(query) {
 }
 
 export async function geocodeAddress(rawAddress) {
+  if (!rawAddress || !String(rawAddress).trim()) {
+    throw new Error('Пустой адрес');
+  }
   const cleanAddress = cleanAddressForGeocoding(rawAddress);
   const isMinskRegion =
     /минск(ий|ого|ому)/i.test(cleanAddress) ||
@@ -91,28 +95,36 @@ export async function geocodeAddress(rawAddress) {
     queries.push(`Минск, ${simplified}`);
   }
 
-  for (const q of queries) {
-    try {
-      const result = await yandexGeocode(q);
-      if (result) return result;
-    } catch {
-      // ignore
+  let ymaps = null;
+  try {
+    ymaps = await waitForYmaps();
+  } catch {
+    // Яндекс не загрузился за 2.5 сек — будем использовать только Nominatim
+  }
+
+  if (ymaps) {
+    for (const q of queries) {
+      try {
+        const result = await yandexGeocode(q, ymaps);
+        if (result) return result;
+      } catch {
+        // ignore
+      }
+    }
+    const streetOnly = extractStreetName(cleanAddress);
+    if (streetOnly) {
+      try {
+        const result = await yandexGeocode(`Минск, ${streetOnly}`, ymaps);
+        if (result) return result;
+      } catch {
+        // ignore
+      }
     }
   }
 
   for (const q of queries) {
     const result = await nominatimGeocode(q);
     if (result) return result;
-  }
-
-  const streetOnly = extractStreetName(cleanAddress);
-  if (streetOnly) {
-    try {
-      const result = await yandexGeocode(`Минск, ${streetOnly}`);
-      if (result) return result;
-    } catch {
-      // ignore
-    }
   }
 
   throw new Error(`Адрес не найден: ${rawAddress}`);
@@ -162,7 +174,7 @@ export async function geocodeOrders(orders, onProgress) {
     }
     if (onProgress) onProgress(i + 1, orders.length);
     if (i < orders.length - 1) {
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 150));
     }
   }
   return results;
