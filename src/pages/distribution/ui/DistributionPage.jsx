@@ -905,9 +905,9 @@ function DistributionPage() {
   const addressItems = useMemo(() => displayOrders.filter((o) => !o.isSupplier && !o.isPartner && !o.poiId), [displayOrders]);
 
   return (
-    <div className="app distribution-page" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+    <div className="app">
       {/* Header */}
-      <header className="header" style={{ flexShrink: 0 }}>
+      <header className="header">
         <div className="header-brand">
           <svg
             viewBox="0 0 24 24"
@@ -943,7 +943,7 @@ function DistributionPage() {
         </div>
       </header>
 
-      <div className="main-layout" style={{ flex: 1, minHeight: 0 }}>
+      <div className="main-layout">
         <aside className="sidebar">
           {/* Вставить список поставщиков */}
           <div className="sidebar-section">
