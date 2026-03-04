@@ -96,15 +96,9 @@ export default function YandexMapView({
 
     const initWhenReady = () => {
       if (cancelled || mapRef.current) return;
-      let w = el.offsetWidth || el.parentElement?.offsetWidth || 0;
-      let h = el.offsetHeight || el.parentElement?.offsetHeight || 0;
-      // Если контейнер без размеров (flex ещё не посчитан) — задаём минимум для инициализации
-      if (w < 100 || h < 100) {
-        el.style.minWidth = '400px';
-        el.style.minHeight = '500px';
-        w = Math.max(w, 400);
-        h = Math.max(h, 500);
-      }
+      const w = el.offsetWidth || el.parentElement?.offsetWidth || 0;
+      const h = el.offsetHeight || el.parentElement?.offsetHeight || 0;
+      // Требуем минимальные размеры для инициализации карты (как в старой версии)
       if (w < 50 || h < 50) return;
       loadYmaps().then(ymaps => {
         if (cancelled || !mapContainerRef.current || mapRef.current) return;
@@ -139,13 +133,11 @@ export default function YandexMapView({
       requestAnimationFrame(() => initWhenReady());
     });
     const timeoutId = setTimeout(() => initWhenReady(), 150);
-    const timeoutId2 = setTimeout(() => initWhenReady(), 400);
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
       clearTimeout(timeoutId);
-      clearTimeout(timeoutId2);
       ro.disconnect();
       if (mapRef.current) {
         mapRef.current.destroy();
