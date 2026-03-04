@@ -51,7 +51,6 @@ export default function YandexMapView({
   driverCount,
   selectedDriver,
   onAssignDriver,
-  onAssignDriverById,
   onDeleteOrder,
   placingMode,
   onMapClick,
@@ -71,8 +70,6 @@ export default function YandexMapView({
 
   const onAssignRef = useRef(onAssignDriver);
   onAssignRef.current = onAssignDriver;
-  const onAssignByIdRef = useRef(onAssignDriverById);
-  onAssignByIdRef.current = onAssignDriverById;
   const onDeleteRef = useRef(onDeleteOrder);
   onDeleteRef.current = onDeleteOrder;
   const onMapClickRef = useRef(onMapClick);
@@ -90,14 +87,6 @@ export default function YandexMapView({
     window.__drivecontrol_assign = (globalIdx, driverIdx) => {
       if (onAssignRef.current) {
         onAssignRef.current(globalIdx, driverIdx);
-      }
-      if (mapRef.current) {
-        mapRef.current.balloon.close();
-      }
-    };
-    window.__drivecontrol_assignById = (globalIdx, driverId) => {
-      if (onAssignByIdRef.current) {
-        onAssignByIdRef.current(globalIdx, driverId);
       }
       if (mapRef.current) {
         mapRef.current.balloon.close();
@@ -127,7 +116,6 @@ export default function YandexMapView({
     };
     return () => {
       delete window.__drivecontrol_assign;
-      delete window.__drivecontrol_assignById;
       delete window.__drivecontrol_delete;
       delete window.__drivecontrol_centerOrder;
       delete window.__drivecontrol_toggleKbt;
@@ -233,15 +221,14 @@ export default function YandexMapView({
     (order, globalIdx, currentDriverIdx, isSelected) => {
       const colors = driverColorsBySlot.length ? driverColorsBySlot : DRIVER_COLORS;
       let driverButtons = '';
-      if (dbDrivers.length) {
-        dbDrivers.forEach((dr) => {
+      if (dbDrivers.length && driverSlots.length) {
+        dbDrivers.forEach((dr, di) => {
           const slotIdx = driverSlots.findIndex((id) => String(id) === String(dr.id));
+          if (slotIdx < 0) return;
           const color = colors[slotIdx] ?? DRIVER_COLORS[slotIdx % DRIVER_COLORS.length];
           const isActive = slotIdx === currentDriverIdx;
-          const displayName = (dr.name || '').split(' ')[0] || `Водитель`;
-          const safeDriverId = String(dr.id ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-          const bg = slotIdx >= 0 ? color : '#64748b';
-          driverButtons += `<button onclick="window.__drivecontrol_assignById(${globalIdx}, '${safeDriverId}')" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ${isActive ? '#fff' : 'transparent'};background:${bg};cursor:pointer;margin:2px;box-shadow:${isActive ? '0 0 0 2px ' + bg : 'none'};color:#fff;font-size:11px;font-weight:600;" title="${dr.name || ''}"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>${displayName}</button>`;
+          const displayName = (dr.name || '').split(' ')[0] || `В${slotIdx + 1}`;
+          driverButtons += `<button onclick="window.__drivecontrol_assign(${globalIdx}, ${slotIdx})" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ${isActive ? '#fff' : 'transparent'};background:${color};cursor:pointer;margin:2px;box-shadow:${isActive ? '0 0 0 2px ' + color : 'none'};color:#fff;font-size:11px;font-weight:600;" title="${dr.name || ''}"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>${displayName}</button>`;
         });
         if (currentDriverIdx >= 0) {
           driverButtons += `<button onclick="window.__drivecontrol_assign(${globalIdx}, -1)" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;margin:2px;color:#999;font-size:11px;">✕ Снять</button>`;
@@ -254,7 +241,7 @@ export default function YandexMapView({
         }).join('');
       }
 
-      const escapedId = String(order.id ?? '').replace(/'/g, "\\'");
+      const escapedId = order.id.replace(/'/g, "\\'");
       const kbtActive = !!order.isKbt;
       let kbtHtml = '<div style="border-top:1px solid #eee;padding-top:8px;margin-top:8px;">';
       kbtHtml += `<button onclick="window.__drivecontrol_toggleKbt && window.__drivecontrol_toggleKbt(${globalIdx})" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;border:2px solid ${kbtActive ? '#a855f7' : '#ddd'};background:${kbtActive ? '#a855f7' : '#fff'};color:${kbtActive ? '#fff' : '#666'};cursor:pointer;font-size:12px;font-weight:600;">📦 КБТ +1${kbtActive ? ' ✓' : ''}</button>`;
@@ -403,21 +390,6 @@ export default function YandexMapView({
       }
     }
   }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent, driverColorsBySlot, hoveredOrderId, selectedOrderIds]);
-
-  // Подгоняем viewport при любом изменении размеров контейнера.
-  useEffect(() => {
-    if (!mapReady || !mapRef.current) return;
-    const el = mapContainerRef.current || document.getElementById('distributionMap');
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (!mapRef.current) return;
-      try {
-        mapRef.current.container?.fitToViewport?.();
-      } catch (e) {}
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [mapReady]);
 
   // Как в старой версии: один контейнер #distributionMap.dc-map (index.legacy.html)
   return (

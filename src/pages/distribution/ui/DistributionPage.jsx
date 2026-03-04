@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import '../../../App.css';
 import YandexMapView from '../../../widgets/map/ui/YandexMapView.jsx';
 import { parseOrders } from '../../../entities/order/model/parser.js';
@@ -158,6 +159,8 @@ function DistributionPage() {
   // Позиция выпадающего списка подсказок (сквозной поиск) — чтобы не обрезался в сайдбаре
   const supplierSearchRef = useRef(null);
   const partnerSearchRef = useRef(null);
+  const [supplierDropdownRect, setSupplierDropdownRect] = useState(null);
+  const [partnerDropdownRect, setPartnerDropdownRect] = useState(null);
 
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
@@ -181,6 +184,18 @@ function DistributionPage() {
     saveJson(DRIVER_COLORS_KEY, driverCustomColors);
   }, [driverCustomColors]);
 
+  // Позиция выпадающего списка подсказок при показе (чтобы портал отрисовался в нужном месте)
+  useEffect(() => {
+    if (showSupplierSuggest && supplierSearchQuery.trim().length >= 1 && supplierSearchRef.current) {
+      setSupplierDropdownRect(supplierSearchRef.current.getBoundingClientRect());
+    }
+  }, [showSupplierSuggest, supplierSearchQuery]);
+  useEffect(() => {
+    if (showPartnerSuggest && partnerSearchQuery.trim().length >= 1 && partnerSearchRef.current) {
+      setPartnerDropdownRect(partnerSearchRef.current.getBoundingClientRect());
+    }
+  }, [showPartnerSuggest, partnerSearchQuery]);
+
   // Запомнить алиас поставщика (введённое имя → supplier.id)
   const rememberSupplierAlias = useCallback((inputName, supplier) => {
     if (!inputName || !supplier?.id) return;
@@ -202,12 +217,10 @@ function DistributionPage() {
     if (!q || q.length < 1) return [];
     const list = dbSuppliers || [];
     const results = [];
-    for (let i = 0; i < list.length && results.length < 20; i++) {
+    for (let i = 0; i < list.length && results.length < 10; i++) {
       const s = list[i];
       const sn = compactName(s.name);
-      const snAlt = compactName(stripOrgForm(s.name || ''));
-      const sa = compactName(s.address || '');
-      if ((sn && sn.includes(q)) || (snAlt && snAlt.includes(q)) || (sa && sa.includes(q))) results.push(s);
+      if (sn && sn.includes(q)) results.push(s);
     }
     return results;
   }, [supplierSearchQuery, dbSuppliers, compactName]);
@@ -218,11 +231,10 @@ function DistributionPage() {
     if (!q || q.length < 1) return [];
     const list = dbPartners || [];
     const results = [];
-    for (let i = 0; i < list.length && results.length < 20; i++) {
+    for (let i = 0; i < list.length && results.length < 10; i++) {
       const p = list[i];
       const pn = compactName(p.name);
-      const pa = compactName(p.address || '');
-      if ((pn && pn.includes(q)) || (pa && pa.includes(q))) results.push(p);
+      if (pn && pn.includes(q)) results.push(p);
     }
     return results;
   }, [partnerSearchQuery, dbPartners, compactName]);
@@ -239,15 +251,6 @@ function DistributionPage() {
       setDbPartners(partners || []);
     });
   }, []);
-
-  // Если слоты ещё не заданы, показываем всех водителей из БД в назначении на карте.
-  useEffect(() => {
-    if (!dbDrivers.length || driverSlots.length > 0) return;
-    const ids = dbDrivers.map((d) => d.id).filter((id) => id != null);
-    if (!ids.length) return;
-    setDriverSlots(ids);
-    setDriverCount((prev) => Math.max(prev, ids.length));
-  }, [dbDrivers, driverSlots.length]);
 
   // Загрузить состояние распределения из Supabase на сегодня (перезаписывает localStorage при успехе)
   useEffect(() => {
@@ -982,32 +985,6 @@ function DistributionPage() {
     [assignments, orders.length],
   );
 
-  // Назначение из балуна по driver.id (а не по слоту), чтобы работало даже без предварительного "Распределить".
-  const handleMapAssignDriverById = useCallback(
-    (globalIndex, driverId) => {
-      if (driverId == null) return;
-      let nextSlots = driverSlots;
-      let targetSlot = nextSlots.findIndex((id) => String(id) === String(driverId));
-      if (targetSlot < 0) {
-        nextSlots = [...nextSlots, driverId];
-        targetSlot = nextSlots.length - 1;
-        setDriverSlots(nextSlots);
-        setDriverCount((prev) => Math.max(prev, nextSlots.length));
-      }
-      if (!assignments) {
-        const len = orders.length;
-        const next = Array.from({ length: len }, (_, i) => (i === globalIndex ? targetSlot : -1));
-        setAssignments(next);
-      } else {
-        const next = [...assignments];
-        next[globalIndex] = targetSlot;
-        setAssignments(next);
-      }
-      setActiveVariant(-1);
-    },
-    [assignments, driverSlots, orders.length]
-  );
-
   // КБТ +1: переключить флаг на точке
   const handleToggleKbt = useCallback((globalIndex) => {
     setOrders((prev) =>
@@ -1246,31 +1223,16 @@ function DistributionPage() {
     orderId => {
       const idx = orders.findIndex(o => o.id === orderId);
       if (idx < 0) return;
-      const nextOrders = orders.filter(o => o.id !== orderId);
-      const nextAssignments = assignments && assignments.length === orders.length
-        ? (() => {
-            const next = assignments.filter((_, i) => i !== idx);
-            return next.length > 0 ? next : null;
-          })()
-        : null;
-      setOrders(nextOrders);
-      setAssignments(nextAssignments);
+      setOrders(prev => prev.filter(o => o.id !== orderId));
+      setAssignments(prev => {
+        if (!prev || prev.length !== orders.length) return null;
+        const next = prev.filter((_, i) => i !== idx);
+        return next.length > 0 ? next : null;
+      });
       setVariants([]);
       setActiveVariant(-1);
-      const snapshot = {
-        orders: nextOrders,
-        assignments: nextAssignments,
-        driverCount,
-        driverSlots,
-        activeVariant: -1,
-        poiCoords,
-        schemaVersion: DISTRIBUTION_SCHEMA_VERSION,
-      };
-      const today = new Date().toISOString().slice(0, 10);
-      saveDistributionState(today, snapshot).catch(() => {});
-      saveJson(DISTRIBUTION_DATA_KEY, snapshot);
     },
-    [orders, assignments, driverCount, driverSlots, poiCoords]
+    [orders]
   );
 
   // Clear all
@@ -1462,24 +1424,28 @@ function DistributionPage() {
                   onChange={(e) => {
                     setSupplierSearchQuery(e.target.value);
                     setShowSupplierSuggest(true);
+                    const r = supplierSearchRef.current?.getBoundingClientRect();
+                    if (r) setSupplierDropdownRect(r);
                   }}
                   onFocus={() => {
                     if (supplierSearchQuery.trim().length >= 1) {
                       setShowSupplierSuggest(true);
+                      const r = supplierSearchRef.current?.getBoundingClientRect();
+                      if (r) setSupplierDropdownRect(r);
                     }
                   }}
-                  onBlur={() => setTimeout(() => { setShowSupplierSuggest(false); }, 200)}
+                  onBlur={() => setTimeout(() => { setShowSupplierSuggest(false); setSupplierDropdownRect(null); }, 200)}
                   style={{ width: '100%' }}
                 />
-                {showSupplierSuggest && supplierSearchQuery.trim().length >= 1 && (
+                {showSupplierSuggest && supplierSearchQuery.trim().length >= 1 && createPortal(
                   <div
                     className="dc-suggest-dropdown"
                     style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 2px)',
-                      left: 0,
-                      width: '100%',
-                      zIndex: 1200,
+                      position: 'fixed',
+                      top: (supplierDropdownRect?.bottom ?? 0) + 2,
+                      left: supplierDropdownRect?.left ?? 0,
+                      width: Math.max(supplierDropdownRect?.width ?? 260, 260),
+                      zIndex: 10000,
                       background: 'var(--bg-card)',
                       border: '1px solid var(--border)',
                       borderRadius: 8,
@@ -1503,6 +1469,7 @@ function DistributionPage() {
                             setSupplierNamesText((prev) => (prev ? prev + '\n' : '') + (s.name || ''));
                             setSupplierSearchQuery('');
                             setShowSupplierSuggest(false);
+                            setSupplierDropdownRect(null);
                           }}
                         >
                           <div style={{ fontWeight: 600 }}>{s.name}</div>
@@ -1510,7 +1477,8 @@ function DistributionPage() {
                         </div>
                       ))
                     )}
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
               <textarea
@@ -1543,24 +1511,28 @@ function DistributionPage() {
                   onChange={(e) => {
                     setPartnerSearchQuery(e.target.value);
                     setShowPartnerSuggest(true);
+                    const r = partnerSearchRef.current?.getBoundingClientRect();
+                    if (r) setPartnerDropdownRect(r);
                   }}
                   onFocus={() => {
                     if (partnerSearchQuery.trim().length >= 1) {
                       setShowPartnerSuggest(true);
+                      const r = partnerSearchRef.current?.getBoundingClientRect();
+                      if (r) setPartnerDropdownRect(r);
                     }
                   }}
-                  onBlur={() => setTimeout(() => { setShowPartnerSuggest(false); }, 200)}
+                  onBlur={() => setTimeout(() => { setShowPartnerSuggest(false); setPartnerDropdownRect(null); }, 200)}
                   style={{ width: '100%' }}
                 />
-                {showPartnerSuggest && partnerSearchQuery.trim().length >= 1 && (
+                {showPartnerSuggest && partnerSearchQuery.trim().length >= 1 && createPortal(
                   <div
                     className="dc-suggest-dropdown"
                     style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 2px)',
-                      left: 0,
-                      width: '100%',
-                      zIndex: 1200,
+                      position: 'fixed',
+                      top: (partnerDropdownRect?.bottom ?? 0) + 2,
+                      left: partnerDropdownRect?.left ?? 0,
+                      width: Math.max(partnerDropdownRect?.width ?? 260, 260),
+                      zIndex: 10000,
                       background: 'var(--bg-card)',
                       border: '1px solid var(--border)',
                       borderRadius: 8,
@@ -1584,6 +1556,7 @@ function DistributionPage() {
                             setPartnerNamesText((prev) => (prev ? prev + '\n' : '') + (p.name || ''));
                             setPartnerSearchQuery('');
                             setShowPartnerSuggest(false);
+                            setPartnerDropdownRect(null);
                           }}
                         >
                           <div style={{ fontWeight: 600 }}>{p.name}</div>
@@ -1591,7 +1564,8 @@ function DistributionPage() {
                         </div>
                       ))
                     )}
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
               <textarea
@@ -2490,7 +2464,6 @@ function DistributionPage() {
           driverCount={driverCount}
           selectedDriver={selectedDriver}
           onAssignDriver={handleMapAssignDriver}
-          onAssignDriverById={handleMapAssignDriverById}
           onDeleteOrder={handleDeleteOrder}
           placingMode={!!placingOrderId}
           onMapClick={handleMapClick}
