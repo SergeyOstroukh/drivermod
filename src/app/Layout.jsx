@@ -40,6 +40,7 @@ export default function Layout() {
           minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
+          ...(isDistribution ? { minHeight: 'calc(100vh - 120px)' } : {}),
         }}
       >
         <Outlet />

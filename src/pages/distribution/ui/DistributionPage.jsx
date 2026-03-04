@@ -943,7 +943,7 @@ function DistributionPage() {
         </div>
       </header>
 
-      <div className="dc-layout">
+      <div className="dc-layout" style={{ flex: 1, minHeight: 0 }}>
         <aside className="dc-sidebar-wrap">
           <div className="dc-sidebar-scroll">
           {/* Вставить список поставщиков */}
@@ -1582,8 +1582,17 @@ function DistributionPage() {
           </div>
         </aside>
 
-        {/* Карта занимает всё остальное пространство справа (как в старой версии) */}
-        <div className="dc-map-wrap" style={{ position: 'relative', minHeight: 400 }}>
+        {/* Карта: явная высота от viewport, чтобы контейнер всегда имел размер для инициализации */}
+        <div
+          className="dc-map-wrap"
+          style={{
+            position: 'relative',
+            flex: 1,
+            minWidth: 0,
+            height: 'calc(100vh - 160px)',
+            minHeight: 500,
+          }}
+        >
         <YandexMapView
           orders={orders}
           assignments={assignments}
