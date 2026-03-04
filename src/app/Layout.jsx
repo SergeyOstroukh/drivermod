@@ -29,7 +29,7 @@ export default function Layout() {
           <h1 id="pageTitle" style={{ margin: 0, fontSize: '1.25rem' }}>DriveControl</h1>
         </div>
       </header>
-      <main className="container" style={{ padding: 16, flex: 1, minHeight: 0 }}>
+      <main className="container" style={{ padding: 16, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <Outlet />
       </main>
     </div>
