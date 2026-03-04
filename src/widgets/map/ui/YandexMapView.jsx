@@ -60,6 +60,8 @@ export default function YandexMapView({
   onToggleKbt,
   onSetHelper,
   hoveredOrderId = null,
+  selectedOrderIds = new Set(),
+  onToggleOrderSelect,
 }) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -78,6 +80,8 @@ export default function YandexMapView({
   onToggleKbtRef.current = onToggleKbt;
   const onSetHelperRef = useRef(onSetHelper);
   onSetHelperRef.current = onSetHelper;
+  const onToggleOrderSelectRef = useRef(onToggleOrderSelect);
+  onToggleOrderSelectRef.current = onToggleOrderSelect;
 
   useEffect(() => {
     window.__drivecontrol_assign = (globalIdx, driverIdx) => {
@@ -107,12 +111,16 @@ export default function YandexMapView({
     window.__drivecontrol_setHelper = (globalIdx, helperSlot) => {
       if (onSetHelperRef.current) onSetHelperRef.current(globalIdx, helperSlot);
     };
+    window.__drivecontrol_toggleSelect = (globalIdx) => {
+      if (onToggleOrderSelectRef.current) onToggleOrderSelectRef.current(globalIdx);
+    };
     return () => {
       delete window.__drivecontrol_assign;
       delete window.__drivecontrol_delete;
       delete window.__drivecontrol_centerOrder;
       delete window.__drivecontrol_toggleKbt;
       delete window.__drivecontrol_setHelper;
+      delete window.__drivecontrol_toggleSelect;
     };
   }, []);
 
@@ -124,9 +132,15 @@ export default function YandexMapView({
       if (cancelled || mapRef.current) return;
       const el = getContainer();
       if (!el) return;
-      const w = el.offsetWidth || el.parentElement?.offsetWidth || 0;
-      const h = el.offsetHeight || el.parentElement?.offsetHeight || 0;
-      if (w < 50 || h < 50) return;
+      let w = el.offsetWidth || el.parentElement?.offsetWidth || 0;
+      let h = el.offsetHeight || el.parentElement?.offsetHeight || 0;
+      // Чтобы карта открывалась сразу, а не только после resize: задаём минимальный размер контейнера
+      if (w < 100 || h < 100) {
+        el.style.minWidth = '400px';
+        el.style.minHeight = '500px';
+        w = Math.max(w, 400);
+        h = Math.max(h, 500);
+      }
       loadYmaps().then(ymaps => {
         if (cancelled || mapRef.current) return;
         const container = getContainer();
@@ -148,15 +162,25 @@ export default function YandexMapView({
         });
         mapRef.current = map;
         setMapReady(true);
-        // После монтирования подогнать карту под контейнер (иногда размер считается неверно до первого resize)
+        // После монтирования подогнать карту под контейнер и принудительно пересчитать размер (карта сразу видна без resize)
         setTimeout(() => {
           if (mapRef.current) {
             try {
+              if (typeof mapRef.current.container?.fitToViewport === 'function') {
+                mapRef.current.container.fitToViewport();
+              }
               const z = mapRef.current.getZoom();
               mapRef.current.setCenter(MINSK_CENTER, z);
             } catch (e) {}
           }
         }, 150);
+        setTimeout(() => {
+          if (mapRef.current && window.dispatchEvent) {
+            try {
+              window.dispatchEvent(new Event('resize'));
+            } catch (e) {}
+          }
+        }, 400);
       });
     };
 
@@ -194,7 +218,7 @@ export default function YandexMapView({
   }, [placingMode]);
 
   const buildBalloonContent = useCallback(
-    (order, globalIdx, currentDriverIdx) => {
+    (order, globalIdx, currentDriverIdx, isSelected) => {
       const colors = driverColorsBySlot.length ? driverColorsBySlot : DRIVER_COLORS;
       let driverButtons = '';
       if (dbDrivers.length && driverSlots.length) {
@@ -235,6 +259,9 @@ export default function YandexMapView({
       }
       kbtHtml += '</div>';
 
+      const selectBtn = typeof window.__drivecontrol_toggleSelect === 'function'
+        ? `<button onclick="window.__drivecontrol_toggleSelect(${globalIdx})" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:8px;border:1px solid #3b82f6;background:${isSelected ? '#3b82f6' : '#fff'};color:${isSelected ? '#fff' : '#3b82f6'};cursor:pointer;font-size:11px;margin-top:6px;" title="${isSelected ? 'Убрать из выбора' : 'Добавить в выбор для массового назначения'}">${isSelected ? '✓ В выборе' : '☐ В выбор'}</button>`
+        : '';
       return `
       <div style="font-family:Inter,sans-serif;min-width:240px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -247,6 +274,7 @@ export default function YandexMapView({
         <div style="border-top:1px solid #eee;padding-top:8px;margin-top:4px;">
           <div style="font-size:11px;color:#888;margin-bottom:6px;">Назначить водителя:</div>
           <div style="display:flex;flex-wrap:wrap;align-items:center;">${driverButtons}</div>
+          ${selectBtn}
         </div>
         ${kbtHtml}
       </div>
@@ -292,7 +320,8 @@ export default function YandexMapView({
       const isHovered = hoveredOrderId === order.id;
       const displayNum = order.isSupplier ? 'П' : order.isPartner ? 'ПР' : (order.poiShort || `${globalIdx + 1}`);
 
-      const balloonContent = buildBalloonContent(order, globalIdx, driverIdx);
+      const isSelected = selectedOrderIds && (selectedOrderIds.has ? selectedOrderIds.has(order.id) : selectedOrderIds.includes(order.id));
+      const balloonContent = buildBalloonContent(order, globalIdx, driverIdx, isSelected);
 
       const k = overlapKey(order);
       const group = overlapGroups[k] || [order];
@@ -360,7 +389,7 @@ export default function YandexMapView({
         });
       }
     }
-  }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent, driverColorsBySlot, hoveredOrderId]);
+  }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent, driverColorsBySlot, hoveredOrderId, selectedOrderIds]);
 
   // Как в старой версии: один контейнер #distributionMap.dc-map (index.legacy.html)
   return (
