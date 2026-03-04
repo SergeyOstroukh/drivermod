@@ -96,9 +96,8 @@ export default function YandexMapView({
 
     const initWhenReady = () => {
       if (cancelled || mapRef.current) return;
-      const w = el.offsetWidth || el.parentElement?.offsetWidth || 0;
-      const h = el.offsetHeight || el.parentElement?.offsetHeight || 0;
-      // Требуем минимальные размеры для инициализации карты (как в старой версии)
+      const w = el.offsetWidth || el.parentElement?.offsetWidth;
+      const h = el.offsetHeight || el.parentElement?.offsetHeight;
       if (w < 50 || h < 50) return;
       loadYmaps().then(ymaps => {
         if (cancelled || !mapContainerRef.current || mapRef.current) return;
@@ -126,18 +125,10 @@ export default function YandexMapView({
       initWhenReady();
     });
     ro.observe(el);
-    // Сразу попытка (на случай если размеры уже есть)
     initWhenReady();
-    // Повтор после layout (как в старой версии — карта инициализируется когда секция видима)
-    const rafId = requestAnimationFrame(() => {
-      requestAnimationFrame(() => initWhenReady());
-    });
-    const timeoutId = setTimeout(() => initWhenReady(), 150);
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafId);
-      clearTimeout(timeoutId);
       ro.disconnect();
       if (mapRef.current) {
         mapRef.current.destroy();
@@ -225,11 +216,7 @@ export default function YandexMapView({
       const globalIdx = orders.findIndex(o => o.id === order.id);
       const driverIdx = assignments ? assignments[globalIdx] : -1;
       const isVisible =
-        selectedDriver === null || selectedDriver === -1
-          ? true
-          : selectedDriver === '__unassigned__'
-            ? driverIdx < 0
-            : driverIdx === selectedDriver;
+        selectedDriver === null || selectedDriver === -1 || driverIdx === selectedDriver;
       const opacity = isVisible ? 1 : 0.25;
       const color =
         driverIdx >= 0
@@ -273,26 +260,8 @@ export default function YandexMapView({
   }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent]);
 
   return (
-    <div
-      className="map-container"
-      style={{
-        position: 'absolute',
-        inset: 0,
-        width: '100%',
-        height: '100%',
-        minHeight: 400,
-      }}
-    >
-      <div
-        ref={mapContainerRef}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          minHeight: 400,
-        }}
-      />
+    <div className="map-container" style={{ minHeight: 400 }}>
+      <div ref={mapContainerRef} style={{ width: '100%', height: '100%', minHeight: 400 }} />
     </div>
   );
 }

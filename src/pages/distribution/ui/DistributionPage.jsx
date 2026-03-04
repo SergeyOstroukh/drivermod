@@ -1235,16 +1235,6 @@ function DistributionPage() {
               >
                 Все <span className="tab-count">{stats.total}</span>
               </button>
-              <button
-                className={`driver-tab ${
-                  selectedDriver === '__unassigned__' ? 'active' : ''
-                }`}
-                onClick={() => setSelectedDriver(selectedDriver === '__unassigned__' ? null : '__unassigned__')}
-                style={selectedDriver === '__unassigned__' ? { borderBottomColor: '#888' } : {}}
-              >
-                <span className="driver-color-dot" style={{ background: '#888' }} />
-                Нераспред. <span className="tab-count">{stats.total - stats.assigned}</span>
-              </button>
               {driverRoutes.map(dr => (
                 <button
                   key={dr.index}
@@ -1583,7 +1573,7 @@ function DistributionPage() {
         </aside>
 
         {/* Карта занимает всё остальное пространство справа (как в старой версии) */}
-        <div className="dc-map-wrap" style={{ position: 'relative', minHeight: 400 }}>
+        <div className="dc-map-wrap">
         <YandexMapView
           orders={orders}
           assignments={assignments}
