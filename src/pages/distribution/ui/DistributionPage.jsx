@@ -11,6 +11,19 @@ import {
   DRIVER_COLORS,
 } from '../../../entities/distribution/lib/distributor.js';
 import {
+  stripOrgForm,
+  extractSupplierTimeSlot,
+  compactName as compactNameHelper,
+  findSupplierInDb,
+  findPartnerInDb,
+  loadJson,
+  saveJson,
+  SUPPLIER_ALIASES_KEY,
+  PARTNER_ALIASES_KEY,
+  DRIVER_COLORS_KEY,
+  COLOR_PALETTE,
+} from '../../../entities/distribution/lib/distributionHelpers.js';
+import {
   fetchCustomerOrdersForDate,
   mapDbOrderToUi,
 } from '../../../entities/order/api/customerOrdersApi.js';
@@ -40,9 +53,17 @@ function DistributionPage() {
   const [geocodeProgress, setGeocodeProgress] = useState({ current: 0, total: 0 });
   const [toast, setToast] = useState(null);
 
-  // Водители из БД и привязка слот → driver_id
+  // Водители, поставщики, партнёры из БД (как в старой версии)
   const [dbDrivers, setDbDrivers] = useState([]);
+  const [dbSuppliers, setDbSuppliers] = useState([]);
+  const [dbPartners, setDbPartners] = useState([]);
   const [driverSlots, setDriverSlots] = useState([]); // [driver_id, ...] по индексу слота
+
+  // Поиск поставщика/партнёра по базе (сквозной поиск как в старой версии)
+  const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
+  const [showSupplierSuggest, setShowSupplierSuggest] = useState(false);
+  const [partnerSearchQuery, setPartnerSearchQuery] = useState('');
+  const [showPartnerSuggest, setShowPartnerSuggest] = useState(false);
 
   // Variants
   const [variants, setVariants] = useState([]);
@@ -90,43 +111,103 @@ function DistributionPage() {
   const [loadingSuppliersByName, setLoadingSuppliersByName] = useState(false);
   const [loadingPartnersByName, setLoadingPartnersByName] = useState(false);
 
+  // Алиасы: введённое имя (compact) → supplier.id / partner.id (localStorage)
+  const [supplierAliases, setSupplierAliases] = useState(() => loadJson(SUPPLIER_ALIASES_KEY, {}));
+  const [partnerAliases, setPartnerAliases] = useState(() => loadJson(PARTNER_ALIASES_KEY, {}));
+  // Кастомные цвета водителей: driverId → hex
+  const [driverCustomColors, setDriverCustomColors] = useState(() => loadJson(DRIVER_COLORS_KEY, {}));
+  // Режим редактирования маршрута одного водителя
+  const [editingDriverId, setEditingDriverId] = useState(null);
+  // Подсветка точки на карте при наведении на строку в сайдбаре
+  const [hoveredOrderId, setHoveredOrderId] = useState(null);
+  // Модалки: найти в базе (supplier/partner), завершить поставщиков, создать поставщика/партнёра
+  const [findSupplierOrderId, setFindSupplierOrderId] = useState(null);
+  const [findPartnerOrderId, setFindPartnerOrderId] = useState(null);
+  const [showFinishSuppliersModal, setShowFinishSuppliersModal] = useState(false);
+  const [createSupplierOrderId, setCreateSupplierOrderId] = useState(null);
+  const [showCreatePartner, setShowCreatePartner] = useState(false);
+  // Палитра цвета водителя (по клику на кружок)
+  const [colorPickerDriverId, setColorPickerDriverId] = useState(null);
+
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // Загрузка водителей из БД
-  useEffect(() => {
-    fetchDrivers().then(setDbDrivers).catch(() => setDbDrivers([]));
+  // Нормализация для поиска (как в старой версии: compactName) — для UI-поиска по списку
+  const compactName = useCallback((s) => {
+    if (s == null) return '';
+    return String(s).toLowerCase().replace(/\s+/g, '').replace(/ё/g, 'е').replace(/[^a-zа-яё0-9]/gi, '');
   }, []);
 
-  // Первичная загрузка сегодняшних заказов из customer_orders и геокодирование для карты
+  // Сохранение алиасов и цветов в localStorage при изменении
   useEffect(() => {
-    const loadToday = async () => {
-      try {
-        const today = new Date().toISOString().slice(0, 10);
-        const rows = await fetchCustomerOrdersForDate(today);
-        if (!rows || rows.length === 0) return;
-        const uiOrders = rows.map(mapDbOrderToUi);
-        setOrders(uiOrders);
-        setIsGeocoding(true);
-        setGeocodeProgress({ current: 0, total: uiOrders.length });
-        const geocoded = await geocodeOrders(uiOrders, (current, total) => {
-          setGeocodeProgress({ current, total });
-        });
-        setOrders(geocoded);
-        const ok = geocoded.filter(o => o.geocoded).length;
-        const fail = geocoded.filter(o => !o.geocoded).length;
-        if (fail > 0) showToast(`Загружено ${geocoded.length} заказов, на карте: ${ok}, не найдено: ${fail}`, 'error');
-        else if (ok > 0) showToast(`Загружено ${ok} заказов на карту`);
-      } catch (e) {
-        console.warn('Не удалось загрузить заказы из Supabase:', e);
-      } finally {
-        setIsGeocoding(false);
-      }
-    };
-    loadToday();
+    saveJson(SUPPLIER_ALIASES_KEY, supplierAliases);
+  }, [supplierAliases]);
+  useEffect(() => {
+    saveJson(PARTNER_ALIASES_KEY, partnerAliases);
+  }, [partnerAliases]);
+  useEffect(() => {
+    saveJson(DRIVER_COLORS_KEY, driverCustomColors);
+  }, [driverCustomColors]);
+
+  // Запомнить алиас поставщика (введённое имя → supplier.id)
+  const rememberSupplierAlias = useCallback((inputName, supplier) => {
+    if (!inputName || !supplier?.id) return;
+    const key = compactNameHelper(inputName);
+    if (!key || key.length < 2) return;
+    setSupplierAliases((prev) => ({ ...prev, [key]: supplier.id }));
   }, []);
+  // Запомнить алиас партнёра
+  const rememberPartnerAlias = useCallback((inputName, partner) => {
+    if (!inputName || !partner?.id) return;
+    const key = compactNameHelper(inputName);
+    if (!key || key.length < 2) return;
+    setPartnerAliases((prev) => ({ ...prev, [key]: partner.id }));
+  }, []);
+
+  // Результаты поиска поставщиков по базе
+  const supplierSuggestResults = useMemo(() => {
+    const q = compactName(supplierSearchQuery);
+    if (!q || q.length < 1) return [];
+    const list = dbSuppliers || [];
+    const results = [];
+    for (let i = 0; i < list.length && results.length < 10; i++) {
+      const s = list[i];
+      const sn = compactName(s.name);
+      if (sn && sn.includes(q)) results.push(s);
+    }
+    return results;
+  }, [supplierSearchQuery, dbSuppliers, compactName]);
+
+  // Результаты поиска партнёров по базе
+  const partnerSuggestResults = useMemo(() => {
+    const q = compactName(partnerSearchQuery);
+    if (!q || q.length < 1) return [];
+    const list = dbPartners || [];
+    const results = [];
+    for (let i = 0; i < list.length && results.length < 10; i++) {
+      const p = list[i];
+      const pn = compactName(p.name);
+      if (pn && pn.includes(q)) results.push(p);
+    }
+    return results;
+  }, [partnerSearchQuery, dbPartners, compactName]);
+
+  // Загрузка водителей, поставщиков и партнёров из БД (без геокодинга — как в старой версии при открытии вкладки)
+  useEffect(() => {
+    Promise.all([
+      fetchDrivers().catch(() => []),
+      fetchSuppliers().catch(() => []),
+      fetchPartners().catch(() => []),
+    ]).then(([drivers, suppliers, partners]) => {
+      setDbDrivers(drivers || []);
+      setDbSuppliers(suppliers || []);
+      setDbPartners(partners || []);
+    });
+  }, []);
+
+  // Геокодинг и загрузка заказов из 1С только по кнопке «Обновить из 1С» — не при открытии страницы, чтобы не блокировать карту
 
   // Parse and geocode (replace all)
   const handleLoadAddresses = useCallback(async () => {
@@ -528,62 +609,108 @@ function DistributionPage() {
     [orders, poiCoords, showToast]
   );
 
-  // Добавить поставщиков по списку имён (каждая строка — название, ищем в БД)
+  // Добавить поставщиков по списку имён: stripOrgForm, extractSupplierTimeSlot, findSupplierInDb
   const handleAddSuppliersByNames = useCallback(
     async (append) => {
-      const names = supplierNamesText
+      const lines = supplierNamesText
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean);
-      if (names.length === 0) {
+      if (lines.length === 0) {
         showToast('Вставьте названия поставщиков, каждый с новой строки', 'error');
         return;
       }
       setLoadingSuppliersByName(true);
       try {
         const suppliers = await fetchSuppliers();
-        const compact = (s) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
         const newOrders = [];
-        for (const name of names) {
-          const n = compact(name);
-          const found = suppliers.find((s) => compact(s.name) === n || compact(s.name).includes(n) || compact(s.address || '').includes(n));
-          if (found && Number.isFinite(parseFloat(found.lat)) && Number.isFinite(parseFloat(found.lon))) {
+        let foundCount = 0;
+        let notFoundCount = 0;
+        for (let i = 0; i < lines.length; i++) {
+          const rawLine = lines[i];
+          const { name, timeSlot } = extractSupplierTimeSlot(rawLine);
+          const displayName = name || rawLine;
+          const cleanName = stripOrgForm(name || rawLine);
+          const supplier = findSupplierInDb(cleanName, suppliers, supplierAliases, compactNameHelper);
+          const uniq = `supplier-${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`;
+          if (supplier && Number.isFinite(parseFloat(supplier.lat)) && Number.isFinite(parseFloat(supplier.lon))) {
+            foundCount++;
             newOrders.push({
-              id: `supplier-${found.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              address: found.name || found.address || '',
-              lat: parseFloat(found.lat),
-              lng: parseFloat(found.lon),
+              id: uniq,
+              address: displayName,
+              lat: parseFloat(supplier.lat),
+              lng: parseFloat(supplier.lon),
               geocoded: true,
-              formattedAddress: found.address || '',
+              formattedAddress: supplier.address || '',
               error: null,
               phone: '',
-              timeSlot: found.working_hours || null,
+              timeSlot: timeSlot || supplier.working_hours || null,
               isSupplier: true,
+              supplierDbId: supplier.id,
+              supplierName: displayName,
+              sourceSupplierName: rawLine,
+            });
+          } else if (supplier && (!supplier.lat || !supplier.lon)) {
+            notFoundCount++;
+            newOrders.push({
+              id: uniq,
+              address: displayName,
+              geocoded: false,
+              lat: null,
+              lng: null,
+              formattedAddress: null,
+              error: 'Нет координат в базе',
+              phone: '',
+              timeSlot: timeSlot || supplier.working_hours || null,
+              isSupplier: true,
+              supplierDbId: supplier.id,
+              supplierName: displayName,
+              sourceSupplierName: rawLine,
+            });
+          } else {
+            notFoundCount++;
+            newOrders.push({
+              id: uniq,
+              address: displayName,
+              geocoded: false,
+              lat: null,
+              lng: null,
+              formattedAddress: null,
+              error: 'Не найден в базе',
+              phone: '',
+              timeSlot: timeSlot || null,
+              isSupplier: true,
+              supplierDbId: null,
+              supplierName: displayName,
+              sourceSupplierName: rawLine,
             });
           }
         }
         if (append) setOrders((prev) => [...prev, ...newOrders]);
         else setOrders((prev) => [...newOrders, ...prev.filter((o) => !o.isSupplier)]);
-        setAssignments(null);
+        setAssignments((prev) => (append && prev ? [...prev, ...newOrders.map(() => -1)] : null));
         setVariants([]);
         setActiveVariant(-1);
         setSupplierNamesText('');
-        showToast(`Добавлено поставщиков: ${newOrders.length}`);
+        showToast(
+          `Поставщики: найдено ${foundCount}` + (notFoundCount > 0 ? `, не найдено: ${notFoundCount}` : ''),
+          notFoundCount > 0 ? 'error' : 'success'
+        );
       } catch (e) {
         showToast('Ошибка: ' + (e.message || e), 'error');
       } finally {
         setLoadingSuppliersByName(false);
       }
     },
-    [supplierNamesText, showToast]
+    [supplierNamesText, supplierAliases, showToast]
   );
 
-  // Добавить партнёров по списку имён
+  // Добавить партнёров по списку имён: findPartnerInDb, алиасы
   const handleAddPartnersByNames = useCallback(
     async (append) => {
       const names = partnerNamesText
         .split('\n')
-        .map((l) => l.trim())
+        .map((l) => l.replace(/^\d+[\.):\-\s]+\s*/, '').trim())
         .filter(Boolean);
       if (names.length === 0) {
         showToast('Вставьте названия партнёров', 'error');
@@ -592,29 +719,66 @@ function DistributionPage() {
       setLoadingPartnersByName(true);
       try {
         const partners = await fetchPartners();
-        const compact = (s) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
         const newOrders = [];
-        for (const name of names) {
-          const n = compact(name);
-          const found = partners.find((p) => compact(p.name) === n || compact(p.name).includes(n) || compact(p.address || '').includes(n));
-          if (found && Number.isFinite(parseFloat(found.lat)) && Number.isFinite(parseFloat(found.lon))) {
+        for (let i = 0; i < names.length; i++) {
+          const rawLine = names[i];
+          const partner = findPartnerInDb(rawLine, partners, partnerAliases, compactNameHelper);
+          const uniq = `partner-${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`;
+          if (partner) {
+            rememberPartnerAlias(rawLine, partner);
+            const lat = parseFloat(partner.lat);
+            const lon = parseFloat(partner.lon);
+            if (Number.isFinite(lat) && Number.isFinite(lon)) {
+              newOrders.push({
+                id: uniq,
+                address: rawLine,
+                lat,
+                lng: lon,
+                geocoded: true,
+                formattedAddress: partner.address || '',
+                error: null,
+                phone: '',
+                timeSlot: null,
+                isPartner: true,
+                partnerDbId: partner.id,
+                partnerName: rawLine,
+              });
+            } else {
+              newOrders.push({
+                id: uniq,
+                address: rawLine,
+                geocoded: false,
+                lat: null,
+                lng: null,
+                formattedAddress: null,
+                error: 'Нет координат — выберите точку на карте',
+                phone: '',
+                timeSlot: null,
+                isPartner: true,
+                partnerDbId: partner.id,
+                partnerName: rawLine,
+              });
+            }
+          } else {
             newOrders.push({
-              id: `partner-${found.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              address: found.name || found.address || '',
-              lat: parseFloat(found.lat),
-              lng: parseFloat(found.lon),
-              geocoded: true,
-              formattedAddress: found.address || '',
-              error: null,
+              id: uniq,
+              address: rawLine,
+              geocoded: false,
+              lat: null,
+              lng: null,
+              formattedAddress: null,
+              error: 'Не выбран — нажмите для поиска',
               phone: '',
               timeSlot: null,
               isPartner: true,
+              partnerDbId: null,
+              partnerName: rawLine,
             });
           }
         }
         if (append) setOrders((prev) => [...prev, ...newOrders]);
         else setOrders((prev) => [...newOrders, ...prev.filter((o) => !o.isPartner)]);
-        setAssignments(null);
+        setAssignments((prev) => (append && prev ? [...prev, ...newOrders.map(() => -1)] : null));
         setVariants([]);
         setActiveVariant(-1);
         setPartnerNamesText('');
@@ -625,7 +789,7 @@ function DistributionPage() {
         setLoadingPartnersByName(false);
       }
     },
-    [partnerNamesText, showToast]
+    [partnerNamesText, partnerAliases, rememberPartnerAlias, showToast]
   );
 
   // Массовое назначение выбранных точек на водителя
@@ -716,17 +880,185 @@ function DistributionPage() {
     [manualMode, assigningDriver, assignments],
   );
 
-  // Assign driver from map balloon (works always when distributed)
+  // Assign driver from map balloon (driverIdx = slot index, -1 = Снять)
   const handleMapAssignDriver = useCallback(
     (globalIndex, driverIdx) => {
-      if (!assignments) return;
-      const newAssignments = [...assignments];
-      newAssignments[globalIndex] = driverIdx;
-      setAssignments(newAssignments);
+      if (!assignments) {
+        const len = orders.length;
+        const next = Array.from({ length: len }, (_, i) => (i === globalIndex ? (driverIdx >= 0 ? driverIdx : -1) : -1));
+        setAssignments(next);
+      } else {
+        const newAssignments = [...assignments];
+        newAssignments[globalIndex] = driverIdx >= 0 ? driverIdx : -1;
+        setAssignments(newAssignments);
+      }
       setActiveVariant(-1);
     },
-    [assignments],
+    [assignments, orders.length],
   );
+
+  // КБТ +1: переключить флаг на точке
+  const handleToggleKbt = useCallback((globalIndex) => {
+    setOrders((prev) =>
+      prev.map((o, i) =>
+        i === globalIndex
+          ? { ...o, isKbt: !o.isKbt, helperDriverSlot: !o.isKbt ? (o.helperDriverSlot ?? null) : null }
+          : o
+      )
+    );
+  }, []);
+
+  // Помощник (едет вместе) для КБТ
+  const handleSetHelper = useCallback((globalIndex, helperSlot) => {
+    setOrders((prev) =>
+      prev.map((o, i) => (i === globalIndex ? { ...o, helperDriverSlot: helperSlot } : o))
+    );
+  }, []);
+
+  // Привязать заказ к поставщику из базы (модалка «найти в базе»)
+  const handleLinkSupplier = useCallback(
+    (orderId, supplier) => {
+      if (!supplier?.id) return;
+      const idx = orders.findIndex((o) => o.id === orderId);
+      if (idx < 0) return;
+      const order = orders[idx];
+      rememberSupplierAlias(order.sourceSupplierName || order.address || order.supplierName, supplier);
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                supplierDbId: supplier.id,
+                supplierName: supplier.name,
+                address: supplier.name || o.address,
+                lat: supplier.lat != null ? parseFloat(supplier.lat) : o.lat,
+                lng: supplier.lon != null ? parseFloat(supplier.lon) : o.lng,
+                formattedAddress: supplier.address || o.formattedAddress,
+                geocoded: Number.isFinite(parseFloat(supplier.lat)) && Number.isFinite(parseFloat(supplier.lon)),
+                error: null,
+                timeSlot: supplier.working_hours || o.timeSlot,
+              }
+            : o
+        )
+      );
+      setFindSupplierOrderId(null);
+      showToast('Поставщик привязан');
+    },
+    [orders, rememberSupplierAlias, showToast]
+  );
+
+  // Привязать заказ к партнёру из базы
+  const handleLinkPartner = useCallback(
+    (orderId, partner) => {
+      if (!partner?.id) return;
+      const idx = orders.findIndex((o) => o.id === orderId);
+      if (idx < 0) return;
+      const order = orders[idx];
+      rememberPartnerAlias(order.partnerName || order.address, partner);
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === orderId
+            ? {
+                ...o,
+                partnerDbId: partner.id,
+                partnerName: partner.name,
+                address: partner.name || o.address,
+                lat: partner.lat != null ? parseFloat(partner.lat) : o.lat,
+                lng: partner.lon != null ? parseFloat(partner.lon) : o.lng,
+                formattedAddress: partner.address || o.formattedAddress,
+                geocoded: Number.isFinite(parseFloat(partner.lat)) && Number.isFinite(parseFloat(partner.lon)),
+                error: null,
+              }
+            : o
+        )
+      );
+      setFindPartnerOrderId(null);
+      showToast('Партнёр привязан');
+    },
+    [orders, rememberPartnerAlias, showToast]
+  );
+
+  // Завершить поставщиков по водителю: сохранить маршрут, убрать точки с карты (skipClose для кнопки «Все водители»)
+  const handleFinishSupplierRoute = useCallback(
+    async (driverId, skipClose = false) => {
+      const routeDate = new Date().toISOString().slice(0, 10);
+      const driverName = dbDrivers.find((d) => String(d.id) === String(driverId))?.name ?? 'Водитель';
+      const supplierPoints = [];
+      const indicesToRemove = [];
+      orders.forEach((o, i) => {
+        if (!o.isSupplier || !o.geocoded || o.poiId) return;
+        const slot = assignments?.[i];
+        if (slot == null || slot < 0) return;
+        const did = driverSlots[slot];
+        if (!did || String(did) !== String(driverId)) return;
+        supplierPoints.push({
+          address: o.address,
+          lat: o.lat,
+          lng: o.lng,
+          phone: o.phone || null,
+          timeSlot: o.timeSlot || null,
+          formattedAddress: o.formattedAddress || null,
+          orderNum: supplierPoints.length + 1,
+          isSupplier: true,
+        });
+        indicesToRemove.push(i);
+      });
+      if (supplierPoints.length === 0) {
+        showToast('Нет поставщиков для ' + driverName, 'error');
+        return;
+      }
+      try {
+        await syncDriverRoute(driverId, routeDate, supplierPoints);
+        const toRemove = new Set(indicesToRemove.sort((a, b) => b - a));
+        setOrders((prev) => prev.filter((_, i) => !toRemove.has(i)));
+        setAssignments((prev) => (prev ? prev.filter((_, i) => !toRemove.has(i)) : null));
+        if (!skipClose) setShowFinishSuppliersModal(false);
+        showToast('Поставщики для ' + driverName + ' завершены (' + supplierPoints.length + ')');
+      } catch (err) {
+        showToast('Ошибка: ' + (err?.message || err), 'error');
+      }
+    },
+    [orders, assignments, driverSlots, dbDrivers, showToast]
+  );
+
+  // Завершить поставщиков по всем водителям (одним сценарием, чтобы не ломать индексы)
+  const handleFinishAllSupplierRoutes = useCallback(async () => {
+    const routeDate = new Date().toISOString().slice(0, 10);
+    const byDriver = {};
+    const allIndices = new Set();
+    orders.forEach((o, i) => {
+      if (!o.isSupplier || !o.geocoded || o.poiId) return;
+      const slot = assignments?.[i];
+      if (slot == null || slot < 0) return;
+      const did = driverSlots[slot];
+      if (!did) return;
+      if (!byDriver[did]) byDriver[did] = { points: [], indices: [] };
+      byDriver[did].points.push({
+        address: o.address,
+        lat: o.lat,
+        lng: o.lng,
+        phone: o.phone || null,
+        timeSlot: o.timeSlot || null,
+        formattedAddress: o.formattedAddress || null,
+        orderNum: byDriver[did].points.length + 1,
+        isSupplier: true,
+      });
+      byDriver[did].indices.push(i);
+      allIndices.add(i);
+    });
+    try {
+      for (const driverId of Object.keys(byDriver)) {
+        await syncDriverRoute(driverId, routeDate, byDriver[driverId].points);
+      }
+      const sorted = Array.from(allIndices).sort((a, b) => b - a);
+      setOrders((prev) => prev.filter((_, i) => !allIndices.has(i)));
+      setAssignments((prev) => (prev ? prev.filter((_, i) => !allIndices.has(i)) : null));
+      setShowFinishSuppliersModal(false);
+      showToast('Поставщики всех водителей завершены (' + sorted.length + ')');
+    } catch (err) {
+      showToast('Ошибка: ' + (err?.message || err), 'error');
+    }
+  }, [orders, assignments, driverSlots, showToast]);
 
   // Start editing an address
   const handleStartEdit = useCallback(order => {
@@ -859,7 +1191,7 @@ function DistributionPage() {
         driverId,
         driverName: driver ? driver.name : `Водитель ${driverIdx + 1}`,
         orders: driverOrders,
-        color: DRIVER_COLORS[driverIdx % DRIVER_COLORS.length],
+        color: driverColorsBySlot[driverIdx] ?? DRIVER_COLORS[driverIdx % DRIVER_COLORS.length],
         km: Math.round(km * 10) / 10,
       };
     });
@@ -887,7 +1219,17 @@ function DistributionPage() {
     return () => clearTimeout(t);
   }, [assignments, orders, driverSlots]);
 
-  // Display orders (с фильтром по выбранному водителю)
+  // Цвета водителей: по слоту (индекс в driverSlots) — кастом из localStorage или дефолт
+  const driverColorsBySlot = useMemo(() => {
+    const list = [];
+    for (let i = 0; i < driverSlots.length; i++) {
+      const driverId = driverSlots[i];
+      list.push(driverCustomColors[driverId] || DRIVER_COLORS[i % DRIVER_COLORS.length]);
+    }
+    return list;
+  }, [driverSlots, driverCustomColors]);
+
+  // Display orders (фильтр по выбранному водителю; в режиме редактирования — только заказы этого водителя)
   const displayOrders = useMemo(() => {
     const all = orders.map((o, i) => ({
       ...o,
@@ -895,9 +1237,15 @@ function DistributionPage() {
       orderNum: i + 1,
       globalIndex: i,
     }));
+    if (editingDriverId != null) {
+      return all.filter(
+        (o) => o.driverIndex >= 0 && driverSlots[o.driverIndex] != null && String(driverSlots[o.driverIndex]) === String(editingDriverId)
+      );
+    }
     if (!assignments || selectedDriver === null || selectedDriver === -1) return all;
-    return all.filter(o => o.driverIndex === selectedDriver);
-  }, [orders, assignments, selectedDriver]);
+    if (selectedDriver === '__unassigned__') return all.filter((o) => o.driverIndex < 0);
+    return all.filter((o) => o.driverIndex === selectedDriver);
+  }, [orders, assignments, selectedDriver, editingDriverId, driverSlots]);
 
   // Секции для списка: поставщики, партнёры, адреса (для заголовков)
   const supplierItems = useMemo(() => displayOrders.filter((o) => o.isSupplier), [displayOrders]);
@@ -943,13 +1291,88 @@ function DistributionPage() {
         </div>
       </header>
 
+      {/* Режим редактирования маршрута водителя */}
+      {editingDriverId != null && (
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 16px',
+            background: 'var(--accent)',
+            color: '#fff',
+            fontSize: 14,
+          }}
+        >
+          <span>
+            Редактирование: {dbDrivers.find((d) => String(d.id) === String(editingDriverId))?.name ?? 'Водитель'}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: 'rgba(255,255,255,0.25)', border: 'none', color: '#fff' }}
+            onClick={() => setEditingDriverId(null)}
+          >
+            Готово
+          </button>
+        </div>
+      )}
+
       <div className="dc-layout" style={{ flex: 1, minHeight: 0 }}>
         <aside className="dc-sidebar-wrap">
           <div className="dc-sidebar-scroll">
-          {/* Вставить список поставщиков */}
+          {/* Вставить список поставщиков + сквозной поиск по базе (как в старой версии) */}
           <div className="sidebar-section">
             <details className="dc-bulk-details">
               <summary className="sidebar-section-title" style={{ cursor: 'pointer' }}>Вставить список поставщиков</summary>
+              <div className="dc-supplier-search" style={{ position: 'relative', marginBottom: 6 }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Поиск поставщика по базе..."
+                  value={supplierSearchQuery}
+                  onChange={(e) => {
+                    setSupplierSearchQuery(e.target.value);
+                    setShowSupplierSuggest(true);
+                  }}
+                  onFocus={() => supplierSearchQuery.trim() && setShowSupplierSuggest(true)}
+                  onBlur={() => setTimeout(() => setShowSupplierSuggest(false), 200)}
+                  style={{ width: '100%' }}
+                />
+                {showSupplierSuggest && (supplierSuggestResults.length > 0 || supplierSearchQuery.trim().length >= 1) && (
+                  <div
+                    className="dc-suggest-dropdown"
+                    style={{
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)', borderTop: 'none',
+                      borderRadius: '0 0 8px 8px', maxHeight: 200, overflowY: 'auto', boxShadow: 'var(--shadow-lg)',
+                    }}
+                  >
+                    {supplierSuggestResults.length === 0 ? (
+                      <div style={{ padding: 8, color: 'var(--text-muted)', fontSize: 12 }}>Не найдено</div>
+                    ) : (
+                      supplierSuggestResults.map((s) => (
+                        <div
+                          key={s.id}
+                          role="button"
+                          tabIndex={0}
+                          className="dc-suggest-item"
+                          style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border)' }}
+                          onMouseDown={() => {
+                            setSupplierNamesText((prev) => (prev ? prev + '\n' : '') + (s.name || ''));
+                            setSupplierSearchQuery('');
+                            setShowSupplierSuggest(false);
+                          }}
+                        >
+                          <div style={{ fontWeight: 600 }}>{s.name}</div>
+                          {s.address && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.address}</div>}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
               <textarea
                 className="address-input"
                 style={{ minHeight: 60, marginTop: 6 }}
@@ -966,10 +1389,57 @@ function DistributionPage() {
             </details>
           </div>
 
-          {/* Вставить список партнёров */}
+          {/* Вставить список партнёров + сквозной поиск по базе (как в старой версии) */}
           <div className="sidebar-section">
             <details className="dc-bulk-details">
               <summary className="sidebar-section-title" style={{ cursor: 'pointer' }}>Вставить список партнёров</summary>
+              <div className="dc-partner-search" style={{ position: 'relative', marginBottom: 6 }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Поиск партнёра по базе..."
+                  value={partnerSearchQuery}
+                  onChange={(e) => {
+                    setPartnerSearchQuery(e.target.value);
+                    setShowPartnerSuggest(true);
+                  }}
+                  onFocus={() => partnerSearchQuery.trim() && setShowPartnerSuggest(true)}
+                  onBlur={() => setTimeout(() => setShowPartnerSuggest(false), 200)}
+                  style={{ width: '100%' }}
+                />
+                {showPartnerSuggest && (partnerSuggestResults.length > 0 || partnerSearchQuery.trim().length >= 1) && (
+                  <div
+                    className="dc-suggest-dropdown"
+                    style={{
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)', borderTop: 'none',
+                      borderRadius: '0 0 8px 8px', maxHeight: 200, overflowY: 'auto', boxShadow: 'var(--shadow-lg)',
+                    }}
+                  >
+                    {partnerSuggestResults.length === 0 ? (
+                      <div style={{ padding: 8, color: 'var(--text-muted)', fontSize: 12 }}>Не найдено</div>
+                    ) : (
+                      partnerSuggestResults.map((p) => (
+                        <div
+                          key={p.id}
+                          role="button"
+                          tabIndex={0}
+                          className="dc-partner-suggest-item"
+                          style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border)' }}
+                          onMouseDown={() => {
+                            setPartnerNamesText((prev) => (prev ? prev + '\n' : '') + (p.name || ''));
+                            setPartnerSearchQuery('');
+                            setShowPartnerSuggest(false);
+                          }}
+                        >
+                          <div style={{ fontWeight: 600 }}>{p.name}</div>
+                          {p.address && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.address}</div>}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
               <textarea
                 className="address-input"
                 style={{ minHeight: 60, marginTop: 6 }}
@@ -1140,6 +1610,17 @@ function DistributionPage() {
                     {finishLoading ? '...' : 'Завершить маршрут'}
                   </button>
                 )}
+                {orders.some((o) => o.isSupplier) && assignments && (
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    style={{ borderColor: 'var(--success)', color: 'var(--success)' }}
+                    onClick={() => setShowFinishSuppliersModal(true)}
+                    title="Завершить поставщиков (убрать с карты, сохранить выезд)"
+                  >
+                    🏁 Завершить поставщиков
+                  </button>
+                )}
                 {orders.length > 0 && (
                   <button
                     type="button"
@@ -1152,6 +1633,140 @@ function DistributionPage() {
               </div>
             </div>
           </div>
+
+          {/* Список водителей с палитрой цветов (как в старой версии) */}
+          {dbDrivers.length > 0 && (
+            <div className="sidebar-section">
+              <details className="dc-list-details dc-details-drivers" open>
+                <summary className="sidebar-section-title" style={{ cursor: 'pointer', userSelect: 'none' }}>
+                  Водители{' '}
+                  <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>
+                    ({assignments ? assignments.filter((a) => a >= 0).length : 0}/{orders.length} точек)
+                  </span>
+                </summary>
+                <div className="dc-drivers-list" style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 0' }}>
+                  <button
+                    type="button"
+                    className={`dc-driver-filter-btn ${selectedDriver === null ? 'active' : ''}`}
+                    onClick={() => setSelectedDriver(null)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8,
+                      border: `1px solid ${selectedDriver === null ? 'var(--accent)' : 'var(--border)'}`,
+                      background: selectedDriver === null ? 'rgba(16,185,129,0.1)' : 'transparent',
+                      cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 12, fontWeight: selectedDriver === null ? 700 : 400, width: '100%',
+                    }}
+                  >
+                    Все точки
+                  </button>
+                  <button
+                    type="button"
+                    className={`dc-driver-filter-btn ${selectedDriver === '__unassigned__' ? 'active' : ''}`}
+                    onClick={() => setSelectedDriver(selectedDriver === '__unassigned__' ? null : '__unassigned__')}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8,
+                      border: `1px solid ${selectedDriver === '__unassigned__' ? '#888' : 'var(--border)'}`,
+                      background: selectedDriver === '__unassigned__' ? 'rgba(136,136,136,0.15)' : 'transparent',
+                      cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 12, width: '100%',
+                    }}
+                  >
+                    <span style={{ width: 14, height: 14, borderRadius: '50%', background: '#888', flexShrink: 0 }} />
+                    Нераспределённые
+                    <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                      {assignments ? assignments.filter((a) => a < 0).length : 0} точ.
+                    </span>
+                  </button>
+                  {dbDrivers.map((dr, di) => {
+                    const slotIdx = driverSlots.findIndex((id) => String(id) === String(dr.id));
+                    const color = slotIdx >= 0 ? (driverColorsBySlot[slotIdx] ?? DRIVER_COLORS[slotIdx % DRIVER_COLORS.length]) : (driverCustomColors[dr.id] || DRIVER_COLORS[di % DRIVER_COLORS.length]);
+                    const count = assignments && slotIdx >= 0 ? assignments.filter((a) => a === slotIdx).length : 0;
+                    const isActive = selectedDriver !== null && selectedDriver !== '__unassigned__' && selectedDriver === slotIdx;
+                    return (
+                      <div key={dr.id} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 0 }}>
+                        <button
+                          type="button"
+                          className={`dc-driver-filter-btn ${isActive ? 'active' : ''}`}
+                          onClick={() => setSelectedDriver(isActive ? null : (slotIdx >= 0 ? slotIdx : null))}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: '8px 0 0 8px',
+                            border: `1px solid ${isActive ? color : 'var(--border)'}`, borderRight: 'none',
+                            background: isActive ? 'rgba(255,255,255,0.05)' : 'transparent',
+                            cursor: 'pointer', flex: 1, minWidth: 0,
+                          }}
+                        >
+                          <span
+                            className="dc-driver-color-dot"
+                            role="button"
+                            tabIndex={0}
+                            style={{
+                              width: 14, height: 14, borderRadius: '50%', background: color,
+                              flexShrink: 0, border: '2px solid rgba(255,255,255,0.2)', cursor: 'pointer',
+                            }}
+                            title="Нажмите для смены цвета"
+                            onClick={(e) => { e.stopPropagation(); setColorPickerDriverId((id) => (id === dr.id ? null : dr.id)); }}
+                          />
+                          <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}>
+                            {dr.name}
+                          </span>
+                          <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{count} точ.</span>
+                          {slotIdx >= 0 && (
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              style={{ fontSize: 10, padding: '2px 6px', minWidth: 0 }}
+                              onClick={(e) => { e.stopPropagation(); setEditingDriverId(editingDriverId === dr.id ? null : dr.id); }}
+                              title="Редактировать маршрут"
+                            >
+                              {editingDriverId === dr.id ? 'Готово' : 'Ред.'}
+                            </button>
+                          )}
+                        </button>
+                        {colorPickerDriverId === dr.id && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: '100%',
+                              zIndex: 100,
+                              marginTop: 2,
+                              padding: 8,
+                              background: 'var(--bg-card)',
+                              border: '1px solid var(--border)',
+                              borderRadius: 8,
+                              boxShadow: 'var(--shadow-lg)',
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(5, 1fr)',
+                              gap: 4,
+                            }}
+                          >
+                            {COLOR_PALETTE.map((c) => (
+                              <button
+                                key={c}
+                                type="button"
+                                style={{
+                                  width: 24,
+                                  height: 24,
+                                  borderRadius: '50%',
+                                  background: c,
+                                  border: '2px solid transparent',
+                                  cursor: 'pointer',
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDriverCustomColors((prev) => ({ ...prev, [dr.id]: c }));
+                                  setColorPickerDriverId(null);
+                                }}
+                                title={c}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            </div>
+          )}
 
           {/* Variant selector */}
           {variants.length > 0 && (
@@ -1373,7 +1988,7 @@ function DistributionPage() {
                   const driverIdx = order.driverIndex;
                   const color =
                     driverIdx >= 0
-                      ? DRIVER_COLORS[driverIdx % DRIVER_COLORS.length]
+                      ? (driverColorsBySlot[driverIdx] ?? DRIVER_COLORS[driverIdx % DRIVER_COLORS.length])
                       : undefined;
                   const isEditing = editingOrderId === order.id;
                   const isPlacing = placingOrderId === order.id;
@@ -1395,6 +2010,8 @@ function DistributionPage() {
                             : {}),
                         }}
                         onClick={() => manualMode && handleManualAssign(order.globalIndex)}
+                        onMouseEnter={() => setHoveredOrderId(order.id)}
+                        onMouseLeave={() => setHoveredOrderId(null)}
                       >
                         {assignments && (
                           <input
@@ -1449,6 +2066,46 @@ function DistributionPage() {
                               >
                                 📍 {order.formattedAddress}
                               </span>
+                            )}
+                            {order.isSupplier && !order.supplierDbId && (
+                              <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  style={{ fontSize: 10, color: 'var(--danger)', borderColor: 'var(--danger)' }}
+                                  onClick={(e) => { e.stopPropagation(); setFindSupplierOrderId(order.id); }}
+                                >
+                                  🔍 Не найден — найти в базе
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  style={{ fontSize: 10, color: 'var(--success)', borderColor: 'var(--success)' }}
+                                  onClick={(e) => { e.stopPropagation(); setCreateSupplierOrderId(order.id); }}
+                                >
+                                  + В базу
+                                </button>
+                              </div>
+                            )}
+                            {order.isPartner && !order.partnerDbId && (
+                              <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  style={{ fontSize: 10, color: 'var(--warning)', borderColor: 'var(--warning)' }}
+                                  onClick={(e) => { e.stopPropagation(); setFindPartnerOrderId(order.id); }}
+                                >
+                                  🔎 Не выбран — найти в базе
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline"
+                                  style={{ fontSize: 10, color: 'var(--warning)', borderColor: 'var(--warning)' }}
+                                  onClick={(e) => { e.stopPropagation(); setShowCreatePartner(true); }}
+                                >
+                                  + Новый партнёр
+                                </button>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -1582,14 +2239,14 @@ function DistributionPage() {
           </div>
         </aside>
 
-        {/* Карта: явная высота от viewport, чтобы контейнер всегда имел размер для инициализации */}
+        {/* Карта: фиксированная высота 70vh, чтобы не зависеть от flex и сразу иметь размер (как в старой версии) */}
         <div
           className="dc-map-wrap"
           style={{
             position: 'relative',
             flex: 1,
             minWidth: 0,
-            height: 'calc(100vh - 160px)',
+            height: '70vh',
             minHeight: 500,
           }}
         >
@@ -1602,6 +2259,12 @@ function DistributionPage() {
           onDeleteOrder={handleDeleteOrder}
           placingMode={!!placingOrderId}
           onMapClick={handleMapClick}
+          dbDrivers={dbDrivers}
+          driverSlots={driverSlots}
+          driverColorsBySlot={driverColorsBySlot}
+          onToggleKbt={handleToggleKbt}
+          onSetHelper={handleSetHelper}
+          hoveredOrderId={hoveredOrderId}
         />
 
         {/* Map legend */}
@@ -1815,6 +2478,165 @@ function DistributionPage() {
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Модалка: Найти поставщика в базе */}
+      {findSupplierOrderId && (
+        <div className="modal" style={{ display: 'flex' }}>
+          <div className="modal-content" style={{ maxWidth: 420 }}>
+            <h3 className="modal-title">Найти поставщика в базе</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              Выберите поставщика для привязки к точке «{orders.find((o) => o.id === findSupplierOrderId)?.address ?? ''}»
+            </p>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Поиск по названию..."
+              style={{ marginBottom: 8 }}
+              onChange={(e) => {
+                const q = compactNameHelper(e.target.value);
+                setSupplierSearchQuery(e.target.value);
+              }}
+              value={supplierSearchQuery}
+            />
+            <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {(supplierSearchQuery.trim() ? supplierSuggestResults : dbSuppliers.slice(0, 20)).map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ justifyContent: 'flex-start', textAlign: 'left' }}
+                  onClick={() => handleLinkSupplier(findSupplierOrderId, s)}
+                >
+                  <span style={{ fontWeight: 600 }}>{s.name}</span>
+                  {s.address && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>{s.address}</span>}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="btn btn-outline" style={{ marginTop: 12, width: '100%' }} onClick={() => setFindSupplierOrderId(null)}>
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Модалка: Найти партнёра в базе */}
+      {findPartnerOrderId && (
+        <div className="modal" style={{ display: 'flex' }}>
+          <div className="modal-content" style={{ maxWidth: 420 }}>
+            <h3 className="modal-title">Найти партнёра в базе</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              Выберите партнёра для привязки к точке «{orders.find((o) => o.id === findPartnerOrderId)?.address ?? ''}»
+            </p>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Поиск по названию..."
+              style={{ marginBottom: 8 }}
+              value={partnerSearchQuery}
+              onChange={(e) => setPartnerSearchQuery(e.target.value)}
+            />
+            <div style={{ maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {(partnerSearchQuery.trim() ? partnerSuggestResults : dbPartners.slice(0, 20)).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ justifyContent: 'flex-start', textAlign: 'left' }}
+                  onClick={() => handleLinkPartner(findPartnerOrderId, p)}
+                >
+                  <span style={{ fontWeight: 600 }}>{p.name}</span>
+                  {p.address && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>{p.address}</span>}
+                </button>
+              ))}
+            </div>
+            <button type="button" className="btn btn-outline" style={{ marginTop: 12, width: '100%' }} onClick={() => setFindPartnerOrderId(null)}>
+              Отмена
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Модалка: Завершить поставщиков */}
+      {showFinishSuppliersModal && (() => {
+        const driverSupplierCounts = {};
+        orders.forEach((o, i) => {
+          if (!o.isSupplier || !o.geocoded || o.poiId) return;
+          const slot = assignments?.[i];
+          if (slot == null || slot < 0) return;
+          const did = driverSlots[slot];
+          if (!did) return;
+          driverSupplierCounts[did] = (driverSupplierCounts[did] || 0) + 1;
+        });
+        const totalSuppliers = Object.values(driverSupplierCounts).reduce((a, b) => a + b, 0);
+        return (
+          <div className="modal" style={{ display: 'flex' }}>
+            <div className="modal-content" style={{ maxWidth: 420 }}>
+              <h3 className="modal-title" style={{ textAlign: 'center' }}>Завершить поставщиков</h3>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+                Поставщики будут сохранены как завершённый выезд и убраны с карты.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {Object.entries(driverSupplierCounts).map(([driverId, count]) => {
+                  const driver = dbDrivers.find((d) => String(d.id) === String(driverId));
+                  const name = driver ? driver.name : driverId;
+                  return (
+                    <button
+                      key={driverId}
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ color: 'var(--success)', borderColor: 'var(--success)' }}
+                      onClick={() => handleFinishSupplierRoute(driverId)}
+                    >
+                      {name} ({count} пост.)
+                    </button>
+                  );
+                })}
+                {totalSuppliers > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    style={{ color: 'var(--success)', borderColor: 'var(--success)' }}
+                    onClick={() => handleFinishAllSupplierRoutes()}
+                  >
+                    Все водители ({totalSuppliers} пост.)
+                  </button>
+                )}
+                <button type="button" className="btn btn-outline" style={{ marginTop: 8 }} onClick={() => setShowFinishSuppliersModal(false)}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Модалка: Создать поставщика / Новый партнёр — заглушка (переход на раздел или форма) */}
+      {createSupplierOrderId && (
+        <div className="modal" style={{ display: 'flex' }}>
+          <div className="modal-content" style={{ maxWidth: 400 }}>
+            <h3 className="modal-title">+ В базу (поставщик)</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Точка: «{orders.find((o) => o.id === createSupplierOrderId)?.address ?? ''}». Создайте поставщика в разделе «Поставщики» и затем привяжите через «Найти в базе».
+            </p>
+            <button type="button" className="btn btn-outline" style={{ marginTop: 12, width: '100%' }} onClick={() => setCreateSupplierOrderId(null)}>
+              Закрыть
+            </button>
+          </div>
+        </div>
+      )}
+      {showCreatePartner && (
+        <div className="modal" style={{ display: 'flex' }}>
+          <div className="modal-content" style={{ maxWidth: 400 }}>
+            <h3 className="modal-title">+ Новый партнёр</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              Создайте партнёра в разделе «Партнёры» и затем привяжите через «Найти в базе».
+            </p>
+            <button type="button" className="btn btn-outline" style={{ marginTop: 12, width: '100%' }} onClick={() => setShowCreatePartner(false)}>
+              Закрыть
+            </button>
           </div>
         </div>
       )}

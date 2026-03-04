@@ -54,6 +54,12 @@ export default function YandexMapView({
   onDeleteOrder,
   placingMode,
   onMapClick,
+  dbDrivers = [],
+  driverSlots = [],
+  driverColorsBySlot = [],
+  onToggleKbt,
+  onSetHelper,
+  hoveredOrderId = null,
 }) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -68,6 +74,10 @@ export default function YandexMapView({
   onMapClickRef.current = onMapClick;
   const placingModeRef = useRef(placingMode);
   placingModeRef.current = placingMode;
+  const onToggleKbtRef = useRef(onToggleKbt);
+  onToggleKbtRef.current = onToggleKbt;
+  const onSetHelperRef = useRef(onSetHelper);
+  onSetHelperRef.current = onSetHelper;
 
   useEffect(() => {
     window.__drivecontrol_assign = (globalIdx, driverIdx) => {
@@ -91,10 +101,18 @@ export default function YandexMapView({
         mapRef.current.setCenter([lat, lng], 15, { duration: 300 });
       }
     };
+    window.__drivecontrol_toggleKbt = (globalIdx) => {
+      if (onToggleKbtRef.current) onToggleKbtRef.current(globalIdx);
+    };
+    window.__drivecontrol_setHelper = (globalIdx, helperSlot) => {
+      if (onSetHelperRef.current) onSetHelperRef.current(globalIdx, helperSlot);
+    };
     return () => {
       delete window.__drivecontrol_assign;
       delete window.__drivecontrol_delete;
       delete window.__drivecontrol_centerOrder;
+      delete window.__drivecontrol_toggleKbt;
+      delete window.__drivecontrol_setHelper;
     };
   }, []);
 
@@ -130,6 +148,15 @@ export default function YandexMapView({
         });
         mapRef.current = map;
         setMapReady(true);
+        // После монтирования подогнать карту под контейнер (иногда размер считается неверно до первого resize)
+        setTimeout(() => {
+          if (mapRef.current) {
+            try {
+              const z = mapRef.current.getZoom();
+              mapRef.current.setCenter(MINSK_CENTER, z);
+            } catch (e) {}
+          }
+        }, 150);
       });
     };
 
@@ -168,58 +195,64 @@ export default function YandexMapView({
 
   const buildBalloonContent = useCallback(
     (order, globalIdx, currentDriverIdx) => {
-      const driverButtons = Array.from({ length: driverCount }, (_, d) => {
-        const color = DRIVER_COLORS[d % DRIVER_COLORS.length];
-        const isActive = d === currentDriverIdx;
-        return `<button onclick="window.__drivecontrol_assign(${globalIdx}, ${d})" style="
-        width:30px;height:30px;border-radius:50%;border:3px solid ${
-          isActive ? '#fff' : 'transparent'
-        };
-        background:${color};cursor:pointer;margin:0 3px;
-        box-shadow:${isActive ? '0 0 0 2px ' + color : 'none'};
-        transition:all 0.15s;
-      " title="Водитель ${d + 1}"></button>`;
-      }).join('');
+      const colors = driverColorsBySlot.length ? driverColorsBySlot : DRIVER_COLORS;
+      let driverButtons = '';
+      if (dbDrivers.length && driverSlots.length) {
+        dbDrivers.forEach((dr, di) => {
+          const slotIdx = driverSlots.findIndex((id) => String(id) === String(dr.id));
+          if (slotIdx < 0) return;
+          const color = colors[slotIdx] ?? DRIVER_COLORS[slotIdx % DRIVER_COLORS.length];
+          const isActive = slotIdx === currentDriverIdx;
+          const displayName = (dr.name || '').split(' ')[0] || `В${slotIdx + 1}`;
+          driverButtons += `<button onclick="window.__drivecontrol_assign(${globalIdx}, ${slotIdx})" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ${isActive ? '#fff' : 'transparent'};background:${color};cursor:pointer;margin:2px;box-shadow:${isActive ? '0 0 0 2px ' + color : 'none'};color:#fff;font-size:11px;font-weight:600;" title="${dr.name || ''}"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>${displayName}</button>`;
+        });
+        if (currentDriverIdx >= 0) {
+          driverButtons += `<button onclick="window.__drivecontrol_assign(${globalIdx}, -1)" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;margin:2px;color:#999;font-size:11px;">✕ Снять</button>`;
+        }
+      } else {
+        driverButtons = Array.from({ length: driverCount }, (_, d) => {
+          const color = colors[d] ?? DRIVER_COLORS[d % DRIVER_COLORS.length];
+          const isActive = d === currentDriverIdx;
+          return `<button onclick="window.__drivecontrol_assign(${globalIdx}, ${d})" style="width:30px;height:30px;border-radius:50%;border:3px solid ${isActive ? '#fff' : 'transparent'};background:${color};cursor:pointer;margin:0 3px;box-shadow:${isActive ? '0 0 0 2px ' + color : 'none'};" title="Водитель ${d + 1}"></button>`;
+        }).join('');
+      }
 
       const escapedId = order.id.replace(/'/g, "\\'");
+      const kbtActive = !!order.isKbt;
+      let kbtHtml = '<div style="border-top:1px solid #eee;padding-top:8px;margin-top:8px;">';
+      kbtHtml += `<button onclick="window.__drivecontrol_toggleKbt && window.__drivecontrol_toggleKbt(${globalIdx})" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;border:2px solid ${kbtActive ? '#a855f7' : '#ddd'};background:${kbtActive ? '#a855f7' : '#fff'};color:${kbtActive ? '#fff' : '#666'};cursor:pointer;font-size:12px;font-weight:600;">📦 КБТ +1${kbtActive ? ' ✓' : ''}</button>`;
+      if (kbtActive && dbDrivers.length && driverSlots.length) {
+        kbtHtml += '<div style="margin-top:8px;font-size:11px;color:#888;">Помощник (едет вместе):</div><div style="display:flex;flex-wrap:wrap;margin-top:4px;">';
+        dbDrivers.forEach((hdr, hi) => {
+          const slotIdx = driverSlots.findIndex((id) => String(id) === String(hdr.id));
+          if (slotIdx < 0 || slotIdx === currentDriverIdx) return;
+          const hc = colors[slotIdx] ?? DRIVER_COLORS[slotIdx % DRIVER_COLORS.length];
+          const hActive = order.helperDriverSlot === slotIdx;
+          const hName = (hdr.name || '').split(' ')[0] || `В${slotIdx + 1}`;
+          kbtHtml += `<button onclick="window.__drivecontrol_setHelper && window.__drivecontrol_setHelper(${globalIdx}, ${slotIdx})" style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;border:2px solid ${hActive ? '#a855f7' : 'transparent'};background:${hActive ? 'rgba(168,85,247,0.15)' : '#f5f5f5'};cursor:pointer;margin:2px;color:${hActive ? '#a855f7' : '#666'};font-size:11px;font-weight:${hActive ? '700' : '500'};"><span style="width:8px;height:8px;border-radius:50%;background:${hc};"></span>${hName}${hActive ? ' ✓' : ''}</button>`;
+        });
+        kbtHtml += '</div>';
+      }
+      kbtHtml += '</div>';
 
       return `
-      <div style="font-family:Inter,sans-serif;min-width:200px;">
+      <div style="font-family:Inter,sans-serif;min-width:240px;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-          <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${
-            order.address
-          }</div>
-          <button onclick="window.__drivecontrol_delete('${escapedId}')" style="
-            flex-shrink:0;width:28px;height:28px;border-radius:6px;border:1px solid #e5e5e5;
-            background:#fff;color:#ef4444;font-size:16px;cursor:pointer;display:flex;
-            align-items:center;justify-content:center;transition:all 0.15s;
-          " onmouseover="this.style.background='#ef4444';this.style.color='#fff';this.style.borderColor='#ef4444'"
-             onmouseout="this.style.background='#fff';this.style.color='#ef4444';this.style.borderColor='#e5e5e5'"
-             title="Удалить точку">✕</button>
+          <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${order.address}</div>
+          <button onclick="window.__drivecontrol_delete('${escapedId}')" style="flex-shrink:0;width:28px;height:28px;border-radius:6px;border:1px solid #e5e5e5;background:#fff;color:#ef4444;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Удалить">✕</button>
         </div>
-        ${
-          order.formattedAddress
-            ? `<div style="color:#888;font-size:11px;margin-bottom:4px;">${order.formattedAddress}</div>`
-            : ''
-        }
-        ${
-          order.timeSlot
-            ? `<div style="font-size:12px;margin-bottom:4px;">⏰ ${order.timeSlot}</div>`
-            : ''
-        }
-        ${
-          order.phone
-            ? `<div style="font-size:12px;margin-bottom:8px;">📞 ${order.phone}</div>`
-            : ''
-        }
+        ${order.formattedAddress ? `<div style="color:#888;font-size:11px;margin-bottom:4px;">${order.formattedAddress}</div>` : ''}
+        ${order.timeSlot ? `<div style="font-size:12px;margin-bottom:4px;">⏰ ${order.timeSlot}</div>` : ''}
+        ${order.phone ? `<div style="font-size:12px;margin-bottom:8px;">📞 ${order.phone}</div>` : ''}
         <div style="border-top:1px solid #eee;padding-top:8px;margin-top:4px;">
           <div style="font-size:11px;color:#888;margin-bottom:6px;">Назначить водителя:</div>
-          <div style="display:flex;align-items:center;">${driverButtons}</div>
+          <div style="display:flex;flex-wrap:wrap;align-items:center;">${driverButtons}</div>
         </div>
+        ${kbtHtml}
       </div>
     `;
     },
-    [driverCount],
+    [driverCount, dbDrivers, driverSlots, driverColorsBySlot],
   );
 
   useEffect(() => {
@@ -235,8 +268,17 @@ export default function YandexMapView({
     if (geocodedOrders.length === 0) return;
 
     const bounds = [];
+    const overlapKey = (o) => `${Number(o.lat).toFixed(5)}_${Number(o.lng).toFixed(5)}`;
+    const overlapGroups = {};
+    geocodedOrders.forEach((o) => {
+      const k = overlapKey(o);
+      if (!overlapGroups[k]) overlapGroups[k] = [];
+      overlapGroups[k].push(o);
+    });
 
-    geocodedOrders.forEach(order => {
+    const colors = driverColorsBySlot.length ? driverColorsBySlot : DRIVER_COLORS;
+
+    geocodedOrders.forEach((order) => {
       const globalIdx = orders.findIndex(o => o.id === order.id);
       const driverIdx = assignments ? assignments[globalIdx] : -1;
       const isVisible =
@@ -246,28 +288,61 @@ export default function YandexMapView({
             ? driverIdx < 0
             : driverIdx === selectedDriver;
       const opacity = isVisible ? 1 : 0.25;
-      const color =
-        driverIdx >= 0
-          ? DRIVER_COLORS[driverIdx % DRIVER_COLORS.length]
-          : '#3b82f6';
+      const color = driverIdx >= 0 ? (colors[driverIdx] ?? DRIVER_COLORS[driverIdx % DRIVER_COLORS.length]) : '#e0e0e0';
+      const isHovered = hoveredOrderId === order.id;
+      const displayNum = order.isSupplier ? 'П' : order.isPartner ? 'ПР' : (order.poiShort || `${globalIdx + 1}`);
 
       const balloonContent = buildBalloonContent(order, globalIdx, driverIdx);
 
-      const placemark = new ymaps.Placemark(
-        [order.lat, order.lng],
-        {
-          balloonContentBody: balloonContent,
-          iconContent: `${globalIdx + 1}`,
-        },
-        {
-          preset: 'islands#circleIcon',
-          iconColor: color,
-          opacity,
-          zIndex: isVisible ? 100 : 1,
-          balloonCloseButton: true,
-          hideIconOnBalloonOpen: false,
-        },
-      );
+      const k = overlapKey(order);
+      const group = overlapGroups[k] || [order];
+      const overlapIndex = group.findIndex((o) => o.id === order.id);
+      const offset = group.length > 1 ? [overlapIndex * 12, overlapIndex * 12] : [0, 0];
+
+      let placemark;
+      if (order.poiId) {
+        const sqColor = driverIdx >= 0 ? color : (order.poiColor || '#e0e0e0');
+        const sqHtml = `<div style="width:24px;height:24px;border-radius:4px;background:${sqColor};display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid ${driverIdx >= 0 ? 'rgba(255,255,255,.8)' : '#888'};opacity:${opacity};${isHovered ? 'box-shadow:0 0 0 3px #fff;z-index:200;' : ''}"><span style="color:#111;font-size:10px;font-weight:800;">${order.poiShort || 'П'}</span></div>`;
+        const layout = ymaps.templateLayoutFactory.createClass(sqHtml);
+        placemark = new ymaps.Placemark(
+          [order.lat, order.lng],
+          { balloonContentBody: balloonContent },
+          { iconLayout: layout, iconShape: { type: 'Rectangle', coordinates: [[0, 0], [24, 24]] }, iconOffset: [-12 + offset[0], -12 + offset[1]], zIndex: isHovered ? 300 : (isVisible ? 100 : 1) },
+        );
+      } else if (order.isSupplier) {
+        const supHtml = `<div style="width:26px;height:26px;transform:rotate(45deg);border-radius:4px;background:${color};display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid ${driverIdx >= 0 ? 'rgba(255,255,255,.9)' : '#888'};opacity:${opacity};${isHovered ? 'box-shadow:0 0 0 3px #fff;z-index:200;' : ''}"><span style="transform:rotate(-45deg);color:${driverIdx >= 0 ? '#fff' : '#333'};font-size:10px;font-weight:800;">П</span></div>`;
+        const layout = ymaps.templateLayoutFactory.createClass(supHtml);
+        placemark = new ymaps.Placemark(
+          [order.lat, order.lng],
+          { balloonContentBody: balloonContent },
+          { iconLayout: layout, iconShape: { type: 'Rectangle', coordinates: [[0, 0], [26, 26]] }, iconOffset: [-13 + offset[0], -13 + offset[1]], zIndex: isHovered ? 300 : (isVisible ? 100 : 1) },
+        );
+      } else if (order.isPartner) {
+        const partnerHtml = `<div style="width:26px;height:26px;border-radius:7px;background:${color};display:flex;align-items:center;justify-content:center;box-shadow:0 2px 5px rgba(0,0,0,.35);border:2px solid ${driverIdx >= 0 ? 'rgba(255,255,255,.9)' : '#888'};opacity:${opacity};${isHovered ? 'box-shadow:0 0 0 3px #fff;z-index:200;' : ''}"><span style="color:${driverIdx >= 0 ? '#fff' : '#333'};font-size:9px;font-weight:800;">ПР</span></div>`;
+        const layout = ymaps.templateLayoutFactory.createClass(partnerHtml);
+        placemark = new ymaps.Placemark(
+          [order.lat, order.lng],
+          { balloonContentBody: balloonContent },
+          { iconLayout: layout, iconShape: { type: 'Rectangle', coordinates: [[0, 0], [26, 26]] }, iconOffset: [-13 + offset[0], -13 + offset[1]], zIndex: isHovered ? 300 : (isVisible ? 100 : 1) },
+        );
+      } else {
+        placemark = new ymaps.Placemark(
+          [order.lat, order.lng],
+          {
+            balloonContentBody: balloonContent,
+            iconContent: `${displayNum}`,
+          },
+          {
+            preset: 'islands#circleIcon',
+            iconColor: color,
+            opacity,
+            zIndex: isHovered ? 300 : (isVisible ? 100 : 1),
+            balloonCloseButton: true,
+            hideIconOnBalloonOpen: false,
+            iconOffset: [offset[0], offset[1]],
+          },
+        );
+      }
 
       map.geoObjects.add(placemark);
       placemarksRef.current.push(placemark);
@@ -285,7 +360,7 @@ export default function YandexMapView({
         });
       }
     }
-  }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent]);
+  }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent, driverColorsBySlot, hoveredOrderId]);
 
   // Как в старой версии: один контейнер #distributionMap.dc-map (index.legacy.html)
   return (
