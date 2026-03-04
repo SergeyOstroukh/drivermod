@@ -1,13 +1,8 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
+  # No build step needed — static HTML/JS/CSS served directly
+  command = "echo 'Static site, no build needed'"
+  publish = "."
 
 [build.environment]
-  NODE_VERSION = "20"
+  # Skip peer dependency conflicts (React packages not used in production)
   NPM_FLAGS = "--legacy-peer-deps"
-
-# SPA: all routes serve index.html
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200

@@ -4,9 +4,6 @@ postgres-data/
 # Node modules (если будет использоваться)
 node_modules/
 
-# Vite build output
-dist/
-
 # IDE
 .vscode/
 .idea/

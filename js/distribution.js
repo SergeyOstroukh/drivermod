@@ -4310,7 +4310,6 @@
       '<div class="dc-control-group"><label>Водителей</label><input type="number" id="dcDriverCount" class="dc-count-input" min="1" max="12" value="' + driverCount + '"></div>' +
       '<div class="dc-buttons">' +
       (geocodedCount > 0 ? '<button class="btn btn-primary dc-btn-distribute" style="background:var(--accent);border-color:#0a3d31;color:#04211b;">Распределить</button>' : '') +
-      '<button class="btn btn-outline btn-sm dc-btn-refresh-1c" ' + (isGeocoding ? 'disabled' : '') + ' title="Подтянуть новые заказы из 1С">Обновить из 1С</button>' +
       (orders.length > 0 ? '<button class="btn btn-outline btn-sm dc-btn-clear" style="color:var(--danger);border-color:var(--danger);">Сбросить данные</button>' : '') +
       '</div></div></div>' +
       // POI toggles
@@ -4619,11 +4618,6 @@
     if (distBtn) distBtn.addEventListener('click', showDistributeDialog);
     const clearBtn = sidebar.querySelector('.dc-btn-clear');
     if (clearBtn) clearBtn.addEventListener('click', clearAll);
-
-    const refresh1cBtn = sidebar.querySelector('.dc-btn-refresh-1c');
-    if (refresh1cBtn) refresh1cBtn.addEventListener('click', function () {
-      loadCustomerOrdersFrom1C();
-    });
 
     // Finish distribution
     const finishBtn = sidebar.querySelector('.dc-btn-finish');

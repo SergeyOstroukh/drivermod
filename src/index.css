@@ -40,36 +40,6 @@ body {
   min-height: 100vh;
 }
 
-.app {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-}
-
-.app .container {
-  flex: 1;
-  min-height: 0;
-}
-
-.card-body { flex: 1; }
-.card-meta { margin: 4px 0 0 0; font-size: 13px; color: var(--text-secondary, var(--muted, #9ca3af)); }
-.card-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.muted { color: var(--muted, #9ca3af); font-size: 14px; }
-.checkbox-label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
-.section-title { margin: 0 0 16px 0; font-size: 1.25rem; }
-.section-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
-.section-header .section-title { margin: 0; }
-.form-actions { display: flex; gap: 8px; margin-top: 16px; }
-.form-group { margin-bottom: 12px; }
-.form-label { display: block; margin-bottom: 4px; font-size: 13px; font-weight: 500; }
-.form-input, .form-textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #334155); border-radius: 6px; background: var(--bg-input, #1e293b); color: var(--fg, var(--text-primary, #f1f5f9)); font-size: 14px; }
-.form-textarea { min-height: 80px; resize: vertical; }
-.modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; align-items: center; justify-content: center; padding: 20px; }
-.modal-content { background: var(--card, #1e293b); border-radius: 12px; padding: 24px; max-width: 480px; width: 100%; max-height: 90vh; overflow-y: auto; }
-.modal-content-large { max-width: 560px; }
-.modal-title { margin: 0 0 16px 0; font-size: 1.1rem; }
-.supplier-form .form-actions { margin-top: 20px; }
-
 ::-webkit-scrollbar {
   width: 6px;
 }
