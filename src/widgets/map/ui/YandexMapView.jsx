@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { DRIVER_COLORS } from '../../../entities/distribution/lib/distributor.js';
 
-const YMAPS_SRC = 'https://api-maps.yandex.ru/2.1/?lang=ru_RU';
+// Тот же URL с API-ключом, что и в старой версии (distribution-geocoder.js) — без ключа карта может не грузиться на проде
+const YMAPS_SRC = 'https://api-maps.yandex.ru/2.1/?apikey=8c44c726-c732-45f2-94ac-af2cf0bb0181&lang=ru_RU&suggest_apikey=8b2a44b9-d35a-4aed-8e5a-4a1d71d30de8';
 const MINSK_CENTER = [53.9006, 27.559];
-const DEFAULT_ZOOM = 11;
+const DEFAULT_ZOOM = 12;
 
 let ymapsLoaded = false;
 let ymapsLoadPromise = null;
@@ -13,24 +14,32 @@ function loadYmaps() {
   if (ymapsLoadPromise) return ymapsLoadPromise;
 
   ymapsLoadPromise = new Promise((resolve, reject) => {
-    if (window.ymaps) {
+    if (window.ymaps && window.ymaps.geocode) {
       window.ymaps.ready(() => {
         ymapsLoaded = true;
         resolve(window.ymaps);
       });
       return;
     }
-    const script = document.createElement('script');
-    script.src = YMAPS_SRC;
-    script.async = true;
-    script.onload = () => {
-      window.ymaps.ready(() => {
-        ymapsLoaded = true;
-        resolve(window.ymaps);
-      });
-    };
-    script.onerror = () => reject(new Error('Failed to load Yandex Maps'));
-    document.head.appendChild(script);
+    if (!document.querySelector('script[src*="api-maps.yandex.ru"]')) {
+      const script = document.createElement('script');
+      script.src = YMAPS_SRC;
+      script.async = true;
+      document.head.appendChild(script);
+    }
+    const start = Date.now();
+    const interval = setInterval(() => {
+      if (window.ymaps && window.ymaps.geocode) {
+        clearInterval(interval);
+        window.ymaps.ready(() => {
+          ymapsLoaded = true;
+          resolve(window.ymaps);
+        });
+      } else if (Date.now() - start > 20000) {
+        clearInterval(interval);
+        reject(new Error('Яндекс Карты не загрузились'));
+      }
+    }, 300);
   });
 
   return ymapsLoadPromise;
@@ -91,25 +100,21 @@ export default function YandexMapView({
 
   useEffect(() => {
     let cancelled = false;
-    const el = mapContainerRef.current;
-    if (!el) return;
+    const getContainer = () => mapContainerRef.current || document.getElementById('distributionMap');
 
     const initWhenReady = () => {
       if (cancelled || mapRef.current) return;
-      let w = el.offsetWidth || el.parentElement?.offsetWidth || 0;
-      let h = el.offsetHeight || el.parentElement?.offsetHeight || 0;
-      // Если контейнер без размеров (flex ещё не посчитан) — задаём минимум для инициализации
-      if (w < 100 || h < 100) {
-        el.style.minWidth = '400px';
-        el.style.minHeight = '500px';
-        w = Math.max(w, 400);
-        h = Math.max(h, 500);
-      }
+      const el = getContainer();
+      if (!el) return;
+      const w = el.offsetWidth || el.parentElement?.offsetWidth || 0;
+      const h = el.offsetHeight || el.parentElement?.offsetHeight || 0;
       if (w < 50 || h < 50) return;
       loadYmaps().then(ymaps => {
-        if (cancelled || !mapContainerRef.current || mapRef.current) return;
+        if (cancelled || mapRef.current) return;
+        const container = getContainer();
+        if (!container) return;
         const map = new ymaps.Map(
-          mapContainerRef.current,
+          container,
           {
             center: MINSK_CENTER,
             zoom: DEFAULT_ZOOM,
@@ -128,24 +133,26 @@ export default function YandexMapView({
       });
     };
 
-    const ro = new ResizeObserver(() => {
-      initWhenReady();
-    });
-    ro.observe(el);
-    // Сразу попытка (на случай если размеры уже есть)
+    const ro = new ResizeObserver(() => initWhenReady());
+    const containerEl = getContainer();
+    if (containerEl) ro.observe(containerEl);
+    const observeLater = () => {
+      const c = getContainer();
+      if (c && !mapRef.current) ro.observe(c);
+    };
+    observeLater();
     initWhenReady();
-    // Повтор после layout (как в старой версии — карта инициализируется когда секция видима)
-    const rafId = requestAnimationFrame(() => {
-      requestAnimationFrame(() => initWhenReady());
-    });
-    const timeoutId = setTimeout(() => initWhenReady(), 150);
-    const timeoutId2 = setTimeout(() => initWhenReady(), 400);
+    const rafId = requestAnimationFrame(() => requestAnimationFrame(() => initWhenReady()));
+    const t1 = setTimeout(() => { observeLater(); initWhenReady(); }, 100);
+    const t2 = setTimeout(() => initWhenReady(), 300);
+    const t3 = setTimeout(() => initWhenReady(), 600);
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(rafId);
-      clearTimeout(timeoutId);
-      clearTimeout(timeoutId2);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
       ro.disconnect();
       if (mapRef.current) {
         mapRef.current.destroy();
@@ -155,8 +162,8 @@ export default function YandexMapView({
   }, []);
 
   useEffect(() => {
-    if (!mapContainerRef.current) return;
-    mapContainerRef.current.style.cursor = placingMode ? 'crosshair' : '';
+    const el = mapContainerRef.current || document.getElementById('distributionMap');
+    if (el) el.style.cursor = placingMode ? 'crosshair' : '';
   }, [placingMode]);
 
   const buildBalloonContent = useCallback(
@@ -280,28 +287,18 @@ export default function YandexMapView({
     }
   }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent]);
 
+  // Как в старой версии: один контейнер #distributionMap.dc-map (index.legacy.html)
   return (
     <div
-      className="map-container"
+      id="distributionMap"
+      className="dc-map"
+      ref={mapContainerRef}
       style={{
-        position: 'absolute',
-        inset: 0,
         width: '100%',
         height: '100%',
-        minHeight: 400,
+        minHeight: 500,
       }}
-    >
-      <div
-        ref={mapContainerRef}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          width: '100%',
-          height: '100%',
-          minHeight: 400,
-        }}
-      />
-    </div>
+    />
   );
 }
 
