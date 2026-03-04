@@ -175,68 +175,6 @@
     return _supplierOrdersCache[key] || [];
   }
 
-  // ─── Load customer orders from 1C (customer_orders table) ─────────────────
-  var _customerOrdersLoadedAt = 0;
-  async function loadCustomerOrdersFrom1C() {
-    var client = getSupabaseClient();
-    if (!client) return;
-    var today = new Date().toISOString().split('T')[0];
-    var existing1cIds = {};
-    orders.forEach(function (o) {
-      if (o.order1cId) existing1cIds[o.order1cId] = true;
-    });
-    try {
-      var resp = await client
-        .from('customer_orders')
-        .select('id, order_1c_id, delivery_address, phone, customer_name')
-        .eq('order_date', today)
-        .order('created_at', { ascending: true });
-      if (resp.error) { console.warn('customer_orders load error:', resp.error); return; }
-      var rows = resp.data || [];
-      var toAdd = [];
-      for (var i = 0; i < rows.length; i++) {
-        var row = rows[i];
-        if (!row.order_1c_id || !row.delivery_address) continue;
-        if (existing1cIds[row.order_1c_id]) continue;
-        existing1cIds[row.order_1c_id] = true;
-        toAdd.push({
-          id: '1c_' + row.id + '_' + Date.now(),
-          order1cId: row.order_1c_id,
-          address: row.delivery_address,
-          phone: (row.phone || '').trim(),
-          timeSlot: null,
-        });
-      }
-      if (toAdd.length === 0) return;
-      isGeocoding = true;
-      _fitBoundsNext = true;
-      renderAll();
-      var progressEl = $('#dcProgress');
-      try {
-        var geocoded = await window.DistributionGeocoder.geocodeOrders(toAdd, function (cur, tot) {
-          if (progressEl) progressEl.textContent = cur + '/' + tot;
-        });
-        for (var j = 0; j < geocoded.length && j < toAdd.length; j++) {
-          geocoded[j].order1cId = toAdd[j].order1cId;
-        }
-        orders = orders.concat(geocoded);
-        if (assignments) {
-          for (var k = 0; k < geocoded.length; k++) assignments.push(-1);
-        }
-        markLocalMutation();
-        var ok = geocoded.filter(function (o) { return o.geocoded; }).length;
-        showToast('Загружено из 1С: ' + geocoded.length + ' (на карте: ' + ok + ')', ok < geocoded.length ? 'error' : undefined);
-      } finally {
-        isGeocoding = false;
-        renderAll();
-      }
-    } catch (e) {
-      console.warn('loadCustomerOrdersFrom1C error:', e);
-      isGeocoding = false;
-      renderAll();
-    }
-  }
-
   function dateKeyLocal(d) {
     var y = d.getFullYear();
     var m = String(d.getMonth() + 1).padStart(2, '0');
@@ -4900,8 +4838,6 @@
     if (orders.length === 0) {
       await loadBestAvailableState();
     }
-    // Загрузка заказов из 1С (customer_orders) — добавляет только новые, без дубликатов
-    await loadCustomerOrdersFrom1C();
     // Ensure 1C items are loaded even after page refresh/session restore.
     if (orders.some(function (o) { return o.isSupplier; })) {
       await refreshSupplierItems();
