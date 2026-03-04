@@ -1,5 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import '../../../App.css';
 import YandexMapView from '../../../widgets/map/ui/YandexMapView.jsx';
 import { parseOrders } from '../../../entities/order/model/parser.js';
@@ -23,8 +22,6 @@ import {
   PARTNER_ALIASES_KEY,
   DRIVER_COLORS_KEY,
   COLOR_PALETTE,
-  DISTRIBUTION_DATA_KEY,
-  DISTRIBUTION_SCHEMA_VERSION,
 } from '../../../entities/distribution/lib/distributionHelpers.js';
 import {
   fetchCustomerOrdersForDate,
@@ -38,10 +35,6 @@ import {
   syncDriverRoute,
   clearActiveRoute,
 } from '../../../shared/api/driverRoutesApi.js';
-import {
-  loadDistributionState,
-  saveDistributionState,
-} from '../../../shared/api/distributionStateApi.js';
 
 // POI (ПВЗ / склады) — фиксированные точки на карте
 const POI_DEFS = [
@@ -50,32 +43,11 @@ const POI_DEFS = [
   { id: 'rbdodoma', label: 'РБ Додома', short: 'РБ', address: 'Минск, Железнодорожная 33к1', color: '#ea580c' },
 ];
 
-function loadSavedDistributionState() {
-  try {
-    const raw = localStorage.getItem(DISTRIBUTION_DATA_KEY);
-    if (!raw) return null;
-    const d = JSON.parse(raw);
-    if (!d || !Array.isArray(d.orders)) return null;
-    return {
-      orders: d.orders,
-      assignments: d.assignments ?? null,
-      driverCount: Math.max(1, Math.min(12, Number(d.driverCount) || 3)),
-      driverSlots: Array.isArray(d.driverSlots) ? d.driverSlots : [],
-      activeVariant: typeof d.activeVariant === 'number' ? d.activeVariant : -1,
-      poiCoords: d.poiCoords && typeof d.poiCoords === 'object' ? d.poiCoords : {},
-    };
-  } catch {
-    return null;
-  }
-}
-
 function DistributionPage() {
-  const savedState = useMemo(() => loadSavedDistributionState(), []);
-
   const [rawText, setRawText] = useState('');
-  const [orders, setOrders] = useState(() => savedState?.orders ?? []);
-  const [driverCount, setDriverCount] = useState(() => savedState ? Math.max(1, Math.min(12, savedState.driverCount || 3)) : 3);
-  const [assignments, setAssignments] = useState(() => savedState?.assignments ?? null);
+  const [orders, setOrders] = useState([]);
+  const [driverCount, setDriverCount] = useState(3);
+  const [assignments, setAssignments] = useState(null);
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [geocodeProgress, setGeocodeProgress] = useState({ current: 0, total: 0 });
@@ -85,7 +57,7 @@ function DistributionPage() {
   const [dbDrivers, setDbDrivers] = useState([]);
   const [dbSuppliers, setDbSuppliers] = useState([]);
   const [dbPartners, setDbPartners] = useState([]);
-  const [driverSlots, setDriverSlots] = useState(() => savedState?.driverSlots ?? []); // [driver_id, ...] по индексу слота
+  const [driverSlots, setDriverSlots] = useState([]); // [driver_id, ...] по индексу слота
 
   // Поиск поставщика/партнёра по базе (сквозной поиск как в старой версии)
   const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
@@ -95,7 +67,7 @@ function DistributionPage() {
 
   // Variants
   const [variants, setVariants] = useState([]);
-  const [activeVariant, setActiveVariant] = useState(() => savedState?.activeVariant ?? -1);
+  const [activeVariant, setActiveVariant] = useState(-1);
 
   // Manual assignment mode
   const [manualMode, setManualMode] = useState(false);
@@ -122,7 +94,7 @@ function DistributionPage() {
   const [finishLoading, setFinishLoading] = useState(false);
 
   // POI на карте
-  const [poiCoords, setPoiCoords] = useState(() => savedState?.poiCoords ?? {}); // { pvz1: { lat, lng }, ... }
+  const [poiCoords, setPoiCoords] = useState({}); // { pvz1: { lat, lng }, ... }
 
   // Массовый выбор для назначения водителя
   const [selectedOrderIds, setSelectedOrderIds] = useState(new Set());
@@ -156,11 +128,6 @@ function DistributionPage() {
   const [showCreatePartner, setShowCreatePartner] = useState(false);
   // Палитра цвета водителя (по клику на кружок)
   const [colorPickerDriverId, setColorPickerDriverId] = useState(null);
-  // Позиция выпадающего списка подсказок (сквозной поиск) — чтобы не обрезался в сайдбаре
-  const supplierSearchRef = useRef(null);
-  const partnerSearchRef = useRef(null);
-  const [supplierDropdownRect, setSupplierDropdownRect] = useState(null);
-  const [partnerDropdownRect, setPartnerDropdownRect] = useState(null);
 
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
@@ -183,18 +150,6 @@ function DistributionPage() {
   useEffect(() => {
     saveJson(DRIVER_COLORS_KEY, driverCustomColors);
   }, [driverCustomColors]);
-
-  // Позиция выпадающего списка подсказок при показе (чтобы портал отрисовался в нужном месте)
-  useEffect(() => {
-    if (showSupplierSuggest && supplierSearchQuery.trim().length >= 1 && supplierSearchRef.current) {
-      setSupplierDropdownRect(supplierSearchRef.current.getBoundingClientRect());
-    }
-  }, [showSupplierSuggest, supplierSearchQuery]);
-  useEffect(() => {
-    if (showPartnerSuggest && partnerSearchQuery.trim().length >= 1 && partnerSearchRef.current) {
-      setPartnerDropdownRect(partnerSearchRef.current.getBoundingClientRect());
-    }
-  }, [showPartnerSuggest, partnerSearchQuery]);
 
   // Запомнить алиас поставщика (введённое имя → supplier.id)
   const rememberSupplierAlias = useCallback((inputName, supplier) => {
@@ -239,7 +194,7 @@ function DistributionPage() {
     return results;
   }, [partnerSearchQuery, dbPartners, compactName]);
 
-  // При загрузке страницы — справочники и состояние распределения из Supabase (по дате сегодня)
+  // Загрузка водителей, поставщиков и партнёров из БД (без геокодинга — как в старой версии при открытии вкладки)
   useEffect(() => {
     Promise.all([
       fetchDrivers().catch(() => []),
@@ -252,41 +207,7 @@ function DistributionPage() {
     });
   }, []);
 
-  // Загрузить состояние распределения из Supabase на сегодня (перезаписывает localStorage при успехе)
-  useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    loadDistributionState(today).then((cloud) => {
-      if (cloud && Array.isArray(cloud.orders)) {
-        setOrders(cloud.orders);
-        setAssignments(cloud.assignments ?? null);
-        setDriverCount(Math.max(1, Math.min(12, cloud.driverCount || 3)));
-        setDriverSlots(Array.isArray(cloud.driverSlots) ? cloud.driverSlots : []);
-        setActiveVariant(typeof cloud.activeVariant === 'number' ? cloud.activeVariant : -1);
-        setPoiCoords(cloud.poiCoords && typeof cloud.poiCoords === 'object' ? cloud.poiCoords : {});
-      }
-    });
-  }, []);
-
-  // Сохранять состояние в Supabase и в localStorage (резерв) при изменении точек/назначений
-  useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    const snapshot = {
-      orders,
-      assignments,
-      driverCount,
-      driverSlots,
-      activeVariant,
-      poiCoords,
-      schemaVersion: DISTRIBUTION_SCHEMA_VERSION,
-    };
-    const t = setTimeout(() => {
-      saveDistributionState(today, snapshot);
-      saveJson(DISTRIBUTION_DATA_KEY, snapshot);
-    }, 1500);
-    return () => clearTimeout(t);
-  }, [orders, assignments, driverCount, driverSlots, activeVariant, poiCoords]);
-
-  // Геокодинг и загрузка заказов из 1С — только по кнопкам «На карту», «Обновить из 1С» и т.д., не при открытии страницы.
+  // Геокодинг и загрузка заказов из 1С только по кнопке «Обновить из 1С» — не при открытии страницы, чтобы не блокировать карту
 
   // Parse and geocode (replace all)
   const handleLoadAddresses = useCallback(async () => {
@@ -889,7 +810,7 @@ function DistributionPage() {
     [assignments, driverSlots, orders, selectedOrderIds, showToast]
   );
 
-  // Переключить выбор точки для массового назначения (из сайдбара или из балуна на карте)
+  // Переключить выбор точки для массового назначения
   const toggleOrderSelected = useCallback((orderId) => {
     setSelectedOrderIds((prev) => {
       const next = new Set(prev);
@@ -898,15 +819,6 @@ function DistributionPage() {
       return next;
     });
   }, []);
-
-  // Из балуна на карте: добавить/убрать точку в выбор по индексу (для массового назначения водителя)
-  const handleMapToggleOrderSelect = useCallback(
-    (globalIdx) => {
-      const order = orders[globalIdx];
-      if (order?.id) toggleOrderSelected(order.id);
-    },
-    [orders, toggleOrderSelected]
-  );
 
   // Обновить из 1С — подтянуть новые заказы за сегодня
   const handleRefresh1C = useCallback(async () => {
@@ -1416,7 +1328,6 @@ function DistributionPage() {
               <summary className="sidebar-section-title" style={{ cursor: 'pointer' }}>Вставить список поставщиков</summary>
               <div className="dc-supplier-search" style={{ position: 'relative', marginBottom: 6 }}>
                 <input
-                  ref={supplierSearchRef}
                   type="text"
                   className="form-input"
                   placeholder="Поиск поставщика по базе..."
@@ -1424,34 +1335,18 @@ function DistributionPage() {
                   onChange={(e) => {
                     setSupplierSearchQuery(e.target.value);
                     setShowSupplierSuggest(true);
-                    const r = supplierSearchRef.current?.getBoundingClientRect();
-                    if (r) setSupplierDropdownRect(r);
                   }}
-                  onFocus={() => {
-                    if (supplierSearchQuery.trim().length >= 1) {
-                      setShowSupplierSuggest(true);
-                      const r = supplierSearchRef.current?.getBoundingClientRect();
-                      if (r) setSupplierDropdownRect(r);
-                    }
-                  }}
-                  onBlur={() => setTimeout(() => { setShowSupplierSuggest(false); setSupplierDropdownRect(null); }, 200)}
+                  onFocus={() => supplierSearchQuery.trim() && setShowSupplierSuggest(true)}
+                  onBlur={() => setTimeout(() => setShowSupplierSuggest(false), 200)}
                   style={{ width: '100%' }}
                 />
-                {showSupplierSuggest && supplierSearchQuery.trim().length >= 1 && createPortal(
+                {showSupplierSuggest && (supplierSuggestResults.length > 0 || supplierSearchQuery.trim().length >= 1) && (
                   <div
                     className="dc-suggest-dropdown"
                     style={{
-                      position: 'fixed',
-                      top: (supplierDropdownRect?.bottom ?? 0) + 2,
-                      left: supplierDropdownRect?.left ?? 0,
-                      width: Math.max(supplierDropdownRect?.width ?? 260, 260),
-                      zIndex: 10000,
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 8,
-                      maxHeight: 220,
-                      overflowY: 'auto',
-                      boxShadow: 'var(--shadow-lg)',
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)', borderTop: 'none',
+                      borderRadius: '0 0 8px 8px', maxHeight: 200, overflowY: 'auto', boxShadow: 'var(--shadow-lg)',
                     }}
                   >
                     {supplierSuggestResults.length === 0 ? (
@@ -1464,12 +1359,10 @@ function DistributionPage() {
                           tabIndex={0}
                           className="dc-suggest-item"
                           style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border)' }}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
+                          onMouseDown={() => {
                             setSupplierNamesText((prev) => (prev ? prev + '\n' : '') + (s.name || ''));
                             setSupplierSearchQuery('');
                             setShowSupplierSuggest(false);
-                            setSupplierDropdownRect(null);
                           }}
                         >
                           <div style={{ fontWeight: 600 }}>{s.name}</div>
@@ -1477,8 +1370,7 @@ function DistributionPage() {
                         </div>
                       ))
                     )}
-                  </div>,
-                  document.body
+                  </div>
                 )}
               </div>
               <textarea
@@ -1503,7 +1395,6 @@ function DistributionPage() {
               <summary className="sidebar-section-title" style={{ cursor: 'pointer' }}>Вставить список партнёров</summary>
               <div className="dc-partner-search" style={{ position: 'relative', marginBottom: 6 }}>
                 <input
-                  ref={partnerSearchRef}
                   type="text"
                   className="form-input"
                   placeholder="Поиск партнёра по базе..."
@@ -1511,34 +1402,18 @@ function DistributionPage() {
                   onChange={(e) => {
                     setPartnerSearchQuery(e.target.value);
                     setShowPartnerSuggest(true);
-                    const r = partnerSearchRef.current?.getBoundingClientRect();
-                    if (r) setPartnerDropdownRect(r);
                   }}
-                  onFocus={() => {
-                    if (partnerSearchQuery.trim().length >= 1) {
-                      setShowPartnerSuggest(true);
-                      const r = partnerSearchRef.current?.getBoundingClientRect();
-                      if (r) setPartnerDropdownRect(r);
-                    }
-                  }}
-                  onBlur={() => setTimeout(() => { setShowPartnerSuggest(false); setPartnerDropdownRect(null); }, 200)}
+                  onFocus={() => partnerSearchQuery.trim() && setShowPartnerSuggest(true)}
+                  onBlur={() => setTimeout(() => setShowPartnerSuggest(false), 200)}
                   style={{ width: '100%' }}
                 />
-                {showPartnerSuggest && partnerSearchQuery.trim().length >= 1 && createPortal(
+                {showPartnerSuggest && (partnerSuggestResults.length > 0 || partnerSearchQuery.trim().length >= 1) && (
                   <div
                     className="dc-suggest-dropdown"
                     style={{
-                      position: 'fixed',
-                      top: (partnerDropdownRect?.bottom ?? 0) + 2,
-                      left: partnerDropdownRect?.left ?? 0,
-                      width: Math.max(partnerDropdownRect?.width ?? 260, 260),
-                      zIndex: 10000,
-                      background: 'var(--bg-card)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 8,
-                      maxHeight: 220,
-                      overflowY: 'auto',
-                      boxShadow: 'var(--shadow-lg)',
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                      background: 'var(--bg-card)', border: '1px solid var(--border)', borderTop: 'none',
+                      borderRadius: '0 0 8px 8px', maxHeight: 200, overflowY: 'auto', boxShadow: 'var(--shadow-lg)',
                     }}
                   >
                     {partnerSuggestResults.length === 0 ? (
@@ -1551,12 +1426,10 @@ function DistributionPage() {
                           tabIndex={0}
                           className="dc-partner-suggest-item"
                           style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border)' }}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
+                          onMouseDown={() => {
                             setPartnerNamesText((prev) => (prev ? prev + '\n' : '') + (p.name || ''));
                             setPartnerSearchQuery('');
                             setShowPartnerSuggest(false);
-                            setPartnerDropdownRect(null);
                           }}
                         >
                           <div style={{ fontWeight: 600 }}>{p.name}</div>
@@ -1564,8 +1437,7 @@ function DistributionPage() {
                         </div>
                       ))
                     )}
-                  </div>,
-                  document.body
+                  </div>
                 )}
               </div>
               <textarea
@@ -2079,7 +1951,7 @@ function DistributionPage() {
             </div>
           )}
 
-          {/* Список точек: раскрывающиеся блоки Поставщики / Партнёры / Адреса */}
+          {/* Orders list */}
           <div className="orders-list-container">
             {orders.length === 0 ? (
               <div className="empty-state">
@@ -2106,19 +1978,13 @@ function DistributionPage() {
                       ? driverRoutes[selectedDriver].driverName
                       : selectedDriver !== null && selectedDriver >= 0
                       ? `Водитель ${selectedDriver + 1}`
-                      : 'Список точек'}
+                      : 'Все заказы'}
                   </h3>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {displayOrders.length} шт.
                   </span>
                 </div>
-                {supplierItems.length > 0 && (
-                  <details className="dc-orders-group" open style={{ marginTop: 8 }}>
-                    <summary className="dc-orders-group-summary" style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
-                      📦 Поставщики ({supplierItems.length})
-                    </summary>
-                    <div style={{ marginTop: 4 }}>
-                {supplierItems.map(order => {
+                {displayOrders.map(order => {
                   const driverIdx = order.driverIndex;
                   const color =
                     driverIdx >= 0
@@ -2367,82 +2233,9 @@ function DistributionPage() {
                     </div>
                   );
                 })}
-                    </div>
-                  </details>
-                )}
-                {partnerItems.length > 0 && (
-                  <details className="dc-orders-group" open style={{ marginTop: 8 }}>
-                    <summary className="dc-orders-group-summary" style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
-                      🤝 Партнёры ({partnerItems.length})
-                    </summary>
-                    <div style={{ marginTop: 4 }}>
-                {partnerItems.map(order => {
-                  const driverIdx = order.driverIndex;
-                  const color = driverIdx >= 0 ? (driverColorsBySlot[driverIdx] ?? DRIVER_COLORS[driverIdx % DRIVER_COLORS.length]) : undefined;
-                  const isEditing = editingOrderId === order.id;
-                  const isPlacing = placingOrderId === order.id;
-                  const isFailed = !order.geocoded && order.error;
-                  return (
-                    <div key={order.id}>
-                      <div className={`order-item ${driverIdx >= 0 ? 'assigned' : ''} ${manualMode ? 'clickable' : ''} ${isPlacing ? 'placing' : ''}`} style={{ borderLeftColor: driverIdx >= 0 ? color : undefined, borderLeftWidth: isFailed ? 3 : undefined, ...(isFailed && driverIdx < 0 ? { borderLeftColor: 'var(--danger)' } : {}) }} onClick={() => manualMode && handleManualAssign(order.globalIndex)} onMouseEnter={() => setHoveredOrderId(order.id)} onMouseLeave={() => setHoveredOrderId(null)}>
-                        {assignments && <input type="checkbox" checked={selectedOrderIds.has(order.id)} onChange={(e) => { e.stopPropagation(); toggleOrderSelected(order.id); }} onClick={(e) => e.stopPropagation()} style={{ marginRight: 6, flexShrink: 0 }} />}
-                        <div className="order-number" style={driverIdx >= 0 ? { background: color, color: '#fff' } : isFailed ? { background: 'var(--danger)', color: '#fff' } : {}}>{order.orderNum}</div>
-                        <div className="order-info">
-                          <div className="order-address" title={order.formattedAddress || order.address}>{order.address}</div>
-                          <div className="order-time">
-                            {order.timeSlot && <span>⏰ {order.timeSlot}</span>}
-                            {order.phone && <span style={{ marginLeft: order.timeSlot ? 8 : 0 }}>📞 {order.phone}</span>}
-                            {order.formattedAddress && <span style={{ marginLeft: order.timeSlot || order.phone ? 8 : 0, opacity: 0.7, display: 'block' }}>📍 {order.formattedAddress}</span>}
-                            {order.isPartner && !order.partnerDbId && <div style={{ marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}><button type="button" className="btn btn-sm btn-outline" style={{ fontSize: 10, color: 'var(--warning)', borderColor: 'var(--warning)' }} onClick={(e) => { e.stopPropagation(); setFindPartnerOrderId(order.id); }}>🔎 Не выбран — найти в базе</button><button type="button" className="btn btn-sm btn-outline" style={{ fontSize: 10, color: 'var(--warning)', borderColor: 'var(--warning)' }} onClick={(e) => { e.stopPropagation(); setShowCreatePartner(true); }}>+ Новый партнёр</button></div>}
-                          </div>
-                        </div>
-                        {manualMode ? <span className="order-status" style={{ background: 'var(--accent-light)', color: 'var(--accent)', cursor: 'pointer' }}>{driverIdx >= 0 ? `В${driverIdx + 1}` : '?'}</span> : order.geocoded ? <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}><span className="order-status geocoded">✓</span><button className="btn-icon-delete" onClick={e => { e.stopPropagation(); handleDeleteOrder(order.id); }} title="Удалить точку">×</button></div> : order.error ? <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}><button className="btn btn-sm btn-outline" onClick={e => { e.stopPropagation(); handleStartEdit(order); }} title="Изменить адрес">✎</button><button className="btn btn-sm btn-outline" onClick={e => { e.stopPropagation(); handleStartPlacing(order.id); }} title="Поставить на карте">📍</button><button className="btn-icon-delete" onClick={e => { e.stopPropagation(); handleDeleteOrder(order.id); }} title="Удалить">×</button></div> : <span className="order-status pending">...</span>}
-                      </div>
-                      {isEditing && <div className="order-edit-row"><input className="order-edit-input" value={editAddress} onChange={e => setEditAddress(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleRetryGeocode(order.id)} placeholder="Введите адрес..." autoFocus /><button className="btn btn-sm btn-primary" onClick={() => handleRetryGeocode(order.id)} disabled={isRetrying || !editAddress.trim()}>{isRetrying ? '...' : 'Найти'}</button><button className="btn btn-sm btn-outline" onClick={() => setEditingOrderId(null)}>✕</button></div>}
-                      {isPlacing && <div className="order-edit-row" style={{ color: 'var(--warning)', fontSize: 12 }}>👆 Кликните на карту для установки точки<button className="btn btn-sm btn-outline" onClick={() => setPlacingOrderId(null)} style={{ marginLeft: 'auto' }}>Отмена</button></div>}
-                    </div>
-                  );
-                })}
-                    </div>
-                  </details>
-                )}
-                {addressItems.length > 0 && (
-                  <details className="dc-orders-group" open style={{ marginTop: 8 }}>
-                    <summary className="dc-orders-group-summary" style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
-                      📍 Адреса доставки ({addressItems.length})
-                    </summary>
-                    <div style={{ marginTop: 4 }}>
-                {addressItems.map(order => {
-                  const driverIdx = order.driverIndex;
-                  const color = driverIdx >= 0 ? (driverColorsBySlot[driverIdx] ?? DRIVER_COLORS[driverIdx % DRIVER_COLORS.length]) : undefined;
-                  const isEditing = editingOrderId === order.id;
-                  const isPlacing = placingOrderId === order.id;
-                  const isFailed = !order.geocoded && order.error;
-                  return (
-                    <div key={order.id}>
-                      <div className={`order-item ${driverIdx >= 0 ? 'assigned' : ''} ${manualMode ? 'clickable' : ''} ${isPlacing ? 'placing' : ''}`} style={{ borderLeftColor: driverIdx >= 0 ? color : undefined, borderLeftWidth: isFailed ? 3 : undefined, ...(isFailed && driverIdx < 0 ? { borderLeftColor: 'var(--danger)' } : {}) }} onClick={() => manualMode && handleManualAssign(order.globalIndex)} onMouseEnter={() => setHoveredOrderId(order.id)} onMouseLeave={() => setHoveredOrderId(null)}>
-                        {assignments && <input type="checkbox" checked={selectedOrderIds.has(order.id)} onChange={(e) => { e.stopPropagation(); toggleOrderSelected(order.id); }} onClick={(e) => e.stopPropagation()} style={{ marginRight: 6, flexShrink: 0 }} />}
-                        <div className="order-number" style={driverIdx >= 0 ? { background: color, color: '#fff' } : isFailed ? { background: 'var(--danger)', color: '#fff' } : {}}>{order.orderNum}</div>
-                        <div className="order-info">
-                          <div className="order-address" title={order.formattedAddress || order.address}>{order.address}</div>
-                          <div className="order-time">
-                            {order.timeSlot && <span>⏰ {order.timeSlot}</span>}
-                            {order.phone && <span style={{ marginLeft: order.timeSlot ? 8 : 0 }}>📞 {order.phone}</span>}
-                            {order.formattedAddress && <span style={{ marginLeft: order.timeSlot || order.phone ? 8 : 0, opacity: 0.7, display: 'block' }}>📍 {order.formattedAddress}</span>}
-                          </div>
-                        </div>
-                        {manualMode ? <span className="order-status" style={{ background: 'var(--accent-light)', color: 'var(--accent)', cursor: 'pointer' }}>{driverIdx >= 0 ? `В${driverIdx + 1}` : '?'}</span> : order.geocoded ? <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}><span className="order-status geocoded">✓</span><button className="btn-icon-delete" onClick={e => { e.stopPropagation(); handleDeleteOrder(order.id); }} title="Удалить точку">×</button></div> : order.error ? <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}><button className="btn btn-sm btn-outline" onClick={e => { e.stopPropagation(); handleStartEdit(order); }} title="Изменить адрес">✎</button><button className="btn btn-sm btn-outline" onClick={e => { e.stopPropagation(); handleStartPlacing(order.id); }} title="Поставить на карте">📍</button><button className="btn-icon-delete" onClick={e => { e.stopPropagation(); handleDeleteOrder(order.id); }} title="Удалить">×</button></div> : <span className="order-status pending">...</span>}
-                      </div>
-                      {isEditing && <div className="order-edit-row"><input className="order-edit-input" value={editAddress} onChange={e => setEditAddress(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleRetryGeocode(order.id)} placeholder="Введите адрес..." autoFocus /><button className="btn btn-sm btn-primary" onClick={() => handleRetryGeocode(order.id)} disabled={isRetrying || !editAddress.trim()}>{isRetrying ? '...' : 'Найти'}</button><button className="btn btn-sm btn-outline" onClick={() => setEditingOrderId(null)}>✕</button></div>}
-                      {isPlacing && <div className="order-edit-row" style={{ color: 'var(--warning)', fontSize: 12 }}>👆 Кликните на карту для установки точки<button className="btn btn-sm btn-outline" onClick={() => setPlacingOrderId(null)} style={{ marginLeft: 'auto' }}>Отмена</button></div>}
-                    </div>
-                  );
-                })}
-                    </div>
-                  </details>
-                )}
               </>
             )}
+          </div>
           </div>
         </aside>
 
@@ -2472,8 +2265,6 @@ function DistributionPage() {
           onToggleKbt={handleToggleKbt}
           onSetHelper={handleSetHelper}
           hoveredOrderId={hoveredOrderId}
-          selectedOrderIds={selectedOrderIds}
-          onToggleOrderSelect={handleMapToggleOrderSelect}
         />
 
         {/* Map legend */}

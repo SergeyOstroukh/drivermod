@@ -5,9 +5,6 @@
 export const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
 export const PARTNER_ALIASES_KEY = 'dc_partner_aliases';
 export const DRIVER_COLORS_KEY = 'dc_driver_colors';
-/** Сохранение точек, назначений и настроек распределения (как в js/distribution.js) */
-export const DISTRIBUTION_DATA_KEY = 'dc_distribution_data';
-export const DISTRIBUTION_SCHEMA_VERSION = 1;
 
 export const COLOR_PALETTE = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
