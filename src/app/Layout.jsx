@@ -1,4 +1,4 @@
-import { Outlet, NavLink } from 'react-router-dom';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 
 const navItems = [
   { to: '/suppliers', label: 'Поставщики' },
@@ -10,6 +10,9 @@ const navItems = [
 ];
 
 export default function Layout() {
+  const { pathname } = useLocation();
+  const isDistribution = pathname === '/distribution' || pathname === '/distribution/';
+
   return (
     <div className="app">
       <header className="header">
@@ -29,7 +32,16 @@ export default function Layout() {
           <h1 id="pageTitle" style={{ margin: 0, fontSize: '1.25rem' }}>DriveControl</h1>
         </div>
       </header>
-      <main className="container" style={{ padding: 16, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <main
+        className={'container' + (isDistribution ? ' dc-fullwidth' : '')}
+        style={{
+          padding: isDistribution ? 0 : 16,
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         <Outlet />
       </main>
     </div>
