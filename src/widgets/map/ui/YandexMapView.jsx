@@ -91,28 +91,45 @@ export default function YandexMapView({
 
   useEffect(() => {
     let cancelled = false;
-    loadYmaps().then(ymaps => {
-      if (cancelled || !mapContainerRef.current || mapRef.current) return;
-      const map = new ymaps.Map(
-        mapContainerRef.current,
-        {
-          center: MINSK_CENTER,
-          zoom: DEFAULT_ZOOM,
-          controls: ['zoomControl', 'fullscreenControl'],
-        },
-        { suppressMapOpenBlock: true },
-      );
-      map.events.add('click', e => {
-        if (placingModeRef.current && onMapClickRef.current) {
-          const coords = e.get('coords');
-          onMapClickRef.current(coords[0], coords[1]);
-        }
+    const el = mapContainerRef.current;
+    if (!el) return;
+
+    const initWhenReady = () => {
+      if (cancelled || mapRef.current) return;
+      const w = el.offsetWidth || el.parentElement?.offsetWidth;
+      const h = el.offsetHeight || el.parentElement?.offsetHeight;
+      if (w < 50 || h < 50) return;
+      loadYmaps().then(ymaps => {
+        if (cancelled || !mapContainerRef.current || mapRef.current) return;
+        const map = new ymaps.Map(
+          mapContainerRef.current,
+          {
+            center: MINSK_CENTER,
+            zoom: DEFAULT_ZOOM,
+            controls: ['zoomControl', 'fullscreenControl'],
+          },
+          { suppressMapOpenBlock: true },
+        );
+        map.events.add('click', e => {
+          if (placingModeRef.current && onMapClickRef.current) {
+            const coords = e.get('coords');
+            onMapClickRef.current(coords[0], coords[1]);
+          }
+        });
+        mapRef.current = map;
+        setMapReady(true);
       });
-      mapRef.current = map;
-      setMapReady(true);
+    };
+
+    const ro = new ResizeObserver(() => {
+      initWhenReady();
     });
+    ro.observe(el);
+    initWhenReady();
+
     return () => {
       cancelled = true;
+      ro.disconnect();
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
