@@ -87,6 +87,7 @@ export default function DriversPage() {
       <section className="section-header">
         <h1 className="section-title">Водители</h1>
         <Link to="/distribution" className="btn btn-outline">Распределение</Link>
+        <Link to="/schedule" className="btn btn-outline">График смен</Link>
         <button type="button" className="btn btn-primary" onClick={openCreate}>
           Добавить водителя
         </button>
