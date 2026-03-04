@@ -77,15 +77,9 @@ export default function YandexMapView({
         mapRef.current.balloon.close();
       }
     };
-    window.__drivecontrol_centerOrder = (lat, lng) => {
-      if (mapRef.current && lat != null && lng != null) {
-        mapRef.current.setCenter([lat, lng], 15, { duration: 300 });
-      }
-    };
     return () => {
       delete window.__drivecontrol_assign;
       delete window.__drivecontrol_delete;
-      delete window.__drivecontrol_centerOrder;
     };
   }, []);
 
@@ -243,8 +237,8 @@ export default function YandexMapView({
   }, [orders, assignments, selectedDriver, mapReady, buildBalloonContent]);
 
   return (
-    <div className="map-container" style={{ minHeight: 400 }}>
-      <div ref={mapContainerRef} style={{ width: '100%', height: '100%', minHeight: 400 }} />
+    <div className="map-container">
+      <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
     </div>
   );
 }

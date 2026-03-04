@@ -943,9 +943,8 @@ function DistributionPage() {
         </div>
       </header>
 
-      <div className="dc-layout">
-        <aside className="dc-sidebar-wrap">
-          <div className="dc-sidebar-scroll">
+      <div className="main-layout" style={{ flex: 1, minHeight: 0 }}>
+        <aside className="sidebar">
           {/* Вставить список поставщиков */}
           <div className="sidebar-section">
             <details className="dc-bulk-details">
@@ -1569,11 +1568,9 @@ function DistributionPage() {
               </>
             )}
           </div>
-          </div>
         </aside>
 
-        {/* Карта занимает всё остальное пространство справа (как в старой версии) */}
-        <div className="dc-map-wrap">
+        {/* Map */}
         <YandexMapView
           orders={orders}
           assignments={assignments}
@@ -1608,7 +1605,7 @@ function DistributionPage() {
                   className="driver-color-dot"
                   style={{ background: dr.color }}
                 />
-                <span>{dr.driverName || `Водитель ${dr.index + 1}`}</span>
+                <span>Водитель {dr.index + 1}</span>
                 <span className="count">
                   {dr.orders.length} шт · {dr.km} км
                 </span>
@@ -1616,7 +1613,6 @@ function DistributionPage() {
             ))}
           </div>
         )}
-        </div>
       </div>
 
       {/* Модалка: Распределить маршрут — выбор водителей */}
