@@ -39,6 +39,7 @@ serve(async (req) => {
     customer_name?: string;
     delivery_address?: string;
     phone?: string;
+    delivery_time_slot?: string;
     items?: unknown;
     amount?: number;
     [key: string]: unknown;
@@ -52,6 +53,7 @@ serve(async (req) => {
       customer_name: payload.customer_name ?? null,
       delivery_address: String(payload.delivery_address),
       phone: payload.phone ?? null,
+      delivery_time_slot: payload.delivery_time_slot ?? null,
       items: payload.items ?? null,
       amount: payload.amount ?? null,
       status: "new",

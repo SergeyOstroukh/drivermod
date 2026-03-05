@@ -510,8 +510,10 @@
 		<!-- Раздел Заказы из 1С -->
 		<div id="orders1cSection" class="content-section" style="display: none;">
 			<section class="section-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-				<h2 style="margin:0;font-size:1.1rem;">Заказы на сегодня</h2>
+				<h2 style="margin:0;font-size:1.1rem;">Заказы из 1С</h2>
 				<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+					<label style="display:flex;align-items:center;gap:6px;font-size:0.9rem;color:var(--muted);">Дата:</label>
+					<input type="date" id="orders1cDateFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;" />
 					<select id="orders1cStatusFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;">
 						<option value="">Все статусы</option>
 						<option value="new">Не распределены</option>

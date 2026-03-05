@@ -14,6 +14,7 @@
 
   let orders = [];
   let selectedIds = new Set();
+  let realtimeChannel = null;
 
   function getSupabaseClient() {
     var config = window.SUPABASE_CONFIG || {};
@@ -25,7 +26,17 @@
   }
 
   function todayStr() {
-    return new Date().toISOString().slice(0, 10);
+    var d = new Date();
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + day;
+  }
+
+  function getSelectedDate() {
+    var el = document.getElementById("orders1cDateFilter");
+    if (el && el.value) return el.value;
+    return todayStr();
   }
 
   function getStatusFilter() {
@@ -77,7 +88,7 @@
 
     var list = filteredOrders();
     if (orders.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Нет заказов на сегодня</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Нет заказов на выбранную дату</td></tr>';
       updateSelectionUI();
       return;
     }
@@ -168,12 +179,12 @@
 
     if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Загрузка...</td></tr>';
 
-    var today = todayStr();
+    var selectedDate = getSelectedDate();
     try {
       var resp = await client
         .from("customer_orders")
         .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status")
-        .eq("order_date", today)
+        .eq("order_date", selectedDate)
         .order("id", { ascending: true });
 
       if (resp.error) throw resp.error;
@@ -238,11 +249,45 @@
     }
   }
 
+  function ensureRealtimeSubscription() {
+    if (realtimeChannel) return;
+    var client = getSupabaseClient();
+    if (!client) return;
+    realtimeChannel = client
+      .channel("dc-orders1c")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "customer_orders" },
+        function () {
+          loadOrders();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "customer_orders" },
+        function () {
+          loadOrders();
+        }
+      )
+      .subscribe(function (status) {
+        if (status === "SUBSCRIBED") {
+          console.log("[Orders1C] Realtime подписка на customer_orders активна");
+        }
+      });
+  }
+
   function refresh() {
+    var dateEl = document.getElementById("orders1cDateFilter");
+    if (dateEl && !dateEl.value) dateEl.value = todayStr();
     loadOrders();
+    ensureRealtimeSubscription();
   }
 
   bindEvents();
+
+  document.getElementById("orders1cDateFilter") && document.getElementById("orders1cDateFilter").addEventListener("change", function () {
+    loadOrders();
+  });
 
   window.Orders1C = {
     refresh: refresh,
