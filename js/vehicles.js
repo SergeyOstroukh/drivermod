@@ -726,23 +726,21 @@
 				isCompleted: route.status === 'completed',
 			});
 
-			// Active points for the map
-			if (route.status !== 'completed') {
-				addresses.forEach(function (pt) {
-					if (pt.status !== 'completed' && pt.lat && pt.lng) {
-						allActiveMapPoints.push(pt);
-					}
-				});
-			}
+			// All points for the map (all trips, including completed)
+			addresses.forEach(function (pt) {
+				if (pt.lat && pt.lng) {
+					allActiveMapPoints.push(Object.assign({}, pt, { _completed: pt.status === 'completed' || pt.status === 'delivered' || pt.status === 'cancelled' }));
+				}
+			});
 		});
 
 		var html = '';
 		var has1COrders = currentRoutesData.some(function (r) {
-			return (r.points || []).some(function (pt) { return pt.order_1c_id && pt.customer_order_id; });
+			return (r.points || []).some(function (pt) { return (pt.order_1c_id || pt.customer_order_id); });
 		});
 		var any1CNotStarted = has1COrders && currentRoutesData.some(function (r) {
 			return (r.points || []).some(function (pt) {
-				return pt.order_1c_id && pt.customer_order_id && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled';
+				return (pt.order_1c_id || pt.customer_order_id) && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled';
 			});
 		});
 		if (any1CNotStarted) {
@@ -852,11 +850,12 @@
 		if (pt.phone) {
 			h += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">\uD83D\uDCDE ' + pt.phone + '</a></div>';
 		}
-		if (pt.order_1c_id) {
+		if (pt.order_1c_id || pt.customer_order_id) {
 			var s = pt.status || 'assigned';
 			var statusLabel = s === 'in_delivery' ? 'В доставке' : (s === 'delivered' ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'Распределён'));
+			var orderLabel = pt.order_1c_id ? ('Заказ 1С: ' + pt.order_1c_id) : ('Заказ 1С #' + pt.customer_order_id);
 			h += '<div class="route-point-1c" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
-			h += '<span style="font-size:11px;color:#888;">Заказ 1С: ' + pt.order_1c_id + ' — ' + statusLabel + '</span>';
+			h += '<span style="font-size:11px;color:#888;">' + orderLabel + ' — ' + statusLabel + '</span>';
 			if (s !== 'delivered' && s !== 'cancelled') {
 				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В доставке</button>';
 				h += '<button type="button" class="btn btn-primary btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="delivered">Доставлен</button>';
@@ -872,7 +871,7 @@
 				var webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
 				h += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
 			}
-			if (!pt.order_1c_id) {
+			if (!pt.order_1c_id && !pt.customer_order_id) {
 				h += '<button class="btn btn-primary btn-sm route-complete-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" title="Завершить">\u2713</button>';
 			}
 		}
@@ -912,7 +911,7 @@
 						var pts = route.points || [];
 						var changed = false;
 						var newPoints = pts.map(function (pt) {
-							if (pt.order_1c_id && pt.customer_order_id && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled') {
+							if ((pt.order_1c_id || pt.customer_order_id) && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled') {
 								changed = true;
 								return Object.assign({}, pt, { status: 'in_delivery' });
 							}
@@ -923,15 +922,17 @@
 							currentRoutesData[ri] = updated;
 							for (var pi = 0; pi < newPoints.length; pi++) {
 								var p = newPoints[pi];
-								if (p.status === 'in_delivery' && p.customer_order_id && p.order_1c_id) {
+								if (p.status === 'in_delivery' && p.customer_order_id) {
 									var config = window.SUPABASE_CONFIG || {};
 									if (config.url && window.supabase) {
 										var client = window.supabase.createClient(config.url, config.anonKey);
 										await client.from('customer_orders').update({ status: 'in_delivery' }).eq('id', p.customer_order_id);
 									}
-									var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
-									if (fnUrl && fnUrl.indexOf('http') === 0) {
-										fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+									if (p.order_1c_id) {
+										var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+										if (fnUrl && fnUrl.indexOf('http') === 0) {
+											fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+										}
 									}
 								}
 							}
@@ -957,7 +958,7 @@
 		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
 		if (!route || !route.points) return;
 		var pt = route.points[ptIndex];
-		if (!pt || !pt.order_1c_id) return;
+		if (!pt || (!pt.order_1c_id && !pt.customer_order_id)) return;
 		var newPoints = route.points.map(function (p, i) {
 			return i === ptIndex ? Object.assign({}, p, { status: newStatus }) : p;
 		});
@@ -972,13 +973,15 @@
 					var client = window.supabase.createClient(config.url, config.anonKey);
 					await client.from('customer_orders').update({ status: newStatus }).eq('id', pt.customer_order_id);
 				}
-				var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
-				if (fnUrl && fnUrl.indexOf('http') === 0) {
-					fetch(fnUrl, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: newStatus }),
-					}).catch(function () {});
+				if (pt.order_1c_id) {
+					var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+					if (fnUrl && fnUrl.indexOf('http') === 0) {
+						fetch(fnUrl, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: newStatus }),
+						}).catch(function () {});
+					}
 				}
 			}
 			renderDriverRoutes(currentRoutesData);
@@ -992,19 +995,39 @@
 		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
 		if (!route || !route.points) return;
 
-		var updatedPoints = route.points.map(function (pt, idx) {
+		var pt = route.points[pointIndex];
+		var is1COrder = pt && (pt.order_1c_id || pt.customer_order_id);
+		var newPointStatus = is1COrder ? 'delivered' : 'completed';
+
+		var updatedPoints = route.points.map(function (p, idx) {
 			if (idx === pointIndex) {
-				return Object.assign({}, pt, { status: 'completed' });
+				return Object.assign({}, p, { status: newPointStatus });
 			}
-			return pt;
+			return p;
 		});
 
 		try {
 			var updated = await window.VehiclesDB.updateRoutePoints(route.id, updatedPoints);
-			// Replace route in array
 			currentRoutesData = currentRoutesData.map(function (r) {
 				return String(r.id) === String(routeId) ? updated : r;
 			});
+			if (is1COrder && pt.customer_order_id != null) {
+				var config = window.SUPABASE_CONFIG || {};
+				if (config.url && window.supabase) {
+					var client = window.supabase.createClient(config.url, config.anonKey);
+					await client.from('customer_orders').update({ status: 'delivered' }).eq('id', pt.customer_order_id);
+				}
+				if (pt.order_1c_id) {
+					var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+					if (fnUrl && fnUrl.indexOf('http') === 0) {
+						fetch(fnUrl, {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: 'delivered' }),
+						}).catch(function () {});
+					}
+				}
+			}
 			renderDriverRoutes(currentRoutesData);
 		} catch (err) {
 			console.error("Ошибка обновления статуса точки:", err);
@@ -1082,13 +1105,15 @@
 			const bounds = [];
 			points.forEach(function (pt, idx) {
 				if (!pt.lat || !pt.lng) return;
+				var isDone = pt._completed || pt.status === 'completed' || pt.status === 'delivered' || pt.status === 'cancelled';
 				const pm = new ymaps.Placemark([pt.lat, pt.lng], {
 					iconContent: String(idx + 1),
 					balloonContentBody: '<div style="font-family:system-ui;"><strong>' + pt.address + '</strong>' +
+						(isDone ? ' <span style="color:#22c55e;">✓</span>' : '') +
 						(pt.phone ? '<br>📞 ' + pt.phone : '') +
 						(pt.timeSlot ? '<br>⏰ ' + pt.timeSlot : '') + '</div>'
 				}, {
-					preset: 'islands#darkBlueCircleIcon'
+					preset: isDone ? 'islands#grayCircleIcon' : 'islands#darkBlueCircleIcon'
 				});
 				driverRouteMapInstance.geoObjects.add(pm);
 				driverRoutePlacemarks.push(pm);

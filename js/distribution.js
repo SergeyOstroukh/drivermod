@@ -69,6 +69,8 @@
   // Hide assigned toggle
   let _hideAssigned = false;
   let _hideConfirmed = false;
+  // Hide driver points on map: driverId -> true
+  let _hiddenDriverIds = {};
   // Supplier telegram filter: all | sent | unsent
   let _supplierTelegramFilter = 'all';
   // Custom driver colors
@@ -1103,6 +1105,7 @@
       var slotIdx = getOrderSlotIdx(globalIdx);
       var driverIdx = slotIdx; // for balloon color compatibility
       var orderDriverId = getOrderDriverId(globalIdx);
+      if (orderDriverId && _hiddenDriverIds[String(orderDriverId)]) return;
       // Hide assigned/confirmed suppliers when toggles are on
       if (_hideAssigned && order.isSupplier && orderDriverId) return;
       if (_hideConfirmed && order.isSupplier && (order.telegramStatus === 'confirmed' || order.telegramStatus === 'picked_up')) return;
@@ -4021,6 +4024,17 @@
           '</div>';
       });
       driverListHtml += '</div></details></div>';
+      var hideMapHtml = '<div class="dc-section" style="margin-top:6px;">' +
+        '<div class="dc-section-title" style="font-size:11px;color:#888;margin-bottom:6px;">Скрыть точки на карте</div>' +
+        '<div class="dc-hide-drivers-map" style="display:flex;flex-wrap:wrap;gap:6px;">';
+      dbDrivers.forEach(function (dr) {
+        var checked = _hiddenDriverIds[String(dr.id)] ? ' checked' : '';
+        var shortName = escapeHtml((dr.name || '').split(' ')[0] || ('Водитель ' + dr.id));
+        hideMapHtml += '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#aaa;cursor:pointer;">' +
+          '<input type="checkbox" class="dc-hide-driver-map-cb" data-driver-id="' + dr.id + '"' + checked + '> ' + shortName + '</label>';
+      });
+      hideMapHtml += '</div></div>';
+      driverListHtml += hideMapHtml;
     }
 
     // Variants
@@ -4589,6 +4603,16 @@
           selectedDriver = filterId;
         }
         renderAll();
+      });
+    });
+
+    // Hide driver points on map
+    sidebar.querySelectorAll('.dc-hide-driver-map-cb').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var driverId = String(cb.dataset.driverId);
+        if (cb.checked) _hiddenDriverIds[driverId] = true;
+        else delete _hiddenDriverIds[driverId];
+        updatePlacemarks();
       });
     });
 
