@@ -1,7 +1,7 @@
 /**
  * DriveControl — Distribution UI module
  * Renders the "Распределение маршрутов" tab with Yandex Map.
- * Persists data to localStorage. Publishes routes to Supabase.
+ * Persists data only to Supabase (distribution_state). No localStorage for map/points.
  */
 (() => {
   "use strict";
@@ -10,7 +10,6 @@
   const DEFAULT_ZOOM = 12;
   const COLORS = window.DistributionAlgo.DRIVER_COLORS;
   const ORIGINAL_COLORS = COLORS.slice();
-  const STORAGE_KEY = 'dc_distribution_data';
   const DISTRIBUTION_STATE_TABLE = 'distribution_state';
   const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
   const PARTNER_ALIASES_KEY = 'dc_partner_aliases';
@@ -606,16 +605,7 @@
   }
 
   function readLocalState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      const data = JSON.parse(raw);
-      if (!data || !Array.isArray(data.orders)) return null;
-      return data;
-    } catch (e) {
-      console.warn('localStorage load error:', e);
-      return null;
-    }
+    return null;
   }
 
   async function loadCloudState() {
@@ -645,8 +635,9 @@
   async function saveCloudState(snapshot) {
     var client = getSupabaseClient();
     if (!client || _cloudTableMissing) return;
-    // Safety: do not overwrite shared cloud state with an accidental empty payload.
-    if ((!snapshot.orders || snapshot.orders.length === 0) && Date.now() > _allowEmptyCloudWriteUntil) {
+    if (!snapshot.orders || snapshot.orders.length === 0) {
+      if (Date.now() <= _allowEmptyCloudWriteUntil) return;
+      await clearCloudState();
       return;
     }
     try {
@@ -678,6 +669,8 @@
     var snap = buildStateSnapshot();
     if (snap.orders && snap.orders.length > 0) {
       saveCloudState(snap);
+    } else {
+      clearCloudState();
     }
   }
 
@@ -704,12 +697,11 @@
       if (sig === _lastSavedStateSig) return;
       _lastSavedStateSig = sig;
       var data = buildStateSnapshot();
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
       if (!_isApplyingCloudState) {
         scheduleCloudStateSave(data);
       }
     } catch (e) {
-      console.warn('localStorage save error:', e);
+      console.warn('Distribution state save error:', e);
     }
   }
 
@@ -719,17 +711,11 @@
   }
 
   async function loadBestAvailableState() {
-    var local = readLocalState();
     var cloud = await loadCloudState();
-    // Cloud is the source of truth across computers.
-    if (cloud && cloud.state) {
-      if (applyStateSnapshot(cloud.state)) {
-        _lastAppliedCloudTs = cloud.updatedAt || 0;
-        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cloud.state)); } catch (e) { /* ignore */ }
-        return true;
-      }
+    if (cloud && cloud.state && applyStateSnapshot(cloud.state)) {
+      _lastAppliedCloudTs = cloud.updatedAt || 0;
+      return true;
     }
-    if (local) return applyStateSnapshot(local);
     return false;
   }
 
@@ -743,18 +729,13 @@
     var cloud = await loadCloudState();
     var cloudTs = cloud && cloud.updatedAt ? Number(cloud.updatedAt) : 0;
 
-    // Safety: never auto-replace non-empty local work with empty cloud payload.
-    var local = readLocalState();
-    if (local && Array.isArray(local.orders) && local.orders.length > 0 &&
-        cloud && cloud.state && Array.isArray(cloud.state.orders) && cloud.state.orders.length === 0) {
+    if (!cloud || !cloud.state || cloudTs <= _lastAppliedCloudTs) return;
+    var cloudOrders = cloud.state.orders;
+    if (Array.isArray(cloudOrders) && cloudOrders.length === 0 && orders.length > 0 && (Date.now() - _lastLocalMutationTs < 10000)) {
       return;
     }
-
-    if (!cloud || !cloud.state || cloudTs <= _lastAppliedCloudTs) return;
     if (!applyStateSnapshot(cloud.state)) return;
     _lastAppliedCloudTs = cloudTs;
-
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cloud.state)); } catch (e) { /* ignore */ }
 
     _isApplyingCloudState = true;
     try {
@@ -815,7 +796,6 @@
   }
 
   function clearState() {
-    try { localStorage.removeItem(STORAGE_KEY); } catch (e) { /* ignore */ }
     clearTimeout(_cloudSaveTimer);
     _allowEmptyCloudWriteUntil = Date.now() + 5000;
     clearCloudState();
@@ -2958,7 +2938,7 @@
 
     modal.innerHTML = '<div class="modal-content" style="max-width:400px;">' +
       '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Завершить маршрут</h3>' +
-      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Адреса будут сохранены как выезд в кабинете водителя.<br>Поставщики остаются на карте.</div>' +
+      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Адреса будут сохранены как выезд в кабинете водителя.<br>Поставщики остаются на карте.<br>Заказы из 1С получат статус «В доставке».</div>' +
       '<div style="display:flex;flex-direction:column;gap:6px;">' +
       driverBtns +
       '<div style="border-top:1px solid #333;margin:4px 0;"></div>' +
@@ -4270,9 +4250,10 @@
       '<div class="dc-section"><div class="dc-controls">' +
       '<div class="dc-control-group"><label>Водителей</label><input type="number" id="dcDriverCount" class="dc-count-input" min="1" max="12" value="' + driverCount + '"></div>' +
       '<div class="dc-buttons">' +
-      (geocodedCount > 0 ? '<button class="btn btn-primary dc-btn-distribute" style="background:var(--accent);border-color:#0a3d31;color:#04211b;">Распределить</button>' : '') +
+      (geocodedCount > 0 ? '<button class="btn btn-primary dc-btn-distribute" style="background:var(--accent);border-color:#0a3d31;color:#04211b;">Распределить по водителям</button>' : '') +
       (orders.length > 0 ? '<button class="btn btn-outline btn-sm dc-btn-clear" style="color:var(--danger);border-color:var(--danger);">Сбросить данные</button>' : '') +
       '</div></div></div>' +
+      (geocodedCount > 0 ? '<div class="dc-distribute-hint" style="font-size:11px;color:#888;margin-top:4px;padding:6px 8px;background:rgba(0,0,0,0.2);border-radius:6px;">1) Нажмите «Распределить по водителям» — точки назначатся водителям (цвета на карте).<br>2) Ниже нажмите «Завершить маршрут» — маршруты уйдут в путевые листы, статусы заказов 1С станут «В доставке».</div>' : '') +
       // POI toggles
       '<div class="dc-section dc-poi-section">' +
       '<div class="dc-section-title" style="font-size:12px;color:#888;margin-bottom:6px;">Отображение на карте</div>' +

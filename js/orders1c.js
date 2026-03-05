@@ -215,16 +215,23 @@
     }
   }
 
-  function moveToMap() {
+  async function moveToMap() {
     var list = orders.filter(function (o) { return selectedIds.has(o.id); });
     if (list.length === 0) return;
 
     var client = getSupabaseClient();
     if (client) {
       var ids = list.map(function (o) { return o.id; });
-      client.from("customer_orders").update({ status: "on_map" }).in("id", ids).then(function () {
-        loadOrders();
-      });
+      var resp = await client.from("customer_orders").update({ status: "on_map" }).in("id", ids);
+      if (resp.error) {
+        if (resp.error.message && resp.error.message.indexOf("violates check constraint") !== -1) {
+          alert("Не удалось поставить статус «На карте». Примените миграцию 032 (статус on_map) в Supabase → SQL Editor.");
+        } else {
+          alert("Ошибка обновления статуса: " + (resp.error.message || "неизвестно"));
+        }
+        return;
+      }
+      loadOrders();
     }
 
     window.__dcPending1COrders = list.map(function (o) {
