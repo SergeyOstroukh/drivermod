@@ -512,11 +512,13 @@
 			<section class="section-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
 				<h2 style="margin:0;font-size:1.1rem;">Заказы из 1С</h2>
 				<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-					<label style="display:flex;align-items:center;gap:6px;font-size:0.9rem;color:var(--muted);">Дата:</label>
-					<input type="date" id="orders1cDateFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;" />
+					<label style="display:flex;align-items:center;gap:6px;font-size:0.9rem;color:var(--muted);">Дата доставки:</label>
+					<input type="date" id="orders1cDateFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;" title="Показываются только заказы на выбранную дату" />
+					<span id="orders1cDateHint" style="font-size:0.8rem;color:var(--muted);"></span>
 					<select id="orders1cStatusFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;">
 						<option value="">Все статусы</option>
 						<option value="new">Не распределены</option>
+						<option value="on_map">На карте</option>
 						<option value="assigned">Распределены</option>
 						<option value="in_delivery">В доставке</option>
 						<option value="delivered">Доставлены</option>

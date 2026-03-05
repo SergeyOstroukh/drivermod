@@ -6,11 +6,13 @@
 
   const STATUS_LABELS = {
     new: "Не распределён",
+    on_map: "На карте",
     assigned: "Распределён",
     in_delivery: "В доставке",
     delivered: "Доставлен",
     cancelled: "Отменён",
   };
+  var STATUS_SORT_ORDER = { new: 0, on_map: 1, in_delivery: 2, assigned: 3, delivered: 4, cancelled: 5 };
 
   let orders = [];
   let selectedIds = new Set();
@@ -105,9 +107,12 @@
         var statusLabel = STATUS_LABELS[o.status] || o.status;
         var itemsStr = o.items != null ? (typeof o.items === "string" ? o.items : JSON.stringify(o.items)) : "";
         var itemsDisplay = [itemsStr, o.amount != null ? o.amount + " ₽" : ""].filter(Boolean).join(" · ") || "—";
+        var rowClass = o.status === "on_map" ? " orders1c-row-on-map" : "";
         return (
           "<tr data-order-id=\"" +
           o.id +
+          "\" class=\"orders1c-row" +
+          rowClass +
           "\">" +
           '<td><input type="checkbox" class="orders1c-row-cb" data-id="' +
           o.id +
@@ -188,7 +193,19 @@
         .order("id", { ascending: true });
 
       if (resp.error) throw resp.error;
-      orders = resp.data || [];
+      var raw = resp.data || [];
+      orders = raw.slice().sort(function (a, b) {
+        var pa = STATUS_SORT_ORDER[a.status] !== undefined ? STATUS_SORT_ORDER[a.status] : 6;
+        var pb = STATUS_SORT_ORDER[b.status] !== undefined ? STATUS_SORT_ORDER[b.status] : 6;
+        if (pa !== pb) return pa - pb;
+        return (b.id || 0) - (a.id || 0);
+      });
+      var hintEl = document.getElementById("orders1cDateHint");
+      if (hintEl) {
+        hintEl.textContent = orders.length === 0
+          ? "На эту дату заказов нет"
+          : "На выбранную дату: " + orders.length + " заказ(ов)";
+      }
       renderTimeFilterOptions();
       renderTable();
       updateSelectAllState();
@@ -202,8 +219,18 @@
     var list = orders.filter(function (o) { return selectedIds.has(o.id); });
     if (list.length === 0) return;
 
+    var client = getSupabaseClient();
+    if (client) {
+      var ids = list.map(function (o) { return o.id; });
+      client.from("customer_orders").update({ status: "on_map" }).in("id", ids).then(function () {
+        loadOrders();
+      });
+    }
+
     window.__dcPending1COrders = list.map(function (o) {
       return {
+        id: o.id,
+        order_1c_id: o.order_1c_id || "",
         delivery_address: o.delivery_address || "",
         phone: o.phone || "",
         delivery_time_slot: o.delivery_time_slot || "",

@@ -737,6 +737,20 @@
 		});
 
 		var html = '';
+		var has1COrders = currentRoutesData.some(function (r) {
+			return (r.points || []).some(function (pt) { return pt.order_1c_id && pt.customer_order_id; });
+		});
+		var any1CNotStarted = has1COrders && currentRoutesData.some(function (r) {
+			return (r.points || []).some(function (pt) {
+				return pt.order_1c_id && pt.customer_order_id && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled';
+			});
+		});
+		if (any1CNotStarted) {
+			html += '<div style="margin-bottom:12px;">';
+			html += '<button type="button" class="btn btn-primary route-start-1c-btn">Начать задание</button>';
+			html += '<span style="font-size:12px;color:var(--muted);margin-left:8px;">Переведёт все заказы 1С в статус «В доставке»</span>';
+			html += '</div>';
+		}
 
 		// ── Suppliers section ──
 		if (allSuppliers.length > 0) {
@@ -813,7 +827,7 @@
 	}
 
 	function renderRoutePointHtml(pt, num, isLast, routeId, ptIndex) {
-		var isCompleted = pt.status === 'completed';
+		var isCompleted = pt.status === 'completed' || pt.status === 'delivered' || pt.status === 'cancelled';
 		var h = '';
 		h += '<div class="route-point' + (isCompleted ? ' route-point-completed' : '') + '">';
 		h += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
@@ -838,14 +852,29 @@
 		if (pt.phone) {
 			h += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">\uD83D\uDCDE ' + pt.phone + '</a></div>';
 		}
+		if (pt.order_1c_id) {
+			var s = pt.status || 'assigned';
+			var statusLabel = s === 'in_delivery' ? 'В доставке' : (s === 'delivered' ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'Распределён'));
+			h += '<div class="route-point-1c" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+			h += '<span style="font-size:11px;color:#888;">Заказ 1С: ' + pt.order_1c_id + ' — ' + statusLabel + '</span>';
+			if (s !== 'delivered' && s !== 'cancelled') {
+				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В доставке</button>';
+				h += '<button type="button" class="btn btn-primary btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="delivered">Доставлен</button>';
+				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
+			}
+			h += '</div>';
+		}
 		h += '</div>';
 		h += '<div class="route-point-actions">';
-		if (!isCompleted) {
+		var pointCompleted = isCompleted || (pt.status === 'delivered' || pt.status === 'cancelled');
+		if (!pointCompleted) {
 			if (pt.lat && pt.lng) {
 				var webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
 				h += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
 			}
-			h += '<button class="btn btn-primary btn-sm route-complete-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" title="Завершить">\u2713</button>';
+			if (!pt.order_1c_id) {
+				h += '<button class="btn btn-primary btn-sm route-complete-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" title="Завершить">\u2713</button>';
+			}
 		}
 		h += '</div>';
 		h += '</div>';
@@ -863,6 +892,58 @@
 			});
 		});
 
+		// 1C order status buttons
+		document.querySelectorAll('.route-1c-status-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var routeId = btn.dataset.routeId;
+				var ptIndex = parseInt(btn.dataset.ptIndex);
+				var newStatus = btn.dataset.status;
+				await set1COrderStatus(routeId, ptIndex, newStatus);
+			});
+		});
+
+		// Начать задание (все заказы 1С → в доставке)
+		document.querySelectorAll('.route-start-1c-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				btn.disabled = true;
+				try {
+					for (var ri = 0; ri < currentRoutesData.length; ri++) {
+						var route = currentRoutesData[ri];
+						var pts = route.points || [];
+						var changed = false;
+						var newPoints = pts.map(function (pt) {
+							if (pt.order_1c_id && pt.customer_order_id && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled') {
+								changed = true;
+								return Object.assign({}, pt, { status: 'in_delivery' });
+							}
+							return pt;
+						});
+						if (changed) {
+							var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
+							currentRoutesData[ri] = updated;
+							for (var pi = 0; pi < newPoints.length; pi++) {
+								var p = newPoints[pi];
+								if (p.status === 'in_delivery' && p.customer_order_id && p.order_1c_id) {
+									var config = window.SUPABASE_CONFIG || {};
+									if (config.url && window.supabase) {
+										var client = window.supabase.createClient(config.url, config.anonKey);
+										await client.from('customer_orders').update({ status: 'in_delivery' }).eq('id', p.customer_order_id);
+									}
+									var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+									if (fnUrl && fnUrl.indexOf('http') === 0) {
+										fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+									}
+								}
+							}
+						}
+					}
+					renderDriverRoutes(currentRoutesData);
+				} finally {
+					btn.disabled = false;
+				}
+			});
+		});
+
 		// Build route per trip
 		document.querySelectorAll('.route-build-trip-btn').forEach(function (btn) {
 			btn.addEventListener('click', function () {
@@ -870,6 +951,41 @@
 				buildOptimizedRouteForTrip(routeId);
 			});
 		});
+	}
+
+	async function set1COrderStatus(routeId, ptIndex, newStatus) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points) return;
+		var pt = route.points[ptIndex];
+		if (!pt || !pt.order_1c_id) return;
+		var newPoints = route.points.map(function (p, i) {
+			return i === ptIndex ? Object.assign({}, p, { status: newStatus }) : p;
+		});
+		try {
+			var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
+			currentRoutesData = currentRoutesData.map(function (r) {
+				return String(r.id) === String(routeId) ? updated : r;
+			});
+			if (pt.customer_order_id != null) {
+				var config = window.SUPABASE_CONFIG || {};
+				if (config.url && window.supabase) {
+					var client = window.supabase.createClient(config.url, config.anonKey);
+					await client.from('customer_orders').update({ status: newStatus }).eq('id', pt.customer_order_id);
+				}
+				var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+				if (fnUrl && fnUrl.indexOf('http') === 0) {
+					fetch(fnUrl, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: newStatus }),
+					}).catch(function () {});
+				}
+			}
+			renderDriverRoutes(currentRoutesData);
+		} catch (err) {
+			console.error('Ошибка обновления статуса заказа 1С:', err);
+			alert('Не удалось обновить статус: ' + err.message);
+		}
 	}
 
 	async function completeRoutePointMulti(routeId, pointIndex) {

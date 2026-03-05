@@ -77,6 +77,34 @@
 
 ---
 
+## Если заказы не отображаются на вкладке
+
+Приложение берёт данные **из таблицы `public.customer_orders`** (та же, что в Table Editor). Если в БД строки есть, а на вкладке — нет, проверь два момента.
+
+### 1. Выбрана ли нужная дата
+
+На вкладке «Заказы из 1С» вверху есть поле **«Дата»**. Загружаются только заказы с `order_date` = выбранной дате. Выбери в календаре дату, по которой в Table Editor есть строки (например 2025-03-06 или 2026-03-05), и нажми «Обновить».
+
+### 2. RLS: доступ для anon
+
+В Table Editor данные показываются под ролью **postgres**, а приложение ходит в API с ключом **anon**. Если для таблицы включён RLS, но нет политики, разрешающей чтение для anon, API вернёт пустой массив.
+
+**Что сделать:** в Supabase открой **SQL Editor** и выполни:
+
+```sql
+ALTER TABLE public.customer_orders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all access to customer_orders" ON public.customer_orders;
+CREATE POLICY "Allow all access to customer_orders" ON public.customer_orders
+    FOR ALL
+    USING (true)
+    WITH CHECK (true);
+```
+
+После этого обнови страницу приложения и снова выбери дату и нажми «Обновить».
+
+---
+
 ## Таблица в Supabase: `customer_orders`
 
 Используется таблица **`customer_orders`** и Edge Function **`orders-1c-ingest`** (уже развёрнутая в Supabase или из репозитория).
@@ -283,10 +311,25 @@ supabase functions deploy orders-1c-ingest --no-verify-jwt
 
 Статусы и привязка к водителю/рейсу меняются в кабинете и хранятся в `customer_orders`. Связь с 1С — по полю **`order_1c_id`**.
 
-1С может:
-1. **Опрашивать** — периодически запрашивать заказы с изменённым статусом (например по `updated_at` или `status != 'new'`) через REST API Supabase.
-2. **Получать webhook** — при смене статуса отправлять POST на URL 1С с телом вида:
-   `{ "order_1c_id": "...", "status": "delivered", "updated_at": "..." }`.
+### Как это работает
+
+1. **Распределение:** с вкладки «Заказы из 1С» ты выбираешь заказы и жмёшь «Перенести на карту». На карте распределяешь их по водителям и жмёшь **«Отправить маршруты»**. Тогда в БД у этих заказов проставляются `assigned_driver_id`, `driver_route_id` и **status = assigned**, а водитель видит их в путевом листе (раздел Водители → открыть свой маршрут).
+
+2. **Путевой лист водителя:** водитель открывает маршрут, видит заказы 1С с кнопками «В доставке», «Доставлен», «Отменён». Кнопка **«Начать задание»** переводит все заказы 1С в этом маршруте в статус «В доставке». При смене статуса по заказу: обновляется запись в `customer_orders`, и наш backend вызывает 1С (webhook).
+
+3. **Отправка в 1С:** при смене статуса водителем вызывается Edge Function **push-order-status-to-1c**. Она отправляет в 1С POST с телом `{ "order_1c_id": "...", "status": "delivered" }` (или `in_delivery`, `cancelled`). URL 1С задаётся в Supabase Secrets: **ONE_C_WEBHOOK_URL** (например `https://your-1c-server/ws/order-status`).
+
+**Деплой функции и настройка:**
+```bash
+supabase functions deploy push-order-status-to-1c --no-verify-jwt
+supabase secrets set ONE_C_WEBHOOK_URL=https://ваш-сервер-1с/путь-к-webhook
+```
+
+Если **ONE_C_WEBHOOK_URL** не задан, статусы по-прежнему обновляются в БД и на вкладке «Заказы из 1С», но вызов 1С не выполняется.
+
+### Альтернатива: опрос со стороны 1С
+
+1С может не принимать webhook, а сама периодически опрашивать заказы с изменённым статусом через REST API Supabase (по `updated_at` или `status != 'new'`).
 
 ---
 

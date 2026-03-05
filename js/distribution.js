@@ -2750,6 +2750,10 @@
         formattedAddress: order.formattedAddress || null,
         orderNum: routesByDriver[driverId].length + 1,
       };
+      if (order.customer_order_id != null && order.order_1c_id) {
+        pointData.customer_order_id = order.customer_order_id;
+        pointData.order_1c_id = order.order_1c_id;
+      }
 
       // Supplier flag
       if (order.isSupplier) {
@@ -2822,8 +2826,27 @@
     }
 
     try {
-      await window.VehiclesDB.saveDriverRoutes(routes);
-      showToast('Маршруты опубликованы! Водители увидят их в своём разделе');
+      var savedRoutes = await window.VehiclesDB.saveDriverRoutes(routes);
+      if (savedRoutes && savedRoutes.length) {
+        var client = getSupabaseClient();
+        if (client) {
+          for (var ri = 0; ri < savedRoutes.length; ri++) {
+            var r = savedRoutes[ri];
+            var pts = r.points || [];
+            for (var pi = 0; pi < pts.length; pi++) {
+              var pt = pts[pi];
+              if (pt.customer_order_id != null) {
+                await client.from('customer_orders').update({
+                  assigned_driver_id: r.driver_id,
+                  driver_route_id: r.id,
+                  status: 'in_delivery',
+                }).eq('id', pt.customer_order_id);
+              }
+            }
+          }
+        }
+      }
+      showToast('Маршруты опубликованы! Водители увидят их в путевом листе');
     } catch (err) {
       showToast('Ошибка сохранения: ' + err.message, 'error');
     }
@@ -4912,10 +4935,75 @@
     }
   };
 
+  async function addCustomerOrdersFrom1C(pending) {
+    if (!pending || !pending.length) return;
+    var orderCounter = Date.now();
+    var toGeocode = pending.map(function (o, i) {
+      return {
+        id: '1c-' + orderCounter + '-' + i,
+        address: o.delivery_address || '',
+        phone: o.phone || '',
+        timeSlot: o.delivery_time_slot || null,
+        geocoded: false,
+        lat: null,
+        lng: null,
+        formattedAddress: null,
+        error: null,
+        customer_order_id: o.id,
+        order_1c_id: o.order_1c_id || '',
+      };
+    });
+    var keepOrders = [];
+    var keepAssignments = [];
+    for (var k = 0; k < orders.length; k++) {
+      if (orders[k].isSupplier) {
+        keepOrders.push(orders[k]);
+        if (assignments) keepAssignments.push(assignments[k]);
+      }
+    }
+    orders = keepOrders;
+    assignments = keepAssignments.length > 0 ? keepAssignments : null;
+    variants = [];
+    activeVariant = -1;
+    isGeocoding = true;
+    _fitBoundsNext = true;
+    renderAll();
+    var progressEl = $('#dcProgress');
+    try {
+      var geocoded = await window.DistributionGeocoder.geocodeOrders(toGeocode, function (cur, tot) {
+        if (progressEl) progressEl.textContent = cur + '/' + tot;
+      });
+      geocoded.forEach(function (o) {
+        if (o.customer_order_id != null) {
+          o.customer_order_id = parseInt(o.customer_order_id, 10);
+        }
+      });
+      orders = orders.concat(geocoded);
+      markLocalMutation();
+      if (assignments) {
+        for (var a = 0; a < geocoded.length; a++) assignments.push(-1);
+      } else {
+        assignments = geocoded.map(function () { return -1; });
+      }
+      var ok = geocoded.filter(function (o) { return o.geocoded; }).length;
+      var fail = geocoded.length - ok;
+      showToast('Заказы 1С на карту: ' + ok + (fail > 0 ? ', ошибок: ' + fail : ''), fail > 0 ? 'error' : undefined);
+    } catch (err) {
+      showToast('Ошибка геокодирования: ' + err.message, 'error');
+    } finally {
+      isGeocoding = false;
+      renderAll();
+    }
+  }
+
   function applyPending1COrders() {
     var pending = window.__dcPending1COrders;
     if (!pending || !pending.length) return;
     window.__dcPending1COrders = null;
+    if (pending[0].id != null && pending[0].order_1c_id != null) {
+      addCustomerOrdersFrom1C(pending);
+      return;
+    }
     var lines = pending.map(function (o) {
       return [o.delivery_address || '', o.phone || '', o.delivery_time_slot || ''].join('\t');
     });
