@@ -54,6 +54,7 @@
 		// Скрываем все разделы (основные + подсекции)
 		const allSections = [
 			"suppliersSection", "partnersSection", "driversSection", "vehiclesSection",
+			"orders1cSection",
 			"historySection", "mileageSection", "maintenanceSection",
 			"distributionSection", "driverRouteSection", "distributedSuppliersSection", "scheduleSection"
 		];
@@ -84,6 +85,7 @@
 			partners: "Партнёры",
 			drivers: "Водители",
 			vehicles: "Автомобили",
+			orders1c: "Заказы из 1С",
 			distribution: "Распределение маршрутов"
 		};
 		const pageTitle = document.getElementById("pageTitle");
@@ -150,8 +152,15 @@
 			}
 		} else if (section === "vehicles") {
 			loadVehicles();
+		} else if (section === "orders1c") {
+			if (window.Orders1C && window.Orders1C.refresh) window.Orders1C.refresh();
 		} else if (section === "distribution") {
 			if (window.DistributionUI) window.DistributionUI.onSectionActivated();
+			setTimeout(function () {
+				if (window.__dcPending1COrders && window.__dcPending1COrders.length && window.DistributionUI && typeof window.DistributionUI.applyPending1COrders === "function") {
+					window.DistributionUI.applyPending1COrders();
+				}
+			}, 150);
 		}
 
 		// Обновляем user bar

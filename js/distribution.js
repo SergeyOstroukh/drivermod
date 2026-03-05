@@ -4912,11 +4912,27 @@
     }
   };
 
+  function applyPending1COrders() {
+    var pending = window.__dcPending1COrders;
+    if (!pending || !pending.length) return;
+    window.__dcPending1COrders = null;
+    var lines = pending.map(function (o) {
+      return [o.delivery_address || '', o.phone || '', o.delivery_time_slot || ''].join('\t');
+    });
+    addressInputDraft = lines.join('\n');
+    var textarea = document.getElementById('dcAddressInput');
+    if (textarea) {
+      textarea.value = addressInputDraft;
+    }
+    loadAddresses(false);
+  }
+
   window.DistributionUI = {
     onSectionActivated: onSectionActivated,
     getDistributedSuppliers: getDistributedSuppliers,
     getDistributionDrivers: getDistributionDrivers,
     getSupplierItems: getSupplierItems,
+    applyPending1COrders: applyPending1COrders,
   };
 
   // Auto-init if section is already visible

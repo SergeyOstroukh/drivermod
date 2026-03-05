@@ -19,6 +19,7 @@
 			<button class="nav-tab" data-section="partners">Партнёры</button>
 			<button class="nav-tab" data-section="drivers">Водители</button>
 			<button class="nav-tab" data-section="vehicles">Автомобили</button>
+			<button class="nav-tab" data-section="orders1c">Заказы из 1С</button>
 			<button class="nav-tab" data-section="distribution" id="distributionTab" style="display:none;">Распределение</button>
 		</nav>
 		<div class="header-top">
@@ -506,6 +507,53 @@
 				</div>
 			</section>
 		</div>
+		<!-- Раздел Заказы из 1С -->
+		<div id="orders1cSection" class="content-section" style="display: none;">
+			<section class="section-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+				<h2 style="margin:0;font-size:1.1rem;">Заказы на сегодня</h2>
+				<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+					<select id="orders1cStatusFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;">
+						<option value="">Все статусы</option>
+						<option value="new">Не распределены</option>
+						<option value="assigned">Распределены</option>
+						<option value="in_delivery">В доставке</option>
+						<option value="delivered">Доставлены</option>
+						<option value="cancelled">Отменены</option>
+					</select>
+					<select id="orders1cTimeFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;">
+						<option value="">Время доставки — все</option>
+					</select>
+					<button id="orders1cRefreshBtn" class="btn btn-outline btn-sm" type="button">Обновить</button>
+				</div>
+				<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+					<span id="orders1cSelectedCount" style="font-size:13px;color:var(--muted);">Выбрано: 0</span>
+					<button id="orders1cMoveToMapBtn" class="btn btn-primary" type="button" disabled>
+						Перенести на карту
+					</button>
+				</div>
+			</section>
+			<section class="orders1c-content" style="margin-top:12px;">
+				<div class="table-wrapper">
+					<table class="distributed-table" id="orders1cTable">
+						<thead>
+							<tr>
+								<th style="width:40px;"><input type="checkbox" id="orders1cSelectAll" title="Выбрать все (по фильтру)" /></th>
+								<th style="width:80px;">№ 1С</th>
+								<th>Адрес</th>
+								<th>Клиент / тел.</th>
+								<th>Время</th>
+								<th>Товар / сумма</th>
+								<th>Статус</th>
+							</tr>
+						</thead>
+						<tbody id="orders1cTableBody">
+							<tr><td colspan="7" style="text-align:center;color:var(--muted);">Загрузка...</td></tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+		</div>
+
 		<!-- Раздел Распределение маршрутов -->
 		<div id="distributionSection" class="content-section" style="display: none;">
 			<div class="dc-layout">
@@ -830,7 +878,7 @@
 	<script>
 	(function(){var v=__v,s=[
 		'js/config.js','js/db.js','js/db-partners.js','js/db-vehicles.js','js/app.js',
-		'js/vehicles.js','js/distribution-parser.js','js/distribution-geocoder.js',
+		'js/vehicles.js','js/orders1c.js','js/distribution-parser.js','js/distribution-geocoder.js',
 		'js/distribution-algo.js','js/distribution.js'
 	];s.forEach(function(f){document.write('<script src="'+f+'?v='+v+'"><\/script>');});})();
 	</script>
