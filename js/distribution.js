@@ -3029,8 +3029,7 @@
     var points = [];
 
     orders.forEach(function (order, idx) {
-      if (order.isPoi) return;
-      if (!order.geocoded && !order.isSupplier) return;
+      if (!order.geocoded && !order.isSupplier && !order.isPoi) return;
       var did = getOrderDriverId(idx);
       if (!did || String(did) !== String(driverId)) return;
 
@@ -3044,6 +3043,10 @@
         orderNum: points.length + 1,
       };
 
+      if (order.isPoi) {
+        pt.isPoi = true;
+        pt.poiLabel = order.poiLabel || null;
+      }
       if (order.isSupplier) {
         pt.isSupplier = true;
         pt.telegramSent = !!order.telegramSent;
@@ -3116,6 +3119,38 @@
       }
       if (savedRoute && savedRoute.id) {
         await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+      }
+
+      // KBT с помощником: сохранить маршрут помощнику
+      var kbtWithHelper = orders.filter(function (o, i) {
+        if (!o.isKbt || o.helperDriverSlot == null) return false;
+        if (getOrderDriverId(i) !== driverId) return false;
+        return true;
+      });
+      if (kbtWithHelper.length > 0) {
+        var helperDriverId = dbDrivers[kbtWithHelper[0].helperDriverSlot] ? dbDrivers[kbtWithHelper[0].helperDriverSlot].id : null;
+        if (helperDriverId && helperDriverId !== driverId) {
+          var helperPoints = kbtWithHelper.map(function (o, qi) {
+            return {
+              address: o.address,
+              lat: o.lat,
+              lng: o.lng,
+              phone: o.phone || null,
+              timeSlot: o.timeSlot || null,
+              formattedAddress: o.formattedAddress || null,
+              orderNum: qi + 1,
+              isKbt: true,
+              isKbtHelper: true,
+              mainDriverName: getDriverNameById(driverId),
+              mainDriverId: driverId,
+            };
+          });
+          try {
+            await window.VehiclesDB.saveDriverRouteForDriver(parseInt(helperDriverId), routeDate, helperPoints);
+          } catch (e) {
+            console.warn('KBT helper route save:', e);
+          }
+        }
       }
 
       // Обновить статусы заказов 1С → «В доставке»

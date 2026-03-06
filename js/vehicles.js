@@ -727,7 +727,7 @@
 		currentRoutesData.forEach(function (route, ri) {
 			var pts = (route.points || []).slice();
 			var suppliers = pts.filter(function (pt) { return pt.isSupplier; });
-			var addresses = pts.filter(function (pt) { return !pt.isSupplier && !pt.isPoi; });
+			var addresses = pts.filter(function (pt) { return !pt.isSupplier; });
 
 			suppliers.forEach(function (s) {
 				var key = (s.address || '') + '|' + (s.lat || '') + '|' + (s.lng || '');
@@ -859,7 +859,7 @@
 		h += '<div class="route-point route-point-card' + (isCompleted ? ' route-point-completed' : '') + '">';
 		h += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
 		h += '<div class="route-point-info">';
-		h += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + pt.address + '</div>';
+		h += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + (pt.isPoi && pt.poiLabel ? pt.poiLabel + ': ' : '') + pt.address + '</div>';
 		if (pt.formattedAddress) {
 			h += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
 		}
@@ -900,6 +900,16 @@
 				h += '<button type="button" class="btn btn-outline btn-sm route-partner-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В доставке</button>';
 				h += '<button type="button" class="btn btn-primary btn-sm route-partner-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="delivered">Доставлен</button>';
 				h += '<button type="button" class="btn btn-outline btn-sm route-partner-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
+			}
+			h += '</div>';
+		} else if (pt.isPoi) {
+			var poiStatusLabel = s === 'in_delivery' ? 'В пути' : (s === 'completed' ? 'Посещён' : (s === 'cancelled' ? 'Отменён' : 'В маршруте'));
+			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+			h += '<span style="font-size:11px;color:#888;">' + (pt.poiLabel || 'ПВЗ') + ' — ' + poiStatusLabel + '</span>';
+			if (s !== 'completed' && s !== 'cancelled') {
+				h += '<button type="button" class="btn btn-outline btn-sm route-address-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В пути</button>';
+				h += '<button type="button" class="btn btn-primary btn-sm route-address-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="completed">Посещён</button>';
+				h += '<button type="button" class="btn btn-outline btn-sm route-address-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
 			}
 			h += '</div>';
 		} else if (pt.order_1c_id || pt.customer_order_id) {
@@ -3063,6 +3073,14 @@
 				restoreInworkPointsToMap('deliveries');
 			});
 		}
+		var deliveriesViewAllBtn = document.getElementById("deliveriesViewAllBtn");
+		if (deliveriesViewAllBtn) {
+			deliveriesViewAllBtn.addEventListener("click", function () {
+				_deliveriesViewMode = _deliveriesViewMode === 'trips' ? 'all' : 'trips';
+				this.textContent = _deliveriesViewMode === 'trips' ? 'Все записи' : 'По выездам';
+				renderDistributedDeliveries();
+			});
+		}
 
 		// Восстановление сессии при загрузке страницы
 		restoreSession();
@@ -3881,6 +3899,8 @@
 	let _inworkSubTab = 'suppliers';
 
 	let _deliveriesRows = [];
+	let _deliveriesRoutes = [];
+	let _deliveriesViewMode = 'trips';
 	let _deliveriesDate = '';
 	let _deliveriesLoading = false;
 	let _deliveriesError = '';
@@ -4445,14 +4465,15 @@
 		try {
 			var routes = await window.VehiclesDB.getRoutesByDate(targetDate);
 			var rows = [];
-			(routes || []).forEach(function (route) {
+			var routesWithPoints = [];
+			(routes || []).forEach(function (route, ri) {
 				var points = Array.isArray(route.points) ? route.points : [];
+				var tripPoints = [];
 				points.forEach(function (pt) {
 					if (!pt || pt.isSupplier) return;
 					if (pt.order_1c_id || pt.customer_order_id) return;
-					var typeLabel = pt.isPartner ? 'Партнёр' : 'Адрес';
-					var statusLabel = pt.status === 'in_delivery' ? 'В пути' : (pt.status === 'completed' || pt.status === 'delivered' ? 'Доставлен' : (pt.status === 'picked_up' ? 'Забран' : (pt.status === 'cancelled' ? 'Отменён' : 'В маршруте')));
-					rows.push({
+					var typeLabel = pt.isPoi ? (pt.poiLabel || 'ПВЗ') : (pt.isPartner ? 'Партнёр' : 'Адрес');
+					var row = {
 						address: pt.address || '',
 						typeLabel: typeLabel,
 						driverName: route.driver && route.driver.name ? route.driver.name : null,
@@ -4461,10 +4482,23 @@
 						phone: pt.phone || '',
 						status: pt.status || 'assigned',
 						routeId: route.id,
-					});
+					};
+					rows.push(row);
+					tripPoints.push(row);
 				});
+				if (tripPoints.length > 0) {
+					routesWithPoints.push({
+						route: route,
+						tripNum: routesWithPoints.length + 1,
+						driverName: route.driver && route.driver.name ? route.driver.name : null,
+						driverId: route.driver_id || null,
+						points: tripPoints,
+						isCompleted: route.status === 'completed',
+					});
+				}
 			});
 			_deliveriesRows = rows;
+			_deliveriesRoutes = routesWithPoints;
 			_deliveriesDate = targetDate;
 		} catch (err) {
 			console.error('Ошибка загрузки заказов/движков:', err);
@@ -4477,21 +4511,24 @@
 	}
 
 	function renderDistributedDeliveries() {
+		var wrapper = document.getElementById("deliveriesTableWrapper");
 		var tbody = document.getElementById("deliveriesTableBody");
 		var driverSelect = document.getElementById("deliveriesDriverFilter");
-		if (!tbody) return;
+		if (!wrapper) return;
 
 		var selectedDate = _deliveriesFilterDate || getTodayLocalDateString();
 		if (_deliveriesLoading) {
-			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">Загрузка данных за ' + selectedDate + '...</td></tr>';
+			wrapper.innerHTML = '<table class="distributed-table" id="deliveriesTable"><thead><tr><th style="width:40px;">\u2116</th><th>Адрес / партнёр</th><th style="width:100px;">Тип</th><th>Водитель</th><th>Статус</th><th>Время</th></tr></thead><tbody id="deliveriesTableBody"><tr><td colspan="6" style="text-align:center;color:var(--muted);">Загрузка данных за ' + selectedDate + '...</td></tr></tbody></table>';
 			return;
 		}
 		if (_deliveriesError && _deliveriesDate !== selectedDate) {
-			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#ef4444;">Ошибка: ' + _deliveriesError + '</td></tr>';
+			wrapper.innerHTML = '<table class="distributed-table" id="deliveriesTable"><thead><tr><th style="width:40px;">\u2116</th><th>Адрес / партнёр</th><th style="width:100px;">Тип</th><th>Водитель</th><th>Статус</th><th>Время</th></tr></thead><tbody id="deliveriesTableBody"><tr><td colspan="6" style="text-align:center;color:#ef4444;">Ошибка: ' + _deliveriesError + '</td></tr></tbody></table>';
 			return;
 		}
+		tbody = document.getElementById("deliveriesTableBody");
 
 		var rows = _deliveriesRows.slice();
+		var routes = _deliveriesRoutes.slice();
 		var driverIds = {};
 		rows.forEach(function (r) {
 			if (r.driverId && r.driverName) driverIds[String(r.driverId)] = { id: r.driverId, name: r.driverName };
@@ -4512,16 +4549,22 @@
 
 		if (_deliveriesFilterDriverId) {
 			rows = rows.filter(function (r) { return String(r.driverId) === String(_deliveriesFilterDriverId); });
+			routes = routes.filter(function (r) { return String(r.driverId) === String(_deliveriesFilterDriverId); });
 		}
 		if (_deliveriesFilterStatus) {
-			rows = rows.filter(function (r) {
+			var statusOk = function (r) {
 				if (_deliveriesFilterStatus === 'assigned') return !r.status || r.status === 'assigned';
 				if (_deliveriesFilterStatus === 'in_delivery') return r.status === 'in_delivery';
 				if (_deliveriesFilterStatus === 'completed' || _deliveriesFilterStatus === 'delivered') return r.status === 'completed' || r.status === 'delivered';
 				if (_deliveriesFilterStatus === 'picked_up') return r.status === 'picked_up';
 				if (_deliveriesFilterStatus === 'cancelled') return r.status === 'cancelled';
 				return true;
-			});
+			};
+			rows = rows.filter(statusOk);
+			routes = routes.map(function (t) {
+				var pts = t.points.filter(statusOk);
+				return pts.length ? Object.assign({}, t, { points: pts }) : null;
+			}).filter(Boolean);
 		}
 
 		rows.sort(function (a, b) {
@@ -4532,44 +4575,46 @@
 			return (a.address || '').localeCompare(b.address || '', 'ru');
 		});
 
-		if (rows.length === 0) {
-			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">' +
-				(_deliveriesRows.length === 0 ? 'Нет заказов/движков (адреса и партнёры с страницы распределения)' : 'Нет по фильтру') + '</td></tr>';
-			return;
+		var emptyMsg = _deliveriesRows.length === 0 ? 'Нет заказов/движков (адреса и партнёры с страницы распределения)' : 'Нет по фильтру';
+
+		function statusHtml(s) {
+			if (s === 'completed' || s === 'delivered') return '<span style="color:#22c55e;">Доставлен</span>';
+			if (s === 'picked_up') return '<span style="color:#22c55e;">Забран</span>';
+			if (s === 'cancelled') return '<span style="color:#ef4444;">Отменён</span>';
+			if (s === 'in_delivery') return '<span style="color:#f59e0b;">В пути</span>';
+			return '<span style="color:var(--muted);">В маршруте</span>';
 		}
 
-		tbody.innerHTML = '';
-		rows.forEach(function (row, i) {
-			var tr = document.createElement('tr');
-			var tdNum = document.createElement('td');
-			tdNum.textContent = i + 1;
-			tdNum.style.color = 'var(--muted)';
-			var tdAddr = document.createElement('td');
-			tdAddr.textContent = row.address;
-			tdAddr.style.fontWeight = '500';
-			var tdType = document.createElement('td');
-			tdType.textContent = row.typeLabel;
-			tdType.style.color = 'var(--muted)';
-			var tdDriver = document.createElement('td');
-			tdDriver.textContent = row.driverName || '—';
-			var tdStatus = document.createElement('td');
-			var s = row.status;
-			if (s === 'completed' || s === 'delivered') tdStatus.innerHTML = '<span style="color:#22c55e;">Доставлен</span>';
-			else if (s === 'picked_up') tdStatus.innerHTML = '<span style="color:#22c55e;">Забран</span>';
-			else if (s === 'cancelled') tdStatus.innerHTML = '<span style="color:#ef4444;">Отменён</span>';
-			else if (s === 'in_delivery') tdStatus.innerHTML = '<span style="color:#f59e0b;">В пути</span>';
-			else tdStatus.innerHTML = '<span style="color:var(--muted);">В маршруте</span>';
-			var tdTime = document.createElement('td');
-			tdTime.textContent = row.timeSlot || '—';
-			tdTime.style.color = 'var(--muted)';
-			tr.appendChild(tdNum);
-			tr.appendChild(tdAddr);
-			tr.appendChild(tdType);
-			tr.appendChild(tdDriver);
-			tr.appendChild(tdStatus);
-			tr.appendChild(tdTime);
-			tbody.appendChild(tr);
-		});
+		if (_deliveriesViewMode === 'trips' && routes.length > 0) {
+			var tripsHtml = '<div class="deliveries-trips">';
+			routes.forEach(function (trip, ti) {
+				var icon = trip.isCompleted ? '\u2705' : '\uD83D\uDE97';
+				tripsHtml += '<details class="deliveries-trip-details" ' + (ti === 0 ? 'open' : '') + ' style="margin-bottom:12px;">';
+				tripsHtml += '<summary style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 12px;background:var(--bg2);border-radius:8px;list-style:none;display:flex;align-items:center;gap:8px;">';
+				tripsHtml += '<span style="transition:transform .2s;">\u25B6</span> ';
+				tripsHtml += icon + ' Выезд ' + trip.tripNum + ' \u2014 ' + (trip.driverName || '\u2014') + ' <span style="font-weight:400;color:var(--muted);font-size:12px;">(' + trip.points.length + ' точек)</span>';
+				tripsHtml += '</summary>';
+				tripsHtml += '<div style="padding:8px 0 0 8px;">';
+				tripsHtml += '<table class="distributed-table" style="margin-top:4px;"><thead><tr><th style="width:40px;">\u2116</th><th>Адрес / партнёр</th><th style="width:100px;">Тип</th><th>Статус</th><th>Время</th></tr></thead><tbody>';
+				trip.points.forEach(function (row, i) {
+					tripsHtml += '<tr><td style="color:var(--muted)">' + (i + 1) + '</td><td style="font-weight:500">' + (row.address || '') + '</td><td style="color:var(--muted)">' + (row.typeLabel || 'Адрес') + '</td><td>' + statusHtml(row.status) + '</td><td style="color:var(--muted)">' + (row.timeSlot || '\u2014') + '</td></tr>';
+				});
+				tripsHtml += '</tbody></table></div></details>';
+			});
+			tripsHtml += '</div>';
+			wrapper.innerHTML = tripsHtml;
+		} else {
+			var tableHtml = '<table class="distributed-table" id="deliveriesTable"><thead><tr><th style="width:40px;">\u2116</th><th>Адрес / партнёр</th><th style="width:100px;">Тип</th><th>Водитель</th><th>Статус</th><th>Время</th></tr></thead><tbody id="deliveriesTableBody">';
+			if (rows.length === 0) {
+				tableHtml += '<tr><td colspan="6" style="text-align:center;color:var(--muted);">' + emptyMsg + '</td></tr>';
+			} else {
+				rows.forEach(function (row, i) {
+					tableHtml += '<tr><td style="color:var(--muted)">' + (i + 1) + '</td><td style="font-weight:500">' + (row.address || '') + '</td><td style="color:var(--muted)">' + (row.typeLabel || 'Адрес') + '</td><td>' + (row.driverName || '\u2014') + '</td><td>' + statusHtml(row.status) + '</td><td style="color:var(--muted)">' + (row.timeSlot || '\u2014') + '</td></tr>';
+				});
+			}
+			tableHtml += '</tbody></table>';
+			wrapper.innerHTML = tableHtml;
+		}
 	}
 
 	// Expose functions needed by inline HTML handlers
