@@ -5008,6 +5008,9 @@
   var _origRenderAll = renderAll;
   renderAll = function () {
     _origRenderAll();
+    // Persist full distribution snapshot (suppliers/partners/orders + assignments) to DB.
+    // saveState() is signature-aware, so no extra writes when nothing changed.
+    saveState();
     if (window._onDistributionChanged) {
       try { window._onDistributionChanged(); } catch (e) { console.warn(e); }
     }
