@@ -2950,7 +2950,8 @@
     var points = [];
 
     orders.forEach(function (order, idx) {
-      if (order.isPoi || !order.geocoded) return;
+      if (order.isPoi) return;
+      if (!order.geocoded && !order.isSupplier) return;
       var did = getOrderDriverId(idx);
       if (!did || String(did) !== String(driverId)) return;
 
@@ -3002,8 +3003,24 @@
     var supCount = points.length - addrCount;
 
     try {
-      // First sync latest points to the active route, then mark it completed
-      var savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
+      var saveMode = 'edit';
+      if (window.VehiclesDB && window.VehiclesDB.getDriverRoutes) {
+        var existingRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId), routeDate);
+        var hasActiveTrip = (existingRoutes || []).some(function (r) { return r && r.status === 'active'; });
+        if (hasActiveTrip) {
+          var selected = await askActiveTripAction(driverId, driverName, routeDate);
+          if (!selected) return; // cancel
+          saveMode = selected; // 'new' | 'edit'
+        }
+      }
+
+      // Save route based on selected mode, then mark completed
+      var savedRoute;
+      if (saveMode === 'new' && window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
+        savedRoute = await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId), routeDate, points);
+      } else {
+        savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
+      }
       if (savedRoute && savedRoute.id) {
         await window.VehiclesDB.completeDriverRoute(savedRoute.id);
       }
@@ -3042,6 +3059,40 @@
     }
   }
 
+  function askActiveTripAction(driverId, driverName, routeDate) {
+    return new Promise(function (resolve) {
+      var existing = document.getElementById('dcActiveTripModal');
+      if (existing) existing.remove();
+
+      var modal = document.createElement('div');
+      modal.id = 'dcActiveTripModal';
+      modal.className = 'modal is-open';
+      modal.style.cssText = 'z-index:10000;';
+
+      modal.innerHTML = '<div class="modal-content" style="max-width:430px;">' +
+        '<h3 class="modal-title" style="margin-bottom:10px;text-align:center;">У водителя уже есть активный выезд</h3>' +
+        '<div style="font-size:12px;color:#888;margin-bottom:12px;">' +
+        'Водитель: <b style="color:#ddd;">' + escapeHtml(driverName) + '</b><br>' +
+        'Дата: <b style="color:#ddd;">' + escapeHtml(routeDate) + '</b><br><br>' +
+        'Выберите действие:</div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px;">' +
+        '<button class="btn btn-primary dc-trip-action-new" style="width:100%;">Сделать 2-й выезд</button>' +
+        '<button class="btn btn-outline dc-trip-action-edit" style="width:100%;">Редактировать текущий выезд</button>' +
+        '<button class="btn btn-outline dc-trip-action-cancel" style="width:100%;">Отмена</button>' +
+        '</div></div>';
+
+      document.body.appendChild(modal);
+
+      function closeWith(value) {
+        modal.remove();
+        resolve(value);
+      }
+      modal.querySelector('.dc-trip-action-new').addEventListener('click', function () { closeWith('new'); });
+      modal.querySelector('.dc-trip-action-edit').addEventListener('click', function () { closeWith('edit'); });
+      modal.querySelector('.dc-trip-action-cancel').addEventListener('click', function () { closeWith(null); });
+    });
+  }
+
   // ─── Finish suppliers only (save as completed trip) ──────
   function showFinishSuppliersDialog() {
     var existing = document.getElementById('dcFinishSuppliersModal');
@@ -3050,7 +3101,7 @@
     // Count supplier orders per driver (only assigned and geocoded)
     var driverSupplierCounts = {};
     orders.forEach(function (o, idx) {
-      if (!o.isSupplier || !o.geocoded || o.isPoi) return;
+      if (!o.isSupplier || o.isPoi) return;
       var did = getOrderDriverId(idx);
       if (!did) return;
       var key = String(did);
@@ -3120,7 +3171,7 @@
     var supplierPoints = [];
     var supplierIndicesToRemove = [];
     orders.forEach(function (order, idx) {
-      if (!order.isSupplier || !order.geocoded || order.isPoi) return;
+      if (!order.isSupplier || order.isPoi) return;
       var did = getOrderDriverId(idx);
       if (!did || String(did) !== String(driverId)) return;
 
@@ -3180,7 +3231,8 @@
     var orderIndicesToRemove = [];
 
     orders.forEach(function (order, idx) {
-      if (order.isPoi || !order.geocoded) return;
+      if (order.isPoi) return;
+      if (!order.geocoded && !order.isSupplier) return;
       var did = getOrderDriverId(idx);
       if (!did || String(did) !== String(driverId)) return;
 
