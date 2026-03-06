@@ -3003,12 +3003,24 @@
     var supCount = points.length - addrCount;
 
     try {
-      var saveMode = 'edit';
+      var saveMode = 'new'; // default: create new trip
+      var existingRoutes = [];
+      var latestRoute = null;
       if (window.VehiclesDB && window.VehiclesDB.getDriverRoutes) {
-        var existingRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId), routeDate);
-        var hasActiveTrip = (existingRoutes || []).some(function (r) { return r && r.status === 'active'; });
-        if (hasActiveTrip) {
-          var selected = await askActiveTripAction(driverId, driverName, routeDate);
+        existingRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId), routeDate);
+        latestRoute = (existingRoutes && existingRoutes.length) ? existingRoutes[existingRoutes.length - 1] : null;
+        if (existingRoutes && existingRoutes.length > 0) {
+          var newSig = buildRoutePointsSignature(points);
+          var duplicateRouteId = null;
+          for (var ri = 0; ri < existingRoutes.length; ri++) {
+            var r = existingRoutes[ri];
+            if (!r || !Array.isArray(r.points)) continue;
+            if (buildRoutePointsSignature(r.points) === newSig) {
+              duplicateRouteId = r.id;
+              break;
+            }
+          }
+          var selected = await askExistingTripAction(driverName, routeDate, !!duplicateRouteId);
           if (!selected) return; // cancel
           saveMode = selected; // 'new' | 'edit'
         }
@@ -3016,7 +3028,9 @@
 
       // Save route based on selected mode, then mark completed
       var savedRoute;
-      if (saveMode === 'new' && window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
+      if (saveMode === 'edit' && latestRoute && window.VehiclesDB && window.VehiclesDB.updateRoutePoints) {
+        savedRoute = await window.VehiclesDB.updateRoutePoints(latestRoute.id, points);
+      } else if (window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
         savedRoute = await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId), routeDate, points);
       } else {
         savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
@@ -3059,7 +3073,28 @@
     }
   }
 
-  function askActiveTripAction(driverId, driverName, routeDate) {
+  function buildRoutePointIdentity(pt) {
+    if (!pt) return '';
+    return [
+      String(pt.address || '').trim().toLowerCase(),
+      String(pt.formattedAddress || '').trim().toLowerCase(),
+      String(pt.lat || ''),
+      String(pt.lng || ''),
+      pt.isSupplier ? 'supplier' : '',
+      pt.isPartner ? 'partner' : '',
+      String(pt.customer_order_id || ''),
+      String(pt.order_1c_id || ''),
+      String(pt.timeSlot || '')
+    ].join('|');
+  }
+
+  function buildRoutePointsSignature(points) {
+    if (!Array.isArray(points) || points.length === 0) return '';
+    var keys = points.map(buildRoutePointIdentity).sort();
+    return keys.join('||');
+  }
+
+  function askExistingTripAction(driverName, routeDate, isDuplicate) {
     return new Promise(function (resolve) {
       var existing = document.getElementById('dcActiveTripModal');
       if (existing) existing.remove();
@@ -3070,14 +3105,15 @@
       modal.style.cssText = 'z-index:10000;';
 
       modal.innerHTML = '<div class="modal-content" style="max-width:430px;">' +
-        '<h3 class="modal-title" style="margin-bottom:10px;text-align:center;">У водителя уже есть активный выезд</h3>' +
+        '<h3 class="modal-title" style="margin-bottom:10px;text-align:center;">У водителя уже есть выезд на эту дату</h3>' +
         '<div style="font-size:12px;color:#888;margin-bottom:12px;">' +
         'Водитель: <b style="color:#ddd;">' + escapeHtml(driverName) + '</b><br>' +
         'Дата: <b style="color:#ddd;">' + escapeHtml(routeDate) + '</b><br><br>' +
+        (isDuplicate ? '<span style="color:#f59e0b;">Похоже, такой маршрут уже сохранён.</span><br><br>' : '') +
         'Выберите действие:</div>' +
         '<div style="display:flex;flex-direction:column;gap:8px;">' +
         '<button class="btn btn-primary dc-trip-action-new" style="width:100%;">Сделать 2-й выезд</button>' +
-        '<button class="btn btn-outline dc-trip-action-edit" style="width:100%;">Редактировать текущий выезд</button>' +
+        '<button class="btn btn-outline dc-trip-action-edit" style="width:100%;">Редактировать последний выезд</button>' +
         '<button class="btn btn-outline dc-trip-action-cancel" style="width:100%;">Отмена</button>' +
         '</div></div>';
 
