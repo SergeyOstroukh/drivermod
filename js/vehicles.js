@@ -802,13 +802,26 @@
 			var allDone = trip.isCompleted || (trip.points.length > 0 && activeCount === 0);
 			var icon = allDone ? '\u2705' : '\uD83D\uDE97';
 			var statusText = trip.isCompleted ? 'завершён' : (allDone ? 'все точки пройдены' : activeCount + ' из ' + trip.points.length + ' активных');
+			var helperPt = trip.points.find(function (pt) { return pt.isKbtHelper && pt.mainDriverName; });
+			var isHelperTrip = !!helperPt;
 
 			html += '<details class="route-trip-details route-trip-card" ' + (allDone ? '' : 'open') + ' style="margin-bottom:12px;">';
-			html += '<summary class="route-trip-summary" style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;">';
+			html += '<summary class="route-trip-summary" style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
 			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
-			html += icon + ' Выезд ' + trip.tripNum + ' <span style="font-weight:400;color:#888;font-size:12px;">(' + statusText + ')</span>';
+			html += icon + ' Выезд ' + trip.tripNum;
+			if (isHelperTrip) {
+				html += ' <span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;margin-left:4px;">Помощник КБТ</span>';
+				html += ' <span style="font-size:12px;color:#a855f7;font-weight:600;">Вы помогаете: ' + helperPt.mainDriverName + '</span>';
+			}
+			html += ' <span style="font-weight:400;color:#888;font-size:12px;">(' + statusText + ')</span>';
 			html += '</summary>';
 			html += '<div style="padding-left:4px;">';
+
+			if (isHelperTrip) {
+				html += '<div style="background:rgba(168,85,247,0.15);border:1px solid #a855f7;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;color:#c084fc;">';
+				html += '<strong>Помощник КБТ</strong> — вы едете вместе с ' + helperPt.mainDriverName + ' для подъёма крупногабарита';
+				html += '</div>';
+			}
 
 			// Actions for active trip
 			if (!allDone) {
@@ -863,9 +876,11 @@
 		if (pt.formattedAddress) {
 			h += '<div class="route-point-faddr">' + pt.formattedAddress + '</div>';
 		}
-		if (pt.isKbt) {
+		if (pt.isKbt || pt.isKbtHelper) {
 			h += '<div class="route-point-kbt" style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap;">';
-			h += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:3px;">\uD83D\uDCE6 КБТ</span>';
+			if (pt.isKbt) {
+				h += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:3px;">\uD83D\uDCE6 КБТ</span>';
+			}
 			if (pt.isKbtHelper && pt.mainDriverName) {
 				h += '<span style="font-size:11px;color:#a855f7;font-weight:600;">Вы помогаете: ' + pt.mainDriverName + '</span>';
 			} else if (pt.helperDriverName) {
