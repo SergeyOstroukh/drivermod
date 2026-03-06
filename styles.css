@@ -76,6 +76,11 @@ body {
 .section-header {
 	margin-bottom: 16px;
 }
+.inwork-subtab.active {
+	background: rgba(16, 185, 129, 0.15);
+	border-color: var(--accent);
+	color: var(--accent);
+}
 .header h1 {
 	margin: 0;
 	font-size: 18px;

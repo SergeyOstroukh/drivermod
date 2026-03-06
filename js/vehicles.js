@@ -54,9 +54,9 @@
 		// Скрываем все разделы (основные + подсекции)
 		const allSections = [
 			"suppliersSection", "partnersSection", "driversSection", "vehiclesSection",
-			"orders1cSection",
+			"orders1cSection", "inworkSection",
 			"historySection", "mileageSection", "maintenanceSection",
-			"distributionSection", "driverRouteSection", "distributedSuppliersSection", "scheduleSection"
+			"distributionSection", "driverRouteSection", "scheduleSection"
 		];
 		allSections.forEach(sectionId => {
 			const sec = document.getElementById(sectionId);
@@ -86,6 +86,7 @@
 			drivers: "Водители",
 			vehicles: "Автомобили",
 			orders1c: "Заказы из 1С",
+			inwork: "В работе",
 			distribution: "Распределение маршрутов"
 		};
 		const pageTitle = document.getElementById("pageTitle");
@@ -150,7 +151,17 @@
 			if (currentRole === "driver" && currentDriverData) {
 				setTimeout(function () { openDriverRoute(currentDriverData); }, 100);
 			}
-		} else if (section === "partners") {
+		} else if (section === "inwork") {
+			_distributedSectionOpen = true;
+			if (!_distributedFilterDate) _distributedFilterDate = getTodayLocalDateString();
+			var df = document.getElementById("distributedDateFilter");
+			if (df) df.value = _distributedFilterDate;
+			loadDistributedHistoryForDate(_distributedFilterDate).then(function () { renderDistributedSuppliers(); });
+			switchInworkSubtab(_inworkSubTab || 'suppliers');
+		} else {
+			_distributedSectionOpen = false;
+		}
+		if (section === "partners") {
 			if (window.PartnersUI && window.PartnersUI.onSectionActivated) {
 				window.PartnersUI.onSectionActivated();
 			}
@@ -2905,16 +2916,14 @@
 			});
 		}
 
-		// ---- Распределённые поставщики ----
-		const openDistributedBtn = document.getElementById("openDistributedBtn");
-		if (openDistributedBtn) {
-			openDistributedBtn.addEventListener("click", openDistributedSuppliers);
-		}
-
-		const backFromDistributedBtn = document.getElementById("backFromDistributedBtn");
-		if (backFromDistributedBtn) {
-			backFromDistributedBtn.addEventListener("click", closeDistributedSuppliers);
-		}
+		// ---- В работе: подвкладки ----
+		var inworkSubtabBtns = document.querySelectorAll(".inwork-subtab");
+		inworkSubtabBtns.forEach(function (btn) {
+			btn.addEventListener("click", function () {
+				var sub = btn.dataset.subtab;
+				if (sub) switchInworkSubtab(sub);
+			});
+		});
 
 		const distributedDriverFilter = document.getElementById("distributedDriverFilter");
 		if (distributedDriverFilter) {
@@ -2944,6 +2953,32 @@
 		const distributedExportBtn = document.getElementById("distributedExportBtn");
 		if (distributedExportBtn) {
 			distributedExportBtn.addEventListener("click", downloadDistributedSuppliersCsv);
+		}
+
+		// ---- Заказы / движки (фильтры) ----
+		var deliveriesDateFilter = document.getElementById("deliveriesDateFilter");
+		if (deliveriesDateFilter) {
+			if (!_deliveriesFilterDate) _deliveriesFilterDate = getTodayLocalDateString();
+			deliveriesDateFilter.value = _deliveriesFilterDate;
+			deliveriesDateFilter.addEventListener("change", async function () {
+				_deliveriesFilterDate = this.value || getTodayLocalDateString();
+				await loadDistributedDeliveriesForDate(_deliveriesFilterDate);
+				renderDistributedDeliveries();
+			});
+		}
+		var deliveriesDriverFilter = document.getElementById("deliveriesDriverFilter");
+		if (deliveriesDriverFilter) {
+			deliveriesDriverFilter.addEventListener("change", function () {
+				_deliveriesFilterDriverId = this.value;
+				renderDistributedDeliveries();
+			});
+		}
+		var deliveriesStatusFilter = document.getElementById("deliveriesStatusFilter");
+		if (deliveriesStatusFilter) {
+			deliveriesStatusFilter.addEventListener("change", function () {
+				_deliveriesFilterStatus = this.value;
+				renderDistributedDeliveries();
+			});
 		}
 
 		// Восстановление сессии при загрузке страницы
@@ -3760,6 +3795,15 @@
 	let _distributedHistoryDate = '';
 	let _distributedHistoryLoading = false;
 	let _distributedHistoryError = '';
+	let _inworkSubTab = 'suppliers';
+
+	let _deliveriesRows = [];
+	let _deliveriesDate = '';
+	let _deliveriesLoading = false;
+	let _deliveriesError = '';
+	let _deliveriesFilterDriverId = '';
+	let _deliveriesFilterStatus = '';
+	let _deliveriesFilterDate = '';
 
 	function getTodayLocalDateString() {
 		const now = new Date();
@@ -4067,37 +4111,25 @@
 		URL.revokeObjectURL(url);
 	}
 
-	function openDistributedSuppliers() {
-		const section = document.getElementById("distributedSuppliersSection");
-		const driversSection = document.getElementById("driversSection");
-		if (!section) return;
-
-		if (driversSection) driversSection.style.display = "none";
-		section.style.display = "block";
-		section.classList.add("active");
-		_distributedSectionOpen = true;
-		if (!_distributedFilterDate) _distributedFilterDate = getTodayLocalDateString();
-		const distributedDateFilter = document.getElementById("distributedDateFilter");
-		if (distributedDateFilter) distributedDateFilter.value = _distributedFilterDate;
-
-		loadDistributedHistoryForDate(_distributedFilterDate).then(function () {
-			renderDistributedSuppliers();
+	function switchInworkSubtab(subtab) {
+		_inworkSubTab = subtab || 'suppliers';
+		var suppliersPanel = document.getElementById("inworkSuppliersPanel");
+		var deliveriesPanel = document.getElementById("inworkDeliveriesPanel");
+		document.querySelectorAll(".inwork-subtab").forEach(function (btn) {
+			btn.classList.toggle("active", btn.dataset.subtab === _inworkSubTab);
 		});
+		if (suppliersPanel) suppliersPanel.style.display = _inworkSubTab === 'suppliers' ? 'block' : 'none';
+		if (deliveriesPanel) deliveriesPanel.style.display = _inworkSubTab === 'deliveries' ? 'block' : 'none';
+		if (_inworkSubTab === 'deliveries') {
+			if (!_deliveriesFilterDate) _deliveriesFilterDate = getTodayLocalDateString();
+			var df = document.getElementById("deliveriesDateFilter");
+			if (df) df.value = _deliveriesFilterDate;
+			loadDistributedDeliveriesForDate(_deliveriesFilterDate).then(function () { renderDistributedDeliveries(); });
+		}
 	}
 
-	function closeDistributedSuppliers() {
-		const section = document.getElementById("distributedSuppliersSection");
-		const driversSection = document.getElementById("driversSection");
-		_distributedSectionOpen = false;
-
-		if (section) {
-			section.style.display = "none";
-			section.classList.remove("active");
-		}
-		if (driversSection) {
-			driversSection.style.display = "block";
-			driversSection.classList.add("active");
-		}
+	function openDistributedSuppliers() {
+		if (typeof switchSection === 'function') switchSection('inwork');
 	}
 
 	function renderDistributedSuppliers() {
@@ -4237,7 +4269,157 @@
 		if (_distributedSectionOpen && (_distributedFilterDate || getTodayLocalDateString()) === getTodayLocalDateString()) {
 			renderDistributedSuppliers();
 		}
+		if (_inworkSubTab === 'deliveries' && (_deliveriesFilterDate || getTodayLocalDateString()) === getTodayLocalDateString()) {
+			loadDistributedDeliveriesForDate(_deliveriesFilterDate).then(function () { renderDistributedDeliveries(); });
+		}
 	};
+
+	// ============================================
+	// ЗАКАЗЫ / ДВИЖКИ (адреса и партнёры с распределения, не из 1С)
+	// ============================================
+
+	async function loadDistributedDeliveriesForDate(routeDate) {
+		var targetDate = routeDate || getTodayLocalDateString();
+		if (!window.VehiclesDB || !window.VehiclesDB.getRoutesByDate) {
+			_deliveriesRows = [];
+			_deliveriesDate = '';
+			_deliveriesError = 'История маршрутов недоступна';
+			_deliveriesLoading = false;
+			return;
+		}
+		_deliveriesLoading = true;
+		_deliveriesDate = '';
+		_deliveriesError = '';
+		if (_inworkSubTab === 'deliveries') renderDistributedDeliveries();
+		try {
+			var routes = await window.VehiclesDB.getRoutesByDate(targetDate);
+			var rows = [];
+			(routes || []).forEach(function (route) {
+				var points = Array.isArray(route.points) ? route.points : [];
+				points.forEach(function (pt) {
+					if (!pt || pt.isSupplier) return;
+					if (pt.order_1c_id || pt.customer_order_id) return;
+					var typeLabel = pt.isPartner ? 'Партнёр' : 'Адрес';
+					var statusLabel = pt.status === 'in_delivery' ? 'В пути' : (pt.status === 'completed' || pt.status === 'delivered' ? 'Доставлен' : (pt.status === 'picked_up' ? 'Забран' : (pt.status === 'cancelled' ? 'Отменён' : 'В маршруте')));
+					rows.push({
+						address: pt.address || '',
+						typeLabel: typeLabel,
+						driverName: route.driver && route.driver.name ? route.driver.name : null,
+						driverId: route.driver_id || null,
+						timeSlot: pt.timeSlot || '',
+						phone: pt.phone || '',
+						status: pt.status || 'assigned',
+						routeId: route.id,
+					});
+				});
+			});
+			_deliveriesRows = rows;
+			_deliveriesDate = targetDate;
+		} catch (err) {
+			console.error('Ошибка загрузки заказов/движков:', err);
+			_deliveriesRows = [];
+			_deliveriesDate = '';
+			_deliveriesError = (err && err.message) ? err.message : 'Ошибка загрузки данных';
+		} finally {
+			_deliveriesLoading = false;
+		}
+	}
+
+	function renderDistributedDeliveries() {
+		var tbody = document.getElementById("deliveriesTableBody");
+		var driverSelect = document.getElementById("deliveriesDriverFilter");
+		if (!tbody) return;
+
+		var selectedDate = _deliveriesFilterDate || getTodayLocalDateString();
+		if (_deliveriesLoading) {
+			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">Загрузка данных за ' + selectedDate + '...</td></tr>';
+			return;
+		}
+		if (_deliveriesError && _deliveriesDate !== selectedDate) {
+			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#ef4444;">Ошибка: ' + _deliveriesError + '</td></tr>';
+			return;
+		}
+
+		var rows = _deliveriesRows.slice();
+		var driverIds = {};
+		rows.forEach(function (r) {
+			if (r.driverId && r.driverName) driverIds[String(r.driverId)] = { id: r.driverId, name: r.driverName };
+		});
+		var allDrivers = Object.keys(driverIds).map(function (k) { return driverIds[k]; });
+
+		if (driverSelect) {
+			var prev = _deliveriesFilterDriverId;
+			driverSelect.innerHTML = '<option value="">Все водители</option>';
+			allDrivers.forEach(function (d) {
+				var opt = document.createElement('option');
+				opt.value = d.id;
+				opt.textContent = d.name;
+				if (String(d.id) === String(prev)) opt.selected = true;
+				driverSelect.appendChild(opt);
+			});
+		}
+
+		if (_deliveriesFilterDriverId) {
+			rows = rows.filter(function (r) { return String(r.driverId) === String(_deliveriesFilterDriverId); });
+		}
+		if (_deliveriesFilterStatus) {
+			rows = rows.filter(function (r) {
+				if (_deliveriesFilterStatus === 'assigned') return !r.status || r.status === 'assigned';
+				if (_deliveriesFilterStatus === 'in_delivery') return r.status === 'in_delivery';
+				if (_deliveriesFilterStatus === 'completed' || _deliveriesFilterStatus === 'delivered') return r.status === 'completed' || r.status === 'delivered';
+				if (_deliveriesFilterStatus === 'picked_up') return r.status === 'picked_up';
+				if (_deliveriesFilterStatus === 'cancelled') return r.status === 'cancelled';
+				return true;
+			});
+		}
+
+		rows.sort(function (a, b) {
+			var da = (a.driverName || 'яяя').toLowerCase();
+			var db = (b.driverName || 'яяя').toLowerCase();
+			if (da < db) return -1;
+			if (da > db) return 1;
+			return (a.address || '').localeCompare(b.address || '', 'ru');
+		});
+
+		if (rows.length === 0) {
+			tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);">' +
+				(_deliveriesRows.length === 0 ? 'Нет заказов/движков (адреса и партнёры с страницы распределения)' : 'Нет по фильтру') + '</td></tr>';
+			return;
+		}
+
+		tbody.innerHTML = '';
+		rows.forEach(function (row, i) {
+			var tr = document.createElement('tr');
+			var tdNum = document.createElement('td');
+			tdNum.textContent = i + 1;
+			tdNum.style.color = 'var(--muted)';
+			var tdAddr = document.createElement('td');
+			tdAddr.textContent = row.address;
+			tdAddr.style.fontWeight = '500';
+			var tdType = document.createElement('td');
+			tdType.textContent = row.typeLabel;
+			tdType.style.color = 'var(--muted)';
+			var tdDriver = document.createElement('td');
+			tdDriver.textContent = row.driverName || '—';
+			var tdStatus = document.createElement('td');
+			var s = row.status;
+			if (s === 'completed' || s === 'delivered') tdStatus.innerHTML = '<span style="color:#22c55e;">Доставлен</span>';
+			else if (s === 'picked_up') tdStatus.innerHTML = '<span style="color:#22c55e;">Забран</span>';
+			else if (s === 'cancelled') tdStatus.innerHTML = '<span style="color:#ef4444;">Отменён</span>';
+			else if (s === 'in_delivery') tdStatus.innerHTML = '<span style="color:#f59e0b;">В пути</span>';
+			else tdStatus.innerHTML = '<span style="color:var(--muted);">В маршруте</span>';
+			var tdTime = document.createElement('td');
+			tdTime.textContent = row.timeSlot || '—';
+			tdTime.style.color = 'var(--muted)';
+			tr.appendChild(tdNum);
+			tr.appendChild(tdAddr);
+			tr.appendChild(tdType);
+			tr.appendChild(tdDriver);
+			tr.appendChild(tdStatus);
+			tr.appendChild(tdTime);
+			tbody.appendChild(tr);
+		});
+	}
 
 	// Expose functions needed by inline HTML handlers
 	window.closeDriverRoute = closeDriverRoute;
