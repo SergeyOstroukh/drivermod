@@ -659,6 +659,7 @@
 
 	async function openDriverRoute(driver) {
 		currentRouteDriverId = driver.id;
+		driverRouteViewTab = 'delivery';
 		const section = document.getElementById("driverRouteSection");
 		if (!section) return;
 
@@ -702,6 +703,7 @@
 
 	let currentRoutesData = []; // массив маршрутов (выездов) из БД
 	let showCompletedPoints = false;
+	let driverRouteViewTab = 'delivery'; // 'delivery' | 'suppliers'
 
 	function renderDriverRoutes(routes) {
 		const listEl = document.getElementById("driverRouteList");
@@ -715,11 +717,12 @@
 			return;
 		}
 
-		// Collect suppliers from all routes (separate section, deduplicated)
+		// Collect suppliers and deliveries from all routes
 		var allSuppliers = [];
 		var seenSupplierKeys = {};
 		var trips = []; // { route, points (address-only), tripNum, isCompleted }
-		var allActiveMapPoints = [];
+		var supplierMapPoints = [];
+		var deliveryMapPoints = [];
 
 		currentRoutesData.forEach(function (route, ri) {
 			var pts = (route.points || []).slice();
@@ -730,7 +733,11 @@
 				var key = (s.address || '') + '|' + (s.lat || '') + '|' + (s.lng || '');
 				if (seenSupplierKeys[key]) return; // skip duplicates across routes
 				seenSupplierKeys[key] = true;
-				allSuppliers.push(Object.assign({}, s, { _routeId: route.id, _routeIdx: ri, _ptIdx: pts.indexOf(s) }));
+				var sup = Object.assign({}, s, { _routeId: route.id, _routeIdx: ri, _ptIdx: pts.indexOf(s) });
+				allSuppliers.push(sup);
+				if (sup.lat && sup.lng) {
+					supplierMapPoints.push(Object.assign({}, sup, { _completed: sup.status === 'picked_up' || sup.status === 'cancelled' || sup.status === 'completed' }));
+				}
 			});
 
 			trips.push({
@@ -741,15 +748,20 @@
 				isCompleted: route.status === 'completed',
 			});
 
-			// All points for the map (all trips, including completed)
+			// Delivery points for map
 			addresses.forEach(function (pt) {
 				if (pt.lat && pt.lng) {
-					allActiveMapPoints.push(Object.assign({}, pt, { _completed: pt.status === 'completed' || pt.status === 'delivered' || pt.status === 'cancelled' }));
+					deliveryMapPoints.push(Object.assign({}, pt, { _completed: pt.status === 'completed' || pt.status === 'delivered' || pt.status === 'cancelled' }));
 				}
 			});
 		});
 
 		var html = '';
+		html += '<div style="display:flex;gap:6px;margin-bottom:10px;">';
+		html += '<button type="button" class="btn btn-outline btn-sm driver-route-view-tab' + (driverRouteViewTab === 'delivery' ? ' active' : '') + '" data-view-tab="delivery">Доставка (' + deliveryMapPoints.length + ')</button>';
+		html += '<button type="button" class="btn btn-outline btn-sm driver-route-view-tab' + (driverRouteViewTab === 'suppliers' ? ' active' : '') + '" data-view-tab="suppliers">Поставщики (' + allSuppliers.length + ')</button>';
+		html += '</div>';
+
 		var has1COrders = currentRoutesData.some(function (r) {
 			return (r.points || []).some(function (pt) { return (pt.order_1c_id || pt.customer_order_id); });
 		});
@@ -758,15 +770,15 @@
 				return (pt.order_1c_id || pt.customer_order_id) && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled';
 			});
 		});
-		if (any1CNotStarted) {
+		if (driverRouteViewTab === 'delivery' && any1CNotStarted) {
 			html += '<div style="margin-bottom:12px;">';
 			html += '<button type="button" class="btn btn-primary route-start-1c-btn">Начать задание</button>';
 			html += '<span style="font-size:12px;color:var(--muted);margin-left:8px;">Переведёт все заказы 1С в статус «В доставке»</span>';
 			html += '</div>';
 		}
 
-		// ── Suppliers section ──
-		if (allSuppliers.length > 0) {
+		// ── Suppliers view ──
+		if (driverRouteViewTab === 'suppliers' && allSuppliers.length > 0) {
 			var activeSup = allSuppliers.filter(function (s) { return s.status !== 'completed' && s.status !== 'picked_up' && s.status !== 'cancelled'; }).length;
 			html += '<details class="route-trip-details route-trip-card" open style="margin-bottom:12px;">';
 			html += '<summary class="route-trip-summary" style="color:#10b981;font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;">';
@@ -781,8 +793,8 @@
 			html += '</div></details>';
 		}
 
-		// ── Trips (Выезды) ──
-		trips.forEach(function (trip) {
+		// ── Delivery view (Trips) ──
+		if (driverRouteViewTab === 'delivery') trips.forEach(function (trip) {
 			if (trip.points.length === 0 && !trip.isCompleted) return;
 			var activeCount = trip.points.filter(function (pt) {
 				return pt.status !== 'completed' && pt.status !== 'delivered' && pt.status !== 'cancelled';
@@ -819,7 +831,7 @@
 			html += '</div></details>';
 		});
 
-		if (trips.length === 0 && allSuppliers.length === 0) {
+		if ((driverRouteViewTab === 'delivery' && trips.length === 0) || (driverRouteViewTab === 'suppliers' && allSuppliers.length === 0)) {
 			html += '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg><p>На сегодня маршрут не назначен</p></div>';
 		}
 
@@ -837,8 +849,8 @@
 		// Bind events
 		bindRouteEvents();
 
-		// Init or update route map (show only active address points)
-		initDriverRouteMap(allActiveMapPoints, mapEl);
+		// Init/update route map by active tab
+		initDriverRouteMap(driverRouteViewTab === 'suppliers' ? supplierMapPoints : deliveryMapPoints, mapEl);
 	}
 
 	function renderRoutePointHtml(pt, num, isLast, routeId, ptIndex) {
@@ -918,6 +930,15 @@
 	}
 
 	function bindRouteEvents() {
+		document.querySelectorAll('.driver-route-view-tab').forEach(function (btn) {
+			btn.addEventListener('click', function () {
+				var tab = btn.dataset.viewTab;
+				if (!tab || tab === driverRouteViewTab) return;
+				driverRouteViewTab = tab;
+				renderDriverRoutes(currentRoutesData);
+			});
+		});
+
 		// Complete point buttons
 		document.querySelectorAll('.route-complete-btn').forEach(function (btn) {
 			btn.addEventListener('click', async function () {
