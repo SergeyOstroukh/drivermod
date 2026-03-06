@@ -2829,7 +2829,7 @@
       // KBT: also add this point to the helper driver's route
       if (order.isKbt && order.helperDriverSlot != null) {
         var helperDriverId = dbDrivers[order.helperDriverSlot] ? dbDrivers[order.helperDriverSlot].id : null;
-        if (helperDriverId && helperDriverId !== driverId) {
+        if (helperDriverId && String(helperDriverId) !== String(driverId)) {
           if (!routesByDriver[helperDriverId]) {
             routesByDriver[helperDriverId] = [];
           }
@@ -3124,12 +3124,12 @@
       // KBT с помощником: сохранить маршрут помощнику
       var kbtWithHelper = orders.filter(function (o, i) {
         if (!o.isKbt || o.helperDriverSlot == null) return false;
-        if (getOrderDriverId(i) !== driverId) return false;
+        if (String(getOrderDriverId(i)) !== String(driverId)) return false;
         return true;
       });
       if (kbtWithHelper.length > 0) {
         var helperDriverId = dbDrivers[kbtWithHelper[0].helperDriverSlot] ? dbDrivers[kbtWithHelper[0].helperDriverSlot].id : null;
-        if (helperDriverId && helperDriverId !== driverId) {
+        if (helperDriverId && String(helperDriverId) !== String(driverId)) {
           var helperPoints = kbtWithHelper.map(function (o, qi) {
             return {
               address: o.address,
