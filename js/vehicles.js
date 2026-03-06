@@ -881,8 +881,8 @@
 		}
 		// Статусы для ВСЕХ точек маршрута: поставщики, заказы 1С, адреса
 		var s = pt.status || 'assigned';
-		if (pt.isSupplier || pt.isPartner) {
-			var typeLabel = pt.isSupplier ? 'Поставщик' : 'Партнёр';
+		if (pt.isSupplier) {
+			var typeLabel = 'Поставщик';
 			var statusLabel = s === 'at_supplier' ? 'У поставщика' : (s === 'picked_up' ? 'Забран' : (s === 'cancelled' ? 'Отменён' : 'В маршруте'));
 			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
 			h += '<span style="font-size:11px;color:#888;">' + typeLabel + ' — ' + statusLabel + '</span>';
@@ -890,6 +890,16 @@
 				h += '<button type="button" class="btn btn-outline btn-sm route-supplier-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="at_supplier">У поставщика</button>';
 				h += '<button type="button" class="btn btn-primary btn-sm route-supplier-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="picked_up">Забран</button>';
 				h += '<button type="button" class="btn btn-outline btn-sm route-supplier-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
+			}
+			h += '</div>';
+		} else if (pt.isPartner) {
+			var partnerStatusLabel = s === 'in_delivery' ? 'В доставке' : ((s === 'delivered' || s === 'picked_up') ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'В маршруте'));
+			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+			h += '<span style="font-size:11px;color:#888;">Партнёр — ' + partnerStatusLabel + '</span>';
+			if (s !== 'delivered' && s !== 'cancelled') {
+				h += '<button type="button" class="btn btn-outline btn-sm route-partner-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В доставке</button>';
+				h += '<button type="button" class="btn btn-primary btn-sm route-partner-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="delivered">Доставлен</button>';
+				h += '<button type="button" class="btn btn-outline btn-sm route-partner-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
 			}
 			h += '</div>';
 		} else if (pt.order_1c_id || pt.customer_order_id) {
@@ -965,6 +975,14 @@
 				var ptIndex = parseInt(btn.dataset.ptIndex);
 				var newStatus = btn.dataset.status;
 				await setSupplierPointStatus(routeId, ptIndex, newStatus);
+			});
+		});
+		document.querySelectorAll('.route-partner-status-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var routeId = btn.dataset.routeId;
+				var ptIndex = parseInt(btn.dataset.ptIndex);
+				var newStatus = btn.dataset.status;
+				await setPartnerPointStatus(routeId, ptIndex, newStatus);
 			});
 		});
 
@@ -1092,7 +1110,7 @@
 		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
 		if (!route || !route.points) return;
 		var pt = route.points[ptIndex];
-		if (!pt || (!pt.isSupplier && !pt.isPartner)) return;
+		if (!pt || !pt.isSupplier) return;
 		var newPoints = route.points.map(function (p, i) {
 			return i === ptIndex ? Object.assign({}, p, { status: newStatus }) : p;
 		});
@@ -1104,6 +1122,26 @@
 			renderDriverRoutes(currentRoutesData);
 		} catch (err) {
 			console.error('Ошибка обновления статуса поставщика:', err);
+			alert('Не удалось обновить статус: ' + err.message);
+		}
+	}
+
+	async function setPartnerPointStatus(routeId, ptIndex, newStatus) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points) return;
+		var pt = route.points[ptIndex];
+		if (!pt || !pt.isPartner) return;
+		var newPoints = route.points.map(function (p, i) {
+			return i === ptIndex ? Object.assign({}, p, { status: newStatus }) : p;
+		});
+		try {
+			var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
+			currentRoutesData = currentRoutesData.map(function (r) {
+				return String(r.id) === String(routeId) ? updated : r;
+			});
+			renderDriverRoutes(currentRoutesData);
+		} catch (err) {
+			console.error('Ошибка обновления статуса партнёра:', err);
 			alert('Не удалось обновить статус: ' + err.message);
 		}
 	}
