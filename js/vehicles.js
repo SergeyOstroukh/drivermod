@@ -2954,6 +2954,12 @@
 		if (distributedExportBtn) {
 			distributedExportBtn.addEventListener("click", downloadDistributedSuppliersCsv);
 		}
+		var inworkRestoreSuppliersBtn = document.getElementById("inworkRestoreSuppliersBtn");
+		if (inworkRestoreSuppliersBtn) {
+			inworkRestoreSuppliersBtn.addEventListener("click", function () {
+				restoreInworkPointsToMap('suppliers');
+			});
+		}
 
 		// ---- Заказы / движки (фильтры) ----
 		var deliveriesDateFilter = document.getElementById("deliveriesDateFilter");
@@ -2978,6 +2984,12 @@
 			deliveriesStatusFilter.addEventListener("change", function () {
 				_deliveriesFilterStatus = this.value;
 				renderDistributedDeliveries();
+			});
+		}
+		var inworkRestoreDeliveriesBtn = document.getElementById("inworkRestoreDeliveriesBtn");
+		if (inworkRestoreDeliveriesBtn) {
+			inworkRestoreDeliveriesBtn.addEventListener("click", function () {
+				restoreInworkPointsToMap('deliveries');
 			});
 		}
 
@@ -4130,6 +4142,32 @@
 
 	function openDistributedSuppliers() {
 		if (typeof switchSection === 'function') switchSection('inwork');
+	}
+
+	async function restoreInworkPointsToMap(kind) {
+		if (!window.DistributionUI || typeof window.DistributionUI.restoreFromHistoryToMap !== 'function') {
+			alert('Восстановление недоступно: откройте вкладку "Распределение" и попробуйте снова');
+			return;
+		}
+		if (typeof switchSection === 'function') {
+			switchSection('distribution');
+		}
+		var isSuppliers = kind === 'suppliers';
+		var targetDate = isSuppliers
+			? (_distributedFilterDate || getTodayLocalDateString())
+			: (_deliveriesFilterDate || getTodayLocalDateString());
+		var targetDriverId = isSuppliers ? _distributedFilterDriverId : _deliveriesFilterDriverId;
+		try {
+			var res = await window.DistributionUI.restoreFromHistoryToMap(targetDate, {
+				includeSuppliers: isSuppliers,
+				includeDeliveries: !isSuppliers,
+				include1C: false,
+				driverId: targetDriverId || null,
+			});
+		} catch (err) {
+			console.error('Ошибка восстановления точек на карту:', err);
+			alert('Не удалось восстановить точки: ' + (err && err.message ? err.message : 'неизвестная ошибка'));
+		}
 	}
 
 	function renderDistributedSuppliers() {

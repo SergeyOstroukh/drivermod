@@ -5006,12 +5006,124 @@
     loadAddresses(false);
   }
 
+  async function restoreFromHistoryToMap(routeDate, options) {
+    var opts = options || {};
+    var includeSuppliers = opts.includeSuppliers !== false;
+    var includeDeliveries = opts.includeDeliveries !== false;
+    var include1C = !!opts.include1C;
+    var filterDriverId = opts.driverId != null ? String(opts.driverId) : '';
+    if (!window.VehiclesDB || !window.VehiclesDB.getRoutesByDate) {
+      showToast('История маршрутов недоступна', 'error');
+      return { added: 0, skipped: 0 };
+    }
+    var targetDate = routeDate || getStateDateKey();
+    var routes = await window.VehiclesDB.getRoutesByDate(targetDate);
+    var existingKeys = {};
+    orders.forEach(function (o) {
+      var key = [
+        o.address || '',
+        o.lat || '',
+        o.lng || '',
+        o.isSupplier ? 'supplier' : (o.isPartner ? 'partner' : 'address'),
+        o.customer_order_id || '',
+        o.order_1c_id || ''
+      ].join('|');
+      existingKeys[key] = true;
+    });
+
+    var restored = [];
+    var skipped = 0;
+    var seq = Date.now();
+    (routes || []).forEach(function (route) {
+      if (filterDriverId && String(route.driver_id || '') !== filterDriverId) return;
+      var points = Array.isArray(route.points) ? route.points : [];
+      points.forEach(function (pt, pi) {
+        if (!pt || pt.isPoi) return;
+        var isSupplier = !!pt.isSupplier;
+        var is1C = !!(pt.order_1c_id || pt.customer_order_id);
+        if (isSupplier && !includeSuppliers) return;
+        if (!isSupplier && !is1C && !includeDeliveries) return;
+        if (is1C && !include1C) return;
+
+        var key = [
+          pt.address || '',
+          pt.lat || '',
+          pt.lng || '',
+          isSupplier ? 'supplier' : (pt.isPartner ? 'partner' : 'address'),
+          pt.customer_order_id || '',
+          pt.order_1c_id || ''
+        ].join('|');
+        if (existingKeys[key]) {
+          skipped++;
+          return;
+        }
+        existingKeys[key] = true;
+
+        var o = {
+          id: 'restored-' + (route.id || 'r') + '-' + pi + '-' + (seq++),
+          address: pt.address || '',
+          phone: pt.phone || '',
+          timeSlot: pt.timeSlot || null,
+          geocoded: !!(pt.lat && pt.lng),
+          lat: pt.lat || null,
+          lng: pt.lng || null,
+          formattedAddress: pt.formattedAddress || null,
+          error: null,
+          assignedDriverId: route.driver_id || null,
+          status: pt.status || 'assigned',
+        };
+        if (isSupplier) {
+          o.isSupplier = true;
+          o.supplierName = pt.address || '';
+          o.telegramSent = !!pt.telegramSent;
+          o.telegramStatus = pt.telegramStatus || null;
+          o.items1c = pt.items1c || null;
+          o.itemsSent = !!pt.itemsSent;
+          o.itemsSentText = pt.itemsSentText || null;
+        }
+        if (pt.isPartner) {
+          o.isPartner = true;
+          o.partnerName = pt.partnerName || pt.address || null;
+        }
+        if (pt.isKbt) {
+          o.isKbt = true;
+          o.helperDriverName = pt.helperDriverName || null;
+          o.helperDriverId = pt.helperDriverId || null;
+        }
+        if (is1C) {
+          o.customer_order_id = pt.customer_order_id || null;
+          o.order_1c_id = pt.order_1c_id || '';
+        }
+        restored.push(o);
+      });
+    });
+
+    if (restored.length === 0) {
+      showToast('Новых точек для восстановления не найдено');
+      return { added: 0, skipped: skipped };
+    }
+
+    orders = orders.concat(restored);
+    if (assignments) {
+      for (var i = 0; i < restored.length; i++) assignments.push(-1);
+    }
+    variants = [];
+    activeVariant = -1;
+    _fitBoundsNext = true;
+    markLocalMutation();
+    saveState();
+    renderAll();
+    showToast('Восстановлено точек: ' + restored.length + (skipped > 0 ? ' (пропущено дублей: ' + skipped + ')' : ''));
+    return { added: restored.length, skipped: skipped };
+  }
+
   window.DistributionUI = {
     onSectionActivated: onSectionActivated,
     getDistributedSuppliers: getDistributedSuppliers,
     getDistributionDrivers: getDistributionDrivers,
     getSupplierItems: getSupplierItems,
     applyPending1COrders: applyPending1COrders,
+    restoreFromHistoryToMap: restoreFromHistoryToMap,
   };
 
   // Auto-init if section is already visible
