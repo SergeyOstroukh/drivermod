@@ -2833,7 +2833,7 @@
           if (!routesByDriver[helperDriverId]) {
             routesByDriver[helperDriverId] = [];
           }
-          var mainDriver = dbDrivers.find(function (d) { return d.id === driverId; });
+          var mainDriver = dbDrivers.find(function (d) { return String(d.id) === String(driverId); });
           routesByDriver[helperDriverId].push({
             address: order.address,
             lat: order.lat,
@@ -2844,7 +2844,7 @@
             orderNum: routesByDriver[helperDriverId].length + 1,
             isKbt: true,
             isKbtHelper: true,
-            mainDriverName: mainDriver ? mainDriver.name : getDriverName(slot),
+            mainDriverName: mainDriver ? mainDriver.name : getDriverNameById(driverId),
             mainDriverId: driverId,
           });
         }
@@ -2868,6 +2868,7 @@
       var savedRoutes = await window.VehiclesDB.saveDriverRoutes(routes);
       if (savedRoutes && savedRoutes.length) {
         var client = getSupabaseClient();
+        var config = window.SUPABASE_CONFIG || {};
         if (client) {
           for (var ri = 0; ri < savedRoutes.length; ri++) {
             var r = savedRoutes[ri];
@@ -2880,6 +2881,14 @@
                   driver_route_id: r.id,
                   status: 'in_delivery',
                 }).eq('id', pt.customer_order_id);
+              }
+              if (pt.order_1c_id) {
+                var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+                if (fnUrl && fnUrl.indexOf('http') === 0) {
+                  var hdrs = { 'Content-Type': 'application/json' };
+                  if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
+                  fetch(fnUrl, { method: 'POST', headers: hdrs, body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+                }
               }
             }
           }
@@ -3009,10 +3018,8 @@
         modal.remove();
         var driverId = btn.dataset.driverId;
         if (driverId === '__all__') {
-          var driverIds = Object.keys(driverAddrCounts);
-          for (var i = 0; i < driverIds.length; i++) {
-            await finishDriverRoute(driverIds[i]);
-          }
+          // Batch: сохраняет маршруты ВСЕХ водителей включая КБТ-помощников (у них 0 своих адресов)
+          await finishDistribution();
         } else {
           await finishDriverRoute(driverId);
         }
