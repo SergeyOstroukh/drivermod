@@ -2376,11 +2376,15 @@ body {
 	gap: 0;
 }
 
-/* Trip details (multi-trip) */
+/* Trip details (multi-trip) — карточки маршрутов */
 .route-trip-details {
 	border: 1px solid var(--border);
-	border-radius: 10px;
+	border-radius: 12px;
 	overflow: hidden;
+}
+.route-trip-card {
+	background: var(--card);
+	box-shadow: 0 2px 8px rgba(0,0,0,0.15);
 }
 .route-trip-details[open] > summary span:first-child {
 	transform: rotate(90deg);

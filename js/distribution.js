@@ -1423,14 +1423,10 @@
     showToast('Назначено точек: ' + assignedCount);
   }
 
-  // Debounced auto-sync: batches rapid assignments into one DB call per driver
-  var _syncTimers = {};
+  // Маршруты синхронизируются с БД только при нажатии «Завершить маршрут».
+  // При назначении водителя на карте / из заказов 1С — назначение остаётся в памяти до «Завершить».
   function scheduleSyncDriver(driverId) {
-    if (_syncTimers[driverId]) clearTimeout(_syncTimers[driverId]);
-    _syncTimers[driverId] = setTimeout(function () {
-      delete _syncTimers[driverId];
-      syncDriverToDb(driverId);
-    }, 1500);
+    // no-op: не отправляем в БД до явного «Завершить маршрут»
   }
 
   async function syncDriverToDb(driverId) {
@@ -2887,14 +2883,8 @@
 
     renderAll();
 
-    if (points.length === 0) return;
-
-    try {
-      await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
-      showToast('Маршрут ' + driverName + ' обновлён');
-    } catch (err) {
-      showToast('Ошибка синхронизации: ' + err.message, 'error');
-    }
+    // Маршрут сохраняется в БД только при «Завершить маршрут», не при выходе из режима редактирования
+    showToast('Изменения сохранены. Нажмите «Завершить маршрут», чтобы отправить водителю.');
   }
 
   // ─── Finish route per driver (multi-trip) ────────────────
@@ -3012,6 +3002,11 @@
           pt.helperDriverId = helperDrv ? helperDrv.id : null;
         }
       }
+      if (order.customer_order_id != null || order.order_1c_id) {
+        pt.customer_order_id = order.customer_order_id || null;
+        pt.order_1c_id = order.order_1c_id || null;
+        pt.status = 'in_delivery';
+      }
 
       points.push(pt);
 
@@ -3034,6 +3029,28 @@
       var savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
       if (savedRoute && savedRoute.id) {
         await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+      }
+
+      // Обновить статусы заказов 1С → «В доставке»
+      var client = getSupabaseClient();
+      var config = window.SUPABASE_CONFIG || {};
+      if (client) {
+        for (var pi = 0; pi < points.length; pi++) {
+          var p = points[pi];
+          if (p.customer_order_id != null) {
+            await client.from('customer_orders').update({
+              assigned_driver_id: parseInt(driverId),
+              driver_route_id: savedRoute ? savedRoute.id : null,
+              status: 'in_delivery',
+            }).eq('id', p.customer_order_id);
+          }
+          if (p.order_1c_id) {
+            var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+            if (fnUrl && fnUrl.indexOf('http') === 0) {
+              fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+            }
+          }
+        }
       }
 
       // Remove finished address orders from map (suppliers stay)
@@ -3178,8 +3195,7 @@
       _fitBoundsNext = true;
       renderAll();
 
-      // Rebuild remaining active route (e.g. only addresses left).
-      await syncDriverToDb(String(driverId));
+      // Адреса остаются на карте — попадут в маршрут водителю только по «Завершить маршрут»
 
       showToast('Поставщики для ' + driverName + ' завершены (' + supplierPoints.length + ')');
     } catch (err) {

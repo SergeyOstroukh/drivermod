@@ -146,6 +146,10 @@
 		// Загружаем данные при переключении
 		if (section === "drivers") {
 			loadDrivers();
+			// Для водителя — сразу открыть его маршрут (карточки выездов)
+			if (currentRole === "driver" && currentDriverData) {
+				setTimeout(function () { openDriverRoute(currentDriverData); }, 100);
+			}
 		} else if (section === "partners") {
 			if (window.PartnersUI && window.PartnersUI.onSectionActivated) {
 				window.PartnersUI.onSectionActivated();
@@ -752,8 +756,8 @@
 
 		// ── Suppliers section ──
 		if (allSuppliers.length > 0) {
-			var activeSup = allSuppliers.filter(function (s) { return s.status !== 'completed'; }).length;
-			html += '<details class="route-trip-details" open style="margin-bottom:12px;">';
+			var activeSup = allSuppliers.filter(function (s) { return s.status !== 'completed' && s.status !== 'picked_up' && s.status !== 'cancelled'; }).length;
+			html += '<details class="route-trip-details route-trip-card" open style="margin-bottom:12px;">';
 			html += '<summary class="route-trip-summary" style="color:#10b981;font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;">';
 			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
 			html += '\uD83C\uDFE2 Поставщики (' + allSuppliers.length + ')';
@@ -769,12 +773,14 @@
 		// ── Trips (Выезды) ──
 		trips.forEach(function (trip) {
 			if (trip.points.length === 0 && !trip.isCompleted) return;
-			var activeCount = trip.points.filter(function (pt) { return pt.status !== 'completed'; }).length;
+			var activeCount = trip.points.filter(function (pt) {
+				return pt.status !== 'completed' && pt.status !== 'delivered' && pt.status !== 'cancelled';
+			}).length;
 			var allDone = trip.isCompleted || (trip.points.length > 0 && activeCount === 0);
 			var icon = allDone ? '\u2705' : '\uD83D\uDE97';
 			var statusText = trip.isCompleted ? 'завершён' : (allDone ? 'все точки пройдены' : activeCount + ' из ' + trip.points.length + ' активных');
 
-			html += '<details class="route-trip-details" ' + (allDone ? '' : 'open') + ' style="margin-bottom:8px;">';
+			html += '<details class="route-trip-details route-trip-card" ' + (allDone ? '' : 'open') + ' style="margin-bottom:12px;">';
 			html += '<summary class="route-trip-summary" style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;">';
 			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
 			html += icon + ' Выезд ' + trip.tripNum + ' <span style="font-weight:400;color:#888;font-size:12px;">(' + statusText + ')</span>';
@@ -825,9 +831,9 @@
 	}
 
 	function renderRoutePointHtml(pt, num, isLast, routeId, ptIndex) {
-		var isCompleted = pt.status === 'completed' || pt.status === 'delivered' || pt.status === 'cancelled';
+		var isCompleted = pt.status === 'completed' || pt.status === 'delivered' || pt.status === 'cancelled' || pt.status === 'picked_up';
 		var h = '';
-		h += '<div class="route-point' + (isCompleted ? ' route-point-completed' : '') + '">';
+		h += '<div class="route-point route-point-card' + (isCompleted ? ' route-point-completed' : '') + '">';
 		h += '<div class="route-point-num' + (isCompleted ? ' completed' : '') + '">' + (isCompleted ? '✓' : num) + '</div>';
 		h += '<div class="route-point-info">';
 		h += '<div class="route-point-addr' + (isCompleted ? ' completed-text' : '') + '">' + pt.address + '</div>';
@@ -863,15 +869,28 @@
 			}
 			h += '</div>';
 		}
+		if (pt.isSupplier || pt.isPartner) {
+			var s = pt.status || 'assigned';
+			var typeLabel = pt.isSupplier ? 'Поставщик' : 'Партнёр';
+			var statusLabel = s === 'at_supplier' ? 'У поставщика' : (s === 'picked_up' ? 'Забран' : (s === 'cancelled' ? 'Отменён' : 'В маршруте'));
+			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+			h += '<span style="font-size:11px;color:#888;">' + typeLabel + ' — ' + statusLabel + '</span>';
+			if (s !== 'picked_up' && s !== 'cancelled') {
+				h += '<button type="button" class="btn btn-outline btn-sm route-supplier-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="at_supplier">У поставщика</button>';
+				h += '<button type="button" class="btn btn-primary btn-sm route-supplier-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="picked_up">Забран</button>';
+				h += '<button type="button" class="btn btn-outline btn-sm route-supplier-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
+			}
+			h += '</div>';
+		}
 		h += '</div>';
 		h += '<div class="route-point-actions">';
-		var pointCompleted = isCompleted || (pt.status === 'delivered' || pt.status === 'cancelled');
+		var pointCompleted = isCompleted || (pt.status === 'delivered' || pt.status === 'cancelled' || pt.status === 'picked_up');
 		if (!pointCompleted) {
 			if (pt.lat && pt.lng) {
 				var webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
 				h += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
 			}
-			if (!pt.order_1c_id && !pt.customer_order_id) {
+			if (!pt.order_1c_id && !pt.customer_order_id && !pt.isSupplier && !pt.isPartner) {
 				h += '<button class="btn btn-primary btn-sm route-complete-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" title="Завершить">\u2713</button>';
 			}
 		}
@@ -898,6 +917,16 @@
 				var ptIndex = parseInt(btn.dataset.ptIndex);
 				var newStatus = btn.dataset.status;
 				await set1COrderStatus(routeId, ptIndex, newStatus);
+			});
+		});
+
+		// Поставщик/партнёр — смена статуса
+		document.querySelectorAll('.route-supplier-status-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var routeId = btn.dataset.routeId;
+				var ptIndex = parseInt(btn.dataset.ptIndex);
+				var newStatus = btn.dataset.status;
+				await setSupplierPointStatus(routeId, ptIndex, newStatus);
 			});
 		});
 
@@ -987,6 +1016,26 @@
 			renderDriverRoutes(currentRoutesData);
 		} catch (err) {
 			console.error('Ошибка обновления статуса заказа 1С:', err);
+			alert('Не удалось обновить статус: ' + err.message);
+		}
+	}
+
+	async function setSupplierPointStatus(routeId, ptIndex, newStatus) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points) return;
+		var pt = route.points[ptIndex];
+		if (!pt || (!pt.isSupplier && !pt.isPartner)) return;
+		var newPoints = route.points.map(function (p, i) {
+			return i === ptIndex ? Object.assign({}, p, { status: newStatus }) : p;
+		});
+		try {
+			var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
+			currentRoutesData = currentRoutesData.map(function (r) {
+				return String(r.id) === String(routeId) ? updated : r;
+			});
+			renderDriverRoutes(currentRoutesData);
+		} catch (err) {
+			console.error('Ошибка обновления статуса поставщика:', err);
 			alert('Не удалось обновить статус: ' + err.message);
 		}
 	}
