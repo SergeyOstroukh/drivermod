@@ -2657,11 +2657,13 @@
     }
 
     if (isAll && type === 'all') {
-      // Full reset
-      orders = []; assignments = null; variants = []; activeVariant = -1; selectedDriver = null;
-      driverSlots = [];
-      clearState();
-      showToast('Все данные сброшены');
+      // Сброс только точек на карте (без очистки облачного/доп. состояния)
+      orders = [];
+      assignments = null;
+      variants = [];
+      activeVariant = -1;
+      selectedDriver = null;
+      showToast('Точки на карте сброшены');
     } else {
       var keep = []; var keepA = [];
       var removed = 0;
@@ -2677,29 +2679,9 @@
       assignments = keepA.length > 0 ? keepA : null;
       variants = []; activeVariant = -1;
 
-      // If everything was removed via partial clear, clear shared state explicitly.
-      if (orders.length === 0) {
-        clearState();
-      }
-
       var label = type === 'suppliers' ? 'поставщиков' : (type === 'addresses' ? 'адресов' : 'точек');
       var who = isAll ? '' : (' у ' + driverName);
       showToast('Сброшено ' + removed + ' ' + label + who);
-
-      // Sync affected driver(s) to DB
-      if (!isAll && driverId !== '__unassigned__') {
-        scheduleSyncDriver(String(driverId));
-      } else if (isAll) {
-        // Sync all drivers that still have orders
-        var syncedDrivers = {};
-        orders.forEach(function (o, i) {
-          var did = getOrderDriverId(i);
-          if (did && !syncedDrivers[did]) {
-            syncedDrivers[did] = true;
-            scheduleSyncDriver(String(did));
-          }
-        });
-      }
     }
     _fitBoundsNext = true;
     renderAll();
@@ -2963,9 +2945,9 @@
     var routeDate = new Date().toISOString().split('T')[0];
     var driverName = getDriverNameById(driverId);
 
-    // Collect ALL orders for this driver: addresses (will be removed) + suppliers (stay on map)
+    // Collect ALL orders for this driver: addresses + suppliers.
+    // Points must remain on map until explicit "Сбросить данные".
     var points = [];
-    var orderIndicesToRemove = []; // only addresses get removed
 
     orders.forEach(function (order, idx) {
       if (order.isPoi || !order.geocoded) return;
@@ -3009,11 +2991,6 @@
       }
 
       points.push(pt);
-
-      // Only remove addresses from the map (suppliers stay for continued management)
-      if (!order.isSupplier) {
-        orderIndicesToRemove.push(idx);
-      }
     });
 
     if (points.length === 0) {
@@ -3052,13 +3029,6 @@
           }
         }
       }
-
-      // Remove finished address orders from map (suppliers stay)
-      orderIndicesToRemove.sort(function (a, b) { return b - a; });
-      orderIndicesToRemove.forEach(function (idx) {
-        orders.splice(idx, 1);
-        if (assignments) assignments.splice(idx, 1);
-      });
 
       variants = []; activeVariant = -1;
       _fitBoundsNext = true;
