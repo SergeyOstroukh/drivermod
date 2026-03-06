@@ -1,0 +1,7 @@
+# Конфигурация Edge Functions
+# https://supabase.com/docs/guides/functions/function-configuration
+
+# push-order-status-to-1c — вызывается из приложения и пересылает статусы в 1С.
+# JWT отключён: вебхук принимает запросы без Authorization (как Stripe webhook).
+[functions.push-order-status-to-1c]
+verify_jwt = false

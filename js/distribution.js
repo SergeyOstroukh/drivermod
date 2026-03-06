@@ -2698,14 +2698,14 @@
 
     // Bind exec buttons
     modal.querySelectorAll('.dc-clear-exec').forEach(function (btn) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', async function () {
         modal.remove();
-        doClear(btn.dataset.clearType, driverId, driverName);
+        await doClear(btn.dataset.clearType, driverId, driverName);
       });
     });
   }
 
-  function doClear(type, driverId, driverName) {
+  async function doClear(type, driverId, driverName) {
     var isAll = !driverId || driverId === '__all__';
 
     function shouldRemove(order, idx) {
@@ -2730,7 +2730,7 @@
       selectedDriver = null;
       clearTimeout(_cloudSaveTimer);
       _allowEmptyCloudWriteUntil = Date.now() + 5000;
-      clearCloudState();
+      await clearCloudState();
       showToast('Точки на карте сброшены');
     } else {
       var keep = []; var keepA = [];
@@ -3124,7 +3124,9 @@
           if (p.order_1c_id) {
             var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
             if (fnUrl && fnUrl.indexOf('http') === 0) {
-              fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+              var hdrs = { 'Content-Type': 'application/json' };
+              if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
+              fetch(fnUrl, { method: 'POST', headers: hdrs, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
             }
           }
         }

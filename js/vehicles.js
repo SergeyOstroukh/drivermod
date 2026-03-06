@@ -1026,7 +1026,9 @@
 									if (p.order_1c_id) {
 										var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
 										if (fnUrl && fnUrl.indexOf('http') === 0) {
-											fetch(fnUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+											var hdrs = { 'Content-Type': 'application/json' };
+											if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
+											fetch(fnUrl, { method: 'POST', headers: hdrs, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
 										}
 									}
 								}
@@ -1071,9 +1073,11 @@
 				if (pt.order_1c_id) {
 					var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
 					if (fnUrl && fnUrl.indexOf('http') === 0) {
+						var hdrs = { 'Content-Type': 'application/json' };
+						if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
 						fetch(fnUrl, {
 							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
+							headers: hdrs,
 							body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: newStatus }),
 						}).catch(function () {});
 					}
@@ -1175,9 +1179,11 @@
 				if (pt.order_1c_id) {
 					var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
 					if (fnUrl && fnUrl.indexOf('http') === 0) {
+						var hdrs = { 'Content-Type': 'application/json' };
+						if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
 						fetch(fnUrl, {
 							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
+							headers: hdrs,
 							body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: 'delivered' }),
 						}).catch(function () {});
 					}
