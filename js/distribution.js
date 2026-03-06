@@ -11,6 +11,7 @@
   const COLORS = window.DistributionAlgo.DRIVER_COLORS;
   const ORIGINAL_COLORS = COLORS.slice();
   const DISTRIBUTION_STATE_TABLE = 'distribution_state';
+  const SUPPLIER_STATUS_TABLE = 'supplier_point_status';
   const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
   const PARTNER_ALIASES_KEY = 'dc_partner_aliases';
 
@@ -589,6 +590,68 @@
     });
   }
 
+  function buildSupplierPointKey(order, driverId) {
+    var addr = (order.address || '').replace(/\s+/g, ' ').trim();
+    var lat = order.lat != null ? Number(order.lat).toFixed(5) : '';
+    var lng = order.lng != null ? Number(order.lng).toFixed(5) : '';
+    return addr + '|' + lat + '|' + lng;
+  }
+
+  async function saveSupplierPointStatusToDb(order, driverId) {
+    if (!order || !order.isSupplier) return;
+    var client = getSupabaseClient();
+    if (!client) return;
+    var pointKey = buildSupplierPointKey(order, driverId);
+    try {
+      await client.from(SUPPLIER_STATUS_TABLE).upsert({
+        route_date: getStateDateKey(),
+        driver_id: parseInt(driverId, 10),
+        point_key: pointKey,
+        address: order.address || null,
+        lat: order.lat != null ? order.lat : null,
+        lng: order.lng != null ? order.lng : null,
+        telegram_sent: !!order.telegramSent,
+        telegram_status: order.telegramStatus || null,
+        telegram_chat_id: order.telegramChatId || null,
+        telegram_message_id: order.telegramMessageId || null,
+        items_sent: !!order.itemsSent,
+        items_sent_text: order.itemsSentText || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'route_date,driver_id,point_key', ignoreDuplicates: false });
+    } catch (e) { console.warn('saveSupplierPointStatus error:', e); }
+  }
+
+  async function mergeSupplierStatusesFromDb() {
+    var client = getSupabaseClient();
+    if (!client) return;
+    var routeDate = getStateDateKey();
+    try {
+      var resp = await client.from(SUPPLIER_STATUS_TABLE).select('*').eq('route_date', routeDate);
+      if (resp.error) return;
+      var rows = resp.data || [];
+      var byDriverAndKey = {};
+      rows.forEach(function (r) {
+        var k = String(r.driver_id) + '|' + (r.point_key || '');
+        byDriverAndKey[k] = r;
+      });
+      orders.forEach(function (o, idx) {
+        if (!o.isSupplier || o.isPoi) return;
+        var did = getOrderDriverId(idx);
+        if (!did) return;
+        var pointKey = buildSupplierPointKey(o, did);
+        var row = byDriverAndKey[String(did) + '|' + pointKey];
+        if (row && (row.telegram_sent || row.items_sent)) {
+          o.telegramSent = !!row.telegram_sent;
+          o.telegramStatus = row.telegram_status || null;
+          o.telegramChatId = row.telegram_chat_id || null;
+          o.telegramMessageId = row.telegram_message_id || null;
+          o.itemsSent = !!row.items_sent;
+          o.itemsSentText = row.items_sent_text || null;
+        }
+      });
+    } catch (e) { console.warn('mergeSupplierStatuses error:', e); }
+  }
+
   function applyStateSnapshot(data) {
     if (!data || !Array.isArray(data.orders)) return false;
     orders = data.orders;
@@ -716,6 +779,7 @@
     var cloud = await loadCloudState();
     if (cloud && cloud.state && applyStateSnapshot(cloud.state)) {
       _lastAppliedCloudTs = cloud.updatedAt || 0;
+      await mergeSupplierStatusesFromDb();
       return true;
     }
     return false;
@@ -739,6 +803,7 @@
     }
     if (!applyStateSnapshot(cloud.state)) return;
     _lastAppliedCloudTs = cloudTs;
+    await mergeSupplierStatusesFromDb();
 
     _isApplyingCloudState = true;
     try {
@@ -2658,12 +2723,14 @@
     }
 
     if (isAll && type === 'all') {
-      // Сброс только точек на карте (без очистки облачного/доп. состояния)
       orders = [];
       assignments = null;
       variants = [];
       activeVariant = -1;
       selectedDriver = null;
+      clearTimeout(_cloudSaveTimer);
+      _allowEmptyCloudWriteUntil = Date.now() + 5000;
+      clearCloudState();
       showToast('Точки на карте сброшены');
     } else {
       var keep = []; var keepA = [];
@@ -2808,6 +2875,7 @@
           }
         }
       }
+      flushCloudStateSave();
       showToast('Маршруты опубликованы! Водители увидят их в путевом листе');
     } catch (err) {
       showToast('Ошибка сохранения: ' + err.message, 'error');
@@ -3063,6 +3131,8 @@
       }
 
       variants = []; activeVariant = -1;
+      saveState();
+      flushCloudStateSave();
       _fitBoundsNext = true;
       renderAll();
       var parts = [];
@@ -3241,6 +3311,7 @@
       }
 
       saveState();
+      flushCloudStateSave();
       _fitBoundsNext = true;
       renderAll();
 
@@ -3489,6 +3560,7 @@
             supplierOrder.itemsSent = !!supplierOrder.items1c;
             supplierOrder.itemsSentText = supplierOrder.items1c || null;
             saveTelegramConfirmation(supplierOrder.id, driver.telegram_chat_id, data.result.message_id, driver.name, supplierOrder.address);
+            saveSupplierPointStatusToDb(supplierOrder, driverIds[i]);
           } else {
             messagesFailed++;
             console.warn('Telegram error for', driver.name, ':', data.description);
@@ -3568,8 +3640,8 @@
         order.telegramChatId = driver.telegram_chat_id;
         order.itemsSent = !!order.items1c;
         order.itemsSentText = order.items1c || null;
-        // Save to Supabase for webhook tracking
         saveTelegramConfirmation(order.id, driver.telegram_chat_id, data.result.message_id, driver.name, order.address);
+        saveSupplierPointStatusToDb(order, driverId);
         showToast('Отправлено в Telegram: ' + order.address);
         startTelegramPolling();
         renderAll();
@@ -3617,6 +3689,9 @@
         order.items1c = items;
         order.itemsSent = true;
         order.itemsSentText = items;
+        var orderIdx = orders.indexOf(order);
+        var driverId = orderIdx >= 0 ? getOrderDriverId(orderIdx) : null;
+        if (driverId) saveSupplierPointStatusToDb(order, driverId);
         if (!opts.silent) showToast(opts.auto ? 'Товар автоматически отправлен: ' + order.address : 'Товар отправлен водителю: ' + order.address);
         renderAll();
       } else {
@@ -3727,6 +3802,9 @@
         if (currentStatus !== nextStatus) {
           order.telegramStatus = nextStatus;
           applied++;
+          var oidx = orders.indexOf(order);
+          var did = oidx >= 0 ? getOrderDriverId(oidx) : null;
+          if (did) saveSupplierPointStatusToDb(order, did);
         }
       });
 
