@@ -3019,6 +3019,12 @@
 				restoreInworkPointsToMap('suppliers');
 			});
 		}
+		var inworkRestorePairsBtn = document.getElementById("inworkRestorePairsBtn");
+		if (inworkRestorePairsBtn) {
+			inworkRestorePairsBtn.addEventListener("click", function () {
+				restoreSupplierPairsFromText();
+			});
+		}
 
 		// ---- Заказы / движки (фильтры) ----
 		var deliveriesDateFilter = document.getElementById("deliveriesDateFilter");
@@ -4226,6 +4232,48 @@
 		} catch (err) {
 			console.error('Ошибка восстановления точек на карту:', err);
 			alert('Не удалось восстановить точки: ' + (err && err.message ? err.message : 'неизвестная ошибка'));
+		}
+	}
+
+	function parseSupplierDriverPairs(text) {
+		var rows = [];
+		(text || '').split(/\r?\n/).forEach(function (line) {
+			var row = String(line || '').trim();
+			if (!row) return;
+			var parts = row.split('\t').map(function (p) { return p.trim(); }).filter(function (p) { return p.length > 0; });
+			if (parts.length >= 2) {
+				rows.push({ supplierName: parts[0], driverName: parts[1] });
+				return;
+			}
+			var m = row.match(/^(.+?)\s{2,}(.+)$/);
+			if (m) {
+				rows.push({ supplierName: m[1].trim(), driverName: m[2].trim() });
+			}
+		});
+		return rows;
+	}
+
+	async function restoreSupplierPairsFromText() {
+		var input = document.getElementById('inworkPairsInput');
+		var raw = input ? input.value : '';
+		var pairs = parseSupplierDriverPairs(raw);
+		if (!pairs.length) {
+			alert('Не удалось распознать список. Вставьте строки в формате: Поставщик[TAB]Водитель');
+			return;
+		}
+		if (!window.DistributionUI || typeof window.DistributionUI.restoreSuppliersFromPairs !== 'function') {
+			alert('Восстановление из списка недоступно: откройте вкладку "Распределение" и попробуйте снова');
+			return;
+		}
+		if (typeof switchSection === 'function') {
+			switchSection('distribution');
+		}
+		try {
+			var targetDate = _distributedFilterDate || getTodayLocalDateString();
+			await window.DistributionUI.restoreSuppliersFromPairs(pairs, targetDate);
+		} catch (err) {
+			console.error('Ошибка восстановления по списку:', err);
+			alert('Не удалось восстановить по списку: ' + (err && err.message ? err.message : 'неизвестная ошибка'));
 		}
 	}
 

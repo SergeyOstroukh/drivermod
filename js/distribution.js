@@ -638,8 +638,8 @@
     var client = getSupabaseClient();
     if (!client || _cloudTableMissing) return;
     if (!snapshot.orders || snapshot.orders.length === 0) {
-      if (Date.now() <= _allowEmptyCloudWriteUntil) return;
-      await clearCloudState();
+      // Never auto-clear cloud state from incidental empty snapshots.
+      // This prevents spontaneous loss of points on other opened sessions/tabs.
       return;
     }
     try {
@@ -671,8 +671,6 @@
     var snap = buildStateSnapshot();
     if (snap.orders && snap.orders.length > 0) {
       saveCloudState(snap);
-    } else {
-      clearCloudState();
     }
   }
 
@@ -733,7 +731,8 @@
 
     if (!cloud || !cloud.state || cloudTs <= _lastAppliedCloudTs) return;
     var cloudOrders = cloud.state.orders;
-    if (Array.isArray(cloudOrders) && cloudOrders.length === 0 && orders.length > 0 && (Date.now() - _lastLocalMutationTs < 10000)) {
+    if (Array.isArray(cloudOrders) && cloudOrders.length === 0 && orders.length > 0) {
+      // Do not allow empty cloud state to overwrite existing local points.
       return;
     }
     if (!applyStateSnapshot(cloud.state)) return;
@@ -5205,6 +5204,156 @@
     return { added: restored.length, skipped: skipped };
   }
 
+  function resolveDriverIdByName(rawDriverName) {
+    var name = String(rawDriverName || '').trim();
+    if (!name) return null;
+    var c = compactName(name);
+    var surname = c.split(' ')[0] || c;
+    // 1) exact full match
+    for (var i = 0; i < dbDrivers.length; i++) {
+      var d = dbDrivers[i];
+      if (compactName(d.name) === c) return d.id;
+    }
+    // 2) exact surname
+    for (var j = 0; j < dbDrivers.length; j++) {
+      var d2 = dbDrivers[j];
+      var ds = compactName(d2.name).split(' ')[0] || '';
+      if (ds === surname) return d2.id;
+    }
+    // 3) partial contains
+    for (var k = 0; k < dbDrivers.length; k++) {
+      var d3 = dbDrivers[k];
+      var dn = compactName(d3.name);
+      if (dn.indexOf(c) !== -1 || c.indexOf(dn) !== -1 || dn.indexOf(surname) !== -1) return d3.id;
+    }
+    return null;
+  }
+
+  async function restoreSuppliersFromPairs(pairs, routeDate) {
+    var list = Array.isArray(pairs) ? pairs : [];
+    if (!list.length) {
+      showToast('Пустой список для восстановления', 'error');
+      return { added: 0, skipped: 0, unresolved: 0 };
+    }
+    await loadDbDrivers();
+    await loadDbSuppliers();
+    await loadSupplierOrders();
+    startItemsPolling();
+
+    var existingKeys = {};
+    orders.forEach(function (o) {
+      if (!o || !o.isSupplier) return;
+      var did = o.assignedDriverId || '';
+      var key = compactName(o.supplierName || o.address || '') + '|' + String(did);
+      existingKeys[key] = true;
+    });
+
+    var added = 0;
+    var skipped = 0;
+    var unresolved = 0;
+    var created = [];
+    var needGeocode = [];
+    var seq = Date.now();
+
+    list.forEach(function (row, idx) {
+      var supplierName = String((row && row.supplierName) || '').trim();
+      var driverName = String((row && row.driverName) || '').trim();
+      if (!supplierName) return;
+
+      var driverId = resolveDriverIdByName(driverName);
+      if (!driverId) unresolved++;
+      var supplier = findSupplierInDb(supplierName);
+      var displayName = supplierName;
+      var key = compactName(displayName) + '|' + String(driverId || '');
+      if (existingKeys[key]) {
+        skipped++;
+        return;
+      }
+      existingKeys[key] = true;
+
+      var lat = null;
+      var lng = null;
+      var faddr = null;
+      var geocoded = false;
+      var supplierDbId = null;
+      var supplierData = null;
+      if (supplier) {
+        supplierDbId = supplier.id || null;
+        supplierData = supplier;
+        if (supplier.lat && supplier.lon) {
+          lat = supplier.lat;
+          lng = supplier.lon;
+          faddr = supplier.address || (supplier.lat + ', ' + supplier.lon);
+          geocoded = true;
+        } else if (supplier.address) {
+          faddr = supplier.address;
+        }
+      }
+
+      var items1c = getSupplierItems(supplierName);
+      if (!items1c.length && supplier && supplier.name) items1c = getSupplierItems(supplier.name);
+
+      var o = {
+        id: 'pairs-supplier-' + (seq++) + '-' + idx,
+        sourceSupplierName: supplierName,
+        address: displayName,
+        phone: '',
+        timeSlot: null,
+        geocoded: geocoded,
+        lat: lat,
+        lng: lng,
+        formattedAddress: faddr,
+        error: geocoded ? null : (supplier ? 'Нет координат в базе' : 'Не найден в базе'),
+        isSupplier: true,
+        supplierDbId: supplierDbId,
+        supplierName: displayName,
+        supplierData: supplierData,
+        items1c: items1c.length > 0 ? items1c.join('\n') : null,
+        assignedDriverId: driverId || null,
+      };
+      if (!o.geocoded && supplier && supplier.address) needGeocode.push(o);
+      created.push(o);
+      added++;
+    });
+
+    if (!created.length) {
+      showToast('Новых поставщиков из списка не добавлено');
+      return { added: 0, skipped: skipped, unresolved: unresolved };
+    }
+
+    orders = orders.concat(created);
+    if (assignments) {
+      for (var ai = 0; ai < created.length; ai++) assignments.push(-1);
+    }
+
+    for (var gi = 0; gi < needGeocode.length; gi++) {
+      var so = needGeocode[gi];
+      var addr = so.formattedAddress || so.address;
+      try {
+        var geo = await window.DistributionGeocoder.geocodeAddress(addr);
+        so.lat = geo.lat;
+        so.lng = geo.lng;
+        so.formattedAddress = geo.formattedAddress;
+        so.geocoded = true;
+        so.error = null;
+      } catch (e) {
+        // keep unresolved geocode
+      }
+    }
+
+    variants = [];
+    activeVariant = -1;
+    _fitBoundsNext = true;
+    markLocalMutation();
+    saveState();
+    renderAll();
+    var msg = 'Из списка добавлено: ' + added;
+    if (skipped > 0) msg += ', дублей: ' + skipped;
+    if (unresolved > 0) msg += ', без водителя: ' + unresolved;
+    showToast(msg, unresolved > 0 ? 'error' : undefined);
+    return { added: added, skipped: skipped, unresolved: unresolved };
+  }
+
   window.DistributionUI = {
     onSectionActivated: onSectionActivated,
     getDistributedSuppliers: getDistributedSuppliers,
@@ -5212,6 +5361,7 @@
     getSupplierItems: getSupplierItems,
     applyPending1COrders: applyPending1COrders,
     restoreFromHistoryToMap: restoreFromHistoryToMap,
+    restoreSuppliersFromPairs: restoreSuppliersFromPairs,
   };
 
   // Auto-init if section is already visible
