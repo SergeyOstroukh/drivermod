@@ -856,21 +856,9 @@
 		if (pt.phone) {
 			h += '<div class="route-point-meta"><a href="tel:' + pt.phone + '">\uD83D\uDCDE ' + pt.phone + '</a></div>';
 		}
-		if (pt.order_1c_id || pt.customer_order_id) {
-			var s = pt.status || 'assigned';
-			var statusLabel = s === 'in_delivery' ? 'В доставке' : (s === 'delivered' ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'Распределён'));
-			var orderLabel = pt.order_1c_id ? ('Заказ 1С: ' + pt.order_1c_id) : ('Заказ 1С #' + pt.customer_order_id);
-			h += '<div class="route-point-1c" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
-			h += '<span style="font-size:11px;color:#888;">' + orderLabel + ' — ' + statusLabel + '</span>';
-			if (s !== 'delivered' && s !== 'cancelled') {
-				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В доставке</button>';
-				h += '<button type="button" class="btn btn-primary btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="delivered">Доставлен</button>';
-				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
-			}
-			h += '</div>';
-		}
+		// Статусы для ВСЕХ точек маршрута: поставщики, заказы 1С, адреса
+		var s = pt.status || 'assigned';
 		if (pt.isSupplier || pt.isPartner) {
-			var s = pt.status || 'assigned';
 			var typeLabel = pt.isSupplier ? 'Поставщик' : 'Партнёр';
 			var statusLabel = s === 'at_supplier' ? 'У поставщика' : (s === 'picked_up' ? 'Забран' : (s === 'cancelled' ? 'Отменён' : 'В маршруте'));
 			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
@@ -881,6 +869,27 @@
 				h += '<button type="button" class="btn btn-outline btn-sm route-supplier-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
 			}
 			h += '</div>';
+		} else if (pt.order_1c_id || pt.customer_order_id) {
+			var statusLabel = s === 'in_delivery' ? 'В доставке' : (s === 'delivered' ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'Распределён'));
+			var orderLabel = pt.order_1c_id ? ('Заказ 1С: ' + pt.order_1c_id) : ('Заказ 1С #' + pt.customer_order_id);
+			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+			h += '<span style="font-size:11px;color:#888;">' + orderLabel + ' — ' + statusLabel + '</span>';
+			if (s !== 'delivered' && s !== 'cancelled') {
+				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В доставке</button>';
+				h += '<button type="button" class="btn btn-primary btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="delivered">Доставлен</button>';
+				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
+			}
+			h += '</div>';
+		} else {
+			var statusLabel = s === 'in_delivery' ? 'В пути' : (s === 'completed' ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'В маршруте'));
+			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+			h += '<span style="font-size:11px;color:#888;">Адрес — ' + statusLabel + '</span>';
+			if (s !== 'completed' && s !== 'cancelled') {
+				h += '<button type="button" class="btn btn-outline btn-sm route-address-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="in_delivery">В пути</button>';
+				h += '<button type="button" class="btn btn-primary btn-sm route-address-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="completed">Доставлен</button>';
+				h += '<button type="button" class="btn btn-outline btn-sm route-address-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
+			}
+			h += '</div>';
 		}
 		h += '</div>';
 		h += '<div class="route-point-actions">';
@@ -889,9 +898,6 @@
 			if (pt.lat && pt.lng) {
 				var webNavUrl = 'https://yandex.by/maps/?rtext=~' + pt.lat + ',' + pt.lng + '&rtt=auto';
 				h += '<a href="' + webNavUrl + '" target="_blank" rel="noopener" class="btn btn-outline btn-sm route-nav-btn">Ехать</a>';
-			}
-			if (!pt.order_1c_id && !pt.customer_order_id && !pt.isSupplier && !pt.isPartner) {
-				h += '<button class="btn btn-primary btn-sm route-complete-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" title="Завершить">\u2713</button>';
 			}
 		}
 		h += '</div>';
@@ -927,6 +933,16 @@
 				var ptIndex = parseInt(btn.dataset.ptIndex);
 				var newStatus = btn.dataset.status;
 				await setSupplierPointStatus(routeId, ptIndex, newStatus);
+			});
+		});
+
+		// Обычный адрес — смена статуса (В пути, Доставлен, Отменён)
+		document.querySelectorAll('.route-address-status-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var routeId = btn.dataset.routeId;
+				var ptIndex = parseInt(btn.dataset.ptIndex);
+				var newStatus = btn.dataset.status;
+				await setAddressPointStatus(routeId, ptIndex, newStatus);
 			});
 		});
 
@@ -1016,6 +1032,26 @@
 			renderDriverRoutes(currentRoutesData);
 		} catch (err) {
 			console.error('Ошибка обновления статуса заказа 1С:', err);
+			alert('Не удалось обновить статус: ' + err.message);
+		}
+	}
+
+	async function setAddressPointStatus(routeId, ptIndex, newStatus) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points) return;
+		var pt = route.points[ptIndex];
+		if (!pt || pt.order_1c_id || pt.customer_order_id || pt.isSupplier || pt.isPartner) return;
+		var newPoints = route.points.map(function (p, i) {
+			return i === ptIndex ? Object.assign({}, p, { status: newStatus }) : p;
+		});
+		try {
+			var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
+			currentRoutesData = currentRoutesData.map(function (r) {
+				return String(r.id) === String(routeId) ? updated : r;
+			});
+			renderDriverRoutes(currentRoutesData);
+		} catch (err) {
+			console.error('Ошибка обновления статуса адреса:', err);
 			alert('Не удалось обновить статус: ' + err.message);
 		}
 	}
