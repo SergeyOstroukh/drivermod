@@ -35,6 +35,7 @@
   let _cloudTableMissing = false;
   let _isApplyingCloudState = false;
   let _allowEmptyCloudWriteUntil = 0;
+  let _suppressCloudSaveUntil = 0; // после полного сброса — не восстанавливать старые данные
   let _lastAppliedCloudTs = 0;
   let _lastLocalMutationTs = 0;
   let _selectedOrderIds = {};
@@ -707,6 +708,8 @@
       // This prevents spontaneous loss of points on other opened sessions/tabs.
       return;
     }
+    // Не сохранять устаревший снапшот, если пользователь только что сделал полный сброс
+    if (_suppressCloudSaveUntil > Date.now()) return;
     try {
       var routeDate = getStateDateKey();
       var resp = await client
@@ -2730,6 +2733,7 @@
       selectedDriver = null;
       clearTimeout(_cloudSaveTimer);
       _allowEmptyCloudWriteUntil = Date.now() + 5000;
+      _suppressCloudSaveUntil = Date.now() + 5000;
       await clearCloudState();
       showToast('Точки на карте сброшены');
     } else {
