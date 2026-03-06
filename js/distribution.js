@@ -2754,6 +2754,12 @@
       var label = type === 'suppliers' ? 'поставщиков' : (type === 'addresses' ? 'адресов' : 'точек');
       var who = isAll ? '' : (' у ' + driverName);
       showToast('Сброшено ' + removed + ' ' + label + who);
+
+      if (orders.length === 0) {
+        clearTimeout(_cloudSaveTimer);
+        _suppressCloudSaveUntil = Date.now() + 5000;
+        await clearCloudState();
+      }
     }
     _fitBoundsNext = true;
     renderAll();
