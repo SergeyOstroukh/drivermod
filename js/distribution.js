@@ -1424,10 +1424,10 @@
     showToast('Назначено точек: ' + assignedCount);
   }
 
-  // Маршруты синхронизируются с БД только при нажатии «Завершить маршрут».
+  // Маршруты синхронизируются с БД только при нажатии «Отправить в путевые листы».
   // При назначении водителя на карте / из заказов 1С — назначение остаётся в памяти до «Завершить».
   function scheduleSyncDriver(driverId) {
-    // no-op: не отправляем в БД до явного «Завершить маршрут»
+    // no-op: не отправляем в БД до явного «Отправить в путевые листы»
   }
 
   async function syncDriverToDb(driverId) {
@@ -2866,8 +2866,8 @@
 
     renderAll();
 
-    // Маршрут сохраняется в БД только при «Завершить маршрут», не при выходе из режима редактирования
-    showToast('Изменения сохранены. Нажмите «Завершить маршрут», чтобы отправить водителю.');
+    // Маршрут сохраняется в БД только при «Отправить в путевые листы», не при выходе из режима редактирования
+    showToast('Изменения сохранены. Нажмите «Отправить в путевые листы», чтобы отправить водителю.');
   }
 
   // ─── Finish route per driver (multi-trip) ────────────────
@@ -2905,7 +2905,7 @@
     });
 
     if (!driverBtns) {
-      showToast('Нет адресов для завершения маршрута', 'error');
+      showToast('Нет адресов для отправки в путевые листы', 'error');
       return;
     }
 
@@ -2913,7 +2913,7 @@
     Object.keys(driverAddrCounts).forEach(function (k) { totalAddrs += driverAddrCounts[k]; });
 
     modal.innerHTML = '<div class="modal-content" style="max-width:400px;">' +
-      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Завершить маршрут</h3>' +
+      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Отправить в путевые листы</h3>' +
       '<div style="font-size:12px;color:#888;margin-bottom:8px;">Адреса будут сохранены как выезд в кабинете водителя.<br>Поставщики остаются на карте.<br>Заказы из 1С получат статус «В доставке».</div>' +
       '<div style="display:flex;flex-direction:column;gap:6px;">' +
       driverBtns +
@@ -3173,8 +3173,8 @@
     Object.keys(driverSupplierCounts).forEach(function (k) { totalSuppliers += driverSupplierCounts[k]; });
 
     modal.innerHTML = '<div class="modal-content" style="max-width:420px;">' +
-      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Завершить поставщиков</h3>' +
-      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Поставщики будут сохранены как завершённый выезд и убраны с карты. Данные останутся в таблице по дате.</div>' +
+      '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Поставщики — сохранить выезд</h3>' +
+      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Поставщики будут сохранены как завершённый выезд в путевой лист. Точки останутся на карте до сброса.</div>' +
       '<div style="display:flex;flex-direction:column;gap:6px;">' +
       driverBtns +
       '<div style="border-top:1px solid #333;margin:4px 0;"></div>' +
@@ -3206,7 +3206,6 @@
     var driverName = getDriverNameById(driverId);
 
     var supplierPoints = [];
-    var supplierIndicesToRemove = [];
     orders.forEach(function (order, idx) {
       if (!order.isSupplier || order.isPoi) return;
       var did = getOrderDriverId(idx);
@@ -3228,7 +3227,6 @@
         itemsSentText: order.itemsSentText || null,
       };
       supplierPoints.push(pt);
-      supplierIndicesToRemove.push(idx);
     });
 
     if (supplierPoints.length === 0) {
@@ -3242,20 +3240,11 @@
         await window.VehiclesDB.completeDriverRoute(savedRoute.id);
       }
 
-      supplierIndicesToRemove.sort(function (a, b) { return b - a; });
-      supplierIndicesToRemove.forEach(function (idx) {
-        orders.splice(idx, 1);
-        if (assignments) assignments.splice(idx, 1);
-      });
-
-      variants = [];
-      activeVariant = -1;
+      saveState();
       _fitBoundsNext = true;
       renderAll();
 
-      // Адреса остаются на карте — попадут в маршрут водителю только по «Завершить маршрут»
-
-      showToast('Поставщики для ' + driverName + ' завершены (' + supplierPoints.length + ')');
+      showToast('Поставщики для ' + driverName + ' сохранены (' + supplierPoints.length + '). Точки остаются на карте.');
     } catch (err) {
       showToast('Ошибка: ' + err.message, 'error');
     }
@@ -4144,9 +4133,9 @@
       finishHtml = '<div class="dc-section dc-finish-section">' +
         '<button class="btn dc-btn-finish ready">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> ' +
-        'Завершить маршрут</button>' +
+        'Отправить в путевые листы</button>' +
         '<button class="btn dc-btn-finish-suppliers" style="background:#10b981;color:#fff;border:none;margin-top:4px;display:flex;align-items:center;gap:6px;">' +
-        '🏁 Завершить поставщиков</button>' +
+        '🏁 Поставщики — сохранить выезд</button>' +
         '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' +
         'Поставщики → Telegram' + (unsentSupplierCount > 0 ? ' (' + unsentSupplierCount + ')' : ' ✓') + '</button>' +
@@ -4342,7 +4331,7 @@
       (geocodedCount > 0 ? '<button class="btn btn-primary dc-btn-distribute" style="background:var(--accent);border-color:#0a3d31;color:#04211b;">Распределить по водителям</button>' : '') +
       (orders.length > 0 ? '<button class="btn btn-outline btn-sm dc-btn-clear" style="color:var(--danger);border-color:var(--danger);">Сбросить данные</button>' : '') +
       '</div></div></div>' +
-      (geocodedCount > 0 ? '<div class="dc-distribute-hint" style="font-size:11px;color:#888;margin-top:4px;padding:6px 8px;background:rgba(0,0,0,0.2);border-radius:6px;">1) Нажмите «Распределить по водителям» — точки назначатся водителям (цвета на карте).<br>2) Ниже нажмите «Завершить маршрут» — маршруты уйдут в путевые листы, статусы заказов 1С станут «В доставке».</div>' : '') +
+      (geocodedCount > 0 ? '<div class="dc-distribute-hint" style="font-size:11px;color:#888;margin-top:4px;padding:6px 8px;background:rgba(0,0,0,0.2);border-radius:6px;">1) Нажмите «Распределить по водителям» — точки назначатся водителям (цвета на карте).<br>2) Ниже нажмите «Отправить в путевые листы» — маршруты уйдут водителям, статусы заказов 1С станут «В доставке».</div>' : '') +
       // POI toggles
       '<div class="dc-section dc-poi-section">' +
       '<div class="dc-section-title" style="font-size:12px;color:#888;margin-bottom:6px;">Отображение на карте</div>' +
