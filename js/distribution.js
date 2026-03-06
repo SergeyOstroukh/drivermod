@@ -531,6 +531,8 @@
 
   function markLocalMutation() {
     _lastLocalMutationTs = Date.now();
+    // Persist soon after any local change so another device can load it.
+    saveState();
   }
 
   function pruneSelectedOrders() {
@@ -4935,9 +4937,14 @@
     // Apply custom driver colors
     loadDriverColors();
     applyCustomColors();
-    // Restore saved data on first activation (prefer freshest: cloud vs local)
-    if (orders.length === 0) {
-      await loadBestAvailableState();
+    // Strict DB mode: distribution state is sourced from DB on each open.
+    var loadedFromDb = await loadBestAvailableState();
+    if (!loadedFromDb) {
+      orders = [];
+      assignments = null;
+      variants = [];
+      activeVariant = -1;
+      _lastSavedStateSig = buildStateSignature();
     }
     // Ensure 1C items are loaded even after page refresh/session restore.
     if (orders.some(function (o) { return o.isSupplier; })) {
