@@ -58,7 +58,7 @@ serve(async (req) => {
       // Load latest confirmation row for this order (if any)
       const { data: existing } = await supabase
         .from("telegram_confirmations")
-        .select("id,status,message_id")
+        .select("id,status,message_id,supplier_name")
         .eq("order_id", orderId)
         .order("created_at", { ascending: false })
         .limit(1);
@@ -180,12 +180,22 @@ serve(async (req) => {
               .select("id,points")
               .eq("driver_id", driver.id)
               .eq("route_date", routeDate);
+            const supplierName = (existingRow as { supplier_name?: string })?.supplier_name || "";
             if (routes?.length) {
               for (const r of routes) {
                 const pts = (r.points || []) as Record<string, unknown>[];
-                const idx = pts.findIndex(
+                let idx = pts.findIndex(
                   (p) => p.isSupplier && (p.distribution_order_id as string) === orderId
                 );
+                if (idx < 0 && supplierName) {
+                  idx = pts.findIndex(
+                    (p) =>
+                      p.isSupplier &&
+                      ((p.address as string) === supplierName ||
+                        ((p.address as string) || "").includes(supplierName) ||
+                        (supplierName && (p.address as string)?.includes(supplierName)))
+                  );
+                }
                 if (idx >= 0) {
                   pts[idx] = { ...pts[idx], status: "picked_up" };
                   await supabase.from("driver_routes").update({ points: pts }).eq("id", r.id);
