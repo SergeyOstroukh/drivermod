@@ -1110,23 +1110,28 @@
 		var client = window.supabase.createClient(config.url, config.anonKey);
 		var currentResp = await client
 			.from('customer_orders')
-			.select('status')
+			.select('status, delivery_locked')
 			.eq('id', pt.customer_order_id)
 			.maybeSingle();
 		if (currentResp && !currentResp.error && currentResp.data) {
 			var currentDbStatus = currentResp.data.status;
-			if (currentDbStatus === 'delivered' && newStatus !== 'cancelled') {
+			var isLocked = !!currentResp.data.delivery_locked;
+			if ((currentDbStatus === 'delivered' || isLocked) && newStatus !== 'cancelled') {
 				throw new Error('Заказ уже завершен (delivered) и не может быть отправлен повторно');
 			}
 		}
 		var nowIso = new Date().toISOString();
 		var nextRetry = Number(pt.sync_1c_retry_count || 0) + 1;
+		var lockPatch = {};
+		if (newStatus === 'delivered') lockPatch.delivery_locked = true;
+		if (newStatus === 'cancelled') lockPatch.delivery_locked = false;
 		await client.from('customer_orders').update({
 			status: newStatus,
 			sync_1c_state: 'pending',
 			sync_1c_last_error: null,
 			sync_1c_status_sent: newStatus,
 			sync_1c_updated_at: nowIso,
+			...lockPatch,
 		}).eq('id', pt.customer_order_id);
 		await setRoutePointSyncState(routeId, ptIndex, {
 			sync_1c_state: 'pending',
@@ -1140,6 +1145,7 @@
 				sync_1c_last_error: null,
 				sync_1c_status_sent: newStatus,
 				sync_1c_updated_at: new Date().toISOString(),
+				...lockPatch,
 			}).eq('id', pt.customer_order_id);
 			await setRoutePointSyncState(routeId, ptIndex, {
 				sync_1c_state: 'ok',
@@ -1170,6 +1176,7 @@
 				sync_1c_last_error: null,
 				sync_1c_status_sent: newStatus,
 				sync_1c_updated_at: okTs,
+				...lockPatch,
 			}).eq('id', pt.customer_order_id);
 			await setRoutePointSyncState(routeId, ptIndex, {
 				sync_1c_state: 'ok',
@@ -1186,6 +1193,7 @@
 				sync_1c_retry_count: nextRetry,
 				sync_1c_status_sent: newStatus,
 				sync_1c_updated_at: errTs,
+				...lockPatch,
 			}).eq('id', pt.customer_order_id);
 			await setRoutePointSyncState(routeId, ptIndex, {
 				sync_1c_state: 'error',

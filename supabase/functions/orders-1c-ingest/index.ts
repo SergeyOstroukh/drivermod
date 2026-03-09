@@ -47,8 +47,10 @@ serve(async (req) => {
 
   function toRow(payload: OrderInput): Record<string, unknown> | null {
     if (!payload.order_1c_id || !payload.delivery_address) return null;
+    const normalizedOrderId = String(payload.order_1c_id).trim();
+    if (!normalizedOrderId) return null;
     return {
-      order_1c_id: String(payload.order_1c_id),
+      order_1c_id: normalizedOrderId,
       order_date: payload.order_date || today,
       customer_name: payload.customer_name ?? null,
       delivery_address: String(payload.delivery_address),

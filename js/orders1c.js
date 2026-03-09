@@ -19,6 +19,7 @@
   let driverNameById = {};
   let selectedIds = new Set();
   let realtimeChannel = null;
+  var _deliveryLockColumnMissing = false;
 
   function getSupabaseClient() {
     var config = window.SUPABASE_CONFIG || {};
@@ -177,7 +178,7 @@
 
     tbody.innerHTML = list
       .map(function (o) {
-        var canMoveToMap = !!MAP_ALLOWED_STATUSES[o.status || "new"];
+        var canMoveToMap = !!MAP_ALLOWED_STATUSES[o.status || "new"] && !o.delivery_locked;
         if (!canMoveToMap) selectedIds.delete(o.id);
         var checked = selectedIds.has(o.id) ? ' checked="checked"' : "";
         var statusLabel = STATUS_LABELS[o.status] || o.status;
@@ -195,7 +196,7 @@
           o.id +
           '"' +
           checked +
-          (canMoveToMap ? "" : ' disabled="disabled" title="Этот статус нельзя снова перенести на карту"') +
+          (canMoveToMap ? "" : ' disabled="disabled" title="Этот заказ уже закрыт для повторной доставки"') +
           " /></td>" +
           "<td>" +
           escapeHtml(String(o.order_1c_id || "")) +
@@ -318,7 +319,7 @@
   function updateSelectAllState() {
     var selectAll = document.getElementById("orders1cSelectAll");
     if (!selectAll) return;
-    var list = filteredOrders().filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"]; });
+    var list = filteredOrders().filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"] && !o.delivery_locked; });
     var checkedCount = list.filter(function (o) { return selectedIds.has(o.id); }).length;
     selectAll.checked = list.length > 0 && checkedCount === list.length;
     selectAll.indeterminate = checkedCount > 0 && checkedCount < list.length;
@@ -336,14 +337,31 @@
 
     var selectedDate = getSelectedDate();
     try {
+      var selectFields = _deliveryLockColumnMissing
+        ? "id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status, assigned_driver_id, sync_1c_state, sync_1c_last_error, sync_1c_retry_count, sync_1c_updated_at, sync_1c_status_sent"
+        : "id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status, assigned_driver_id, delivery_locked, sync_1c_state, sync_1c_last_error, sync_1c_retry_count, sync_1c_updated_at, sync_1c_status_sent";
       var resp = await client
         .from("customer_orders")
-        .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status, assigned_driver_id, sync_1c_state, sync_1c_last_error, sync_1c_retry_count, sync_1c_updated_at, sync_1c_status_sent")
+        .select(selectFields)
         .eq("order_date", selectedDate)
         .order("id", { ascending: true });
+      if (resp.error && !_deliveryLockColumnMissing && String(resp.error.message || "").indexOf("delivery_locked") !== -1) {
+        _deliveryLockColumnMissing = true;
+        resp = await client
+          .from("customer_orders")
+          .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status, assigned_driver_id, sync_1c_state, sync_1c_last_error, sync_1c_retry_count, sync_1c_updated_at, sync_1c_status_sent")
+          .eq("order_date", selectedDate)
+          .order("id", { ascending: true });
+      }
 
       if (resp.error) throw resp.error;
       var raw = resp.data || [];
+      if (_deliveryLockColumnMissing) {
+        raw = raw.map(function (o) {
+          o.delivery_locked = false;
+          return o;
+        });
+      }
       await loadDriverNameMap(client, raw);
       orders = raw.slice().sort(function (a, b) {
         var pa = STATUS_SORT_ORDER[a.status] !== undefined ? STATUS_SORT_ORDER[a.status] : 6;
@@ -444,11 +462,15 @@
     }
     var statusToSend = order.status || "assigned";
     var nextRetry = Number(order.sync_1c_retry_count || 0) + 1;
+    var lockPatch = {};
+    if (statusToSend === "delivered") lockPatch.delivery_locked = true;
+    if (statusToSend === "cancelled") lockPatch.delivery_locked = false;
     await client.from("customer_orders").update({
       sync_1c_state: "pending",
       sync_1c_last_error: null,
       sync_1c_status_sent: statusToSend,
       sync_1c_updated_at: new Date().toISOString(),
+      ...lockPatch,
     }).eq("id", order.id);
 
     var fnUrl = (config.url || "").replace(/\/$/, "") + "/functions/v1/push-order-status-to-1c";
@@ -471,6 +493,7 @@
         sync_1c_last_error: null,
         sync_1c_status_sent: statusToSend,
         sync_1c_updated_at: new Date().toISOString(),
+        ...lockPatch,
       }).eq("id", order.id);
     } catch (err) {
       await client.from("customer_orders").update({
@@ -479,6 +502,7 @@
         sync_1c_retry_count: nextRetry,
         sync_1c_status_sent: statusToSend,
         sync_1c_updated_at: new Date().toISOString(),
+        ...lockPatch,
       }).eq("id", order.id);
       alert("Ошибка синхронизации с 1С: " + ((err && err.message) ? err.message : String(err)));
     } finally {
@@ -489,8 +513,8 @@
   async function moveToMap() {
     var list = orders.filter(function (o) { return selectedIds.has(o.id); });
     if (list.length === 0) return;
-    var allowed = list.filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"]; });
-    var blocked = list.filter(function (o) { return !MAP_ALLOWED_STATUSES[o.status || "new"]; });
+    var allowed = list.filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"] && !o.delivery_locked; });
+    var blocked = list.filter(function (o) { return !MAP_ALLOWED_STATUSES[o.status || "new"] || o.delivery_locked; });
     if (blocked.length > 0) {
       var blockedNums = blocked.map(function (o) { return String(o.order_1c_id || o.id); }).join(", ");
       alert("Эти заказы нельзя повторно отправить в доставку: " + blockedNums);
@@ -500,11 +524,21 @@
     var client = getSupabaseClient();
     if (client) {
       var ids = allowed.map(function (o) { return o.id; });
-      var resp = await client
+      var upd = client
         .from("customer_orders")
         .update({ status: "on_map" })
         .in("id", ids)
         .in("status", ["new", "cancelled", "on_map"]);
+      if (!_deliveryLockColumnMissing) upd = upd.eq("delivery_locked", false);
+      var resp = await upd;
+      if (resp.error && !_deliveryLockColumnMissing && String(resp.error.message || "").indexOf("delivery_locked") !== -1) {
+        _deliveryLockColumnMissing = true;
+        resp = await client
+          .from("customer_orders")
+          .update({ status: "on_map" })
+          .in("id", ids)
+          .in("status", ["new", "cancelled", "on_map"]);
+      }
       if (resp.error) {
         if (resp.error.message && resp.error.message.indexOf("violates check constraint") !== -1) {
           alert("Не удалось поставить статус «На карте». Примените миграцию 032 (статус on_map) в Supabase → SQL Editor.");
@@ -569,7 +603,7 @@
     var selectAll = document.getElementById("orders1cSelectAll");
     if (selectAll) {
       selectAll.addEventListener("change", function () {
-        var list = filteredOrders().filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"]; });
+        var list = filteredOrders().filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"] && !o.delivery_locked; });
         if (selectAll.checked) {
           list.forEach(function (o) { selectedIds.add(o.id); });
         } else {
