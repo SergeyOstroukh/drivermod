@@ -3342,7 +3342,7 @@
 
     modal.innerHTML = '<div class="modal-content" style="max-width:420px;">' +
       '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Поставщики — сохранить выезд</h3>' +
-      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Поставщики будут сохранены как завершённый выезд в путевой лист. Точки останутся на карте до сброса.</div>' +
+      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Поставщики сохраняются в путевой лист. Если маршрут уже есть — добавляются только новые точки, статусы («Забран», «У поставщика») не сбрасываются.</div>' +
       '<div style="display:flex;flex-direction:column;gap:6px;">' +
       driverBtns +
       '<div style="border-top:1px solid #333;margin:4px 0;"></div>' +
@@ -3369,11 +3369,15 @@
     });
   }
 
+  function pointKey(pt) {
+    return (pt.address || '') + '|' + (pt.lat || '') + '|' + (pt.lng || '');
+  }
+
   async function finishSupplierRoute(driverId) {
     var routeDate = new Date().toISOString().split('T')[0];
     var driverName = getDriverNameById(driverId);
 
-    var supplierPoints = [];
+    var newSupplierPoints = [];
     orders.forEach(function (order, idx) {
       if (!order.isSupplier || order.isPoi) return;
       var did = getOrderDriverId(idx);
@@ -3386,7 +3390,7 @@
         phone: order.phone || null,
         timeSlot: order.timeSlot || null,
         formattedAddress: order.formattedAddress || null,
-        orderNum: supplierPoints.length + 1,
+        orderNum: 0,
         isSupplier: true,
         telegramSent: !!order.telegramSent,
         telegramStatus: order.telegramStatus || null,
@@ -3394,32 +3398,88 @@
         itemsSent: !!order.itemsSent,
         itemsSentText: order.itemsSentText || null,
       };
-      supplierPoints.push(pt);
+      newSupplierPoints.push(pt);
     });
 
-    if (supplierPoints.length === 0) {
+    if (newSupplierPoints.length === 0) {
       showToast('Нет поставщиков для ' + driverName, 'error');
       return;
     }
 
     try {
       var savedRoute = null;
-      if (window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
-        // Suppliers must be stored as a separate trip and never overwrite delivery trips.
-        savedRoute = await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId, 10), routeDate, supplierPoints);
-      } else {
-        savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId, 10), routeDate, supplierPoints);
+      var existingSupplierRoute = null;
+      var existingPoints = [];
+      if (window.VehiclesDB && window.VehiclesDB.getDriverRoutes) {
+        var allRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId, 10), routeDate);
+        var best = null;
+        allRoutes.forEach(function (r) {
+          var pts = r.points || [];
+          var supplierPts = pts.filter(function (p) { return p.isSupplier; });
+          if (supplierPts.length > 0 && pts.length === supplierPts.length) {
+            var statusCount = supplierPts.filter(function (p) {
+              return p.status && p.status !== 'assigned';
+            }).length;
+            if (!best) {
+              best = r;
+            } else {
+              var bestPts = best.points || [];
+              var bestStatusCount = bestPts.filter(function (p) {
+                return p.isSupplier && p.status && p.status !== 'assigned';
+              }).length;
+              if (statusCount > bestStatusCount || (statusCount === bestStatusCount && supplierPts.length >= (bestPts.filter(function (p) { return p.isSupplier; }).length))) {
+                best = r;
+              }
+            }
+          }
+        });
+        if (best) {
+          existingSupplierRoute = best;
+          existingPoints = best.points || [];
+        }
       }
-      if (savedRoute && savedRoute.id) {
-        await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+
+      var mergedPoints;
+      if (existingSupplierRoute && existingPoints.length > 0 && window.VehiclesDB && window.VehiclesDB.updateRoutePoints) {
+        var existingKeys = {};
+        existingPoints.forEach(function (p) { existingKeys[pointKey(p)] = true; });
+        var toAppend = [];
+        newSupplierPoints.forEach(function (np) {
+          if (!existingKeys[pointKey(np)]) {
+            existingKeys[pointKey(np)] = true;
+            toAppend.push(np);
+          }
+        });
+        if (toAppend.length === 0) {
+          showToast('Все поставщики уже в маршруте ' + driverName, 'info');
+          return;
+        }
+        mergedPoints = existingPoints.slice();
+        toAppend.forEach(function (np, i) {
+          var ordNum = mergedPoints.length + 1;
+          mergedPoints.push(Object.assign({}, np, { orderNum: ordNum }));
+        });
+        savedRoute = await window.VehiclesDB.updateRoutePoints(existingSupplierRoute.id, mergedPoints);
+        showToast('Добавлено ' + toAppend.length + ' поставщик(ов) в маршрут ' + driverName + '. Статусы сохранены.');
+      } else {
+        var supplierPoints = newSupplierPoints.map(function (pt, i) {
+          return Object.assign({}, pt, { orderNum: i + 1 });
+        });
+        if (window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
+          savedRoute = await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId, 10), routeDate, supplierPoints);
+        } else {
+          savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId, 10), routeDate, supplierPoints);
+        }
+        if (savedRoute && savedRoute.id) {
+          await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+        }
+        showToast('Поставщики для ' + driverName + ' сохранены (' + supplierPoints.length + '). Точки остаются на карте.');
       }
 
       saveState();
       flushCloudStateSave();
       _fitBoundsNext = true;
       renderAll();
-
-      showToast('Поставщики для ' + driverName + ' сохранены (' + supplierPoints.length + '). Точки остаются на карте.');
     } catch (err) {
       showToast('Ошибка: ' + err.message, 'error');
     }
