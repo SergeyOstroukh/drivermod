@@ -783,8 +783,9 @@
 	// ============================================
 
 	/**
-	 * Сохраняет маршруты водителей (upsert по driver_id + route_date)
-	 * @param {Array} routes - [{driver_id, route_date, points: [{address, lat, lng, phone, timeSlot, formattedAddress, orderNum}]}]
+	 * Добавляет выезды водителей (INSERT, не удаляет существующие — история сохраняется)
+	 * Каждое нажатие «Отправить в путевые листы» создаёт новые выезды, старые остаются.
+	 * @param {Array} routes - [{driver_id, route_date, points: [{address, lat, lng, ...}]}]
 	 */
 	async function saveDriverRoutes(routes) {
 		try {
@@ -792,15 +793,7 @@
 			const routeDate = routes[0]?.route_date;
 			if (!routeDate) throw new Error('Не указана дата маршрута');
 
-			// 1. Удаляем ВСЕ маршруты за эту дату (чтобы убранные водители не сохранили старые маршруты)
-			const { error: delError } = await client
-				.from('driver_routes')
-				.delete()
-				.eq('route_date', routeDate);
-
-			if (delError) throw delError;
-
-			// 2. Вставляем новые маршруты
+			// Только добавляем новые выезды — НЕ удаляем старые. История выездов и поставщиков сохраняется.
 			const { data, error } = await client
 				.from('driver_routes')
 				.insert(

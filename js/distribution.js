@@ -24,6 +24,8 @@
   let driverCount = 3;
   let selectedDriver = null;
   let editingDriverId = null; // режим редактирования маршрута водителя
+  let editingRouteId = null; // ID выезда при «Редактировать выезд»
+  let editingTripNum = 0; // номер выезда для баннера
   let isGeocoding = false;
   let mapInstance = null;
   let placemarks = [];
@@ -2810,7 +2812,7 @@
     const routesByDriver = {};
 
     orders.forEach(function (order, idx) {
-      if (!order.geocoded) return;
+      if (!order.geocoded && !order.isSupplier && !order.isPoi) return;
       var driverId = getOrderDriverId(idx);
       if (!driverId) return;
 
@@ -2937,8 +2939,79 @@
     }
   }
 
+  function cancelEditTrip() {
+    editingRouteId = null;
+    editingTripNum = 0;
+    editingDriverId = null;
+    selectedDriver = null;
+    renderAll();
+    showToast('Редактирование отменено');
+  }
+
+  async function saveEditedTrip() {
+    if (!editingRouteId || !editingDriverId || !window.VehiclesDB || !window.VehiclesDB.updateRoutePoints) {
+      showToast('Ошибка: данные для сохранения недоступны', 'error');
+      return;
+    }
+    var points = [];
+    orders.forEach(function (order, idx) {
+      if (!order.geocoded && !order.isSupplier && !order.isPoi) return;
+      var did = getOrderDriverId(idx);
+      if (!did || String(did) !== String(editingDriverId)) return;
+      var pt = {
+        address: order.address,
+        lat: order.lat,
+        lng: order.lng,
+        phone: order.phone || null,
+        timeSlot: order.timeSlot || null,
+        formattedAddress: order.formattedAddress || null,
+        orderNum: points.length + 1,
+      };
+      if (order.isSupplier) {
+        pt.isSupplier = true;
+        pt.telegramSent = !!order.telegramSent;
+        pt.telegramStatus = order.telegramStatus || null;
+        pt.items1c = order.items1c || null;
+        pt.itemsSent = !!order.itemsSent;
+        pt.itemsSentText = order.itemsSentText || null;
+      }
+      if (order.isPartner) { pt.isPartner = true; pt.partnerName = order.partnerName || order.address || null; }
+      if (order.isPoi) { pt.isPoi = true; pt.poiLabel = order.poiLabel || null; }
+      if (order.isKbt) {
+        pt.isKbt = true;
+        if (order.helperDriverSlot != null) {
+          var helperDrv = dbDrivers[order.helperDriverSlot];
+          pt.helperDriverName = helperDrv ? helperDrv.name : '?';
+          pt.helperDriverId = helperDrv ? helperDrv.id : null;
+        }
+      }
+      if (order.customer_order_id != null || order.order_1c_id) {
+        pt.customer_order_id = order.customer_order_id || null;
+        pt.order_1c_id = order.order_1c_id || null;
+        pt.status = order.status || 'assigned';
+      }
+      points.push(pt);
+    });
+    try {
+      await window.VehiclesDB.updateRoutePoints(parseInt(editingRouteId), points);
+      editingRouteId = null;
+      editingTripNum = 0;
+      var name = getDriverNameById(editingDriverId);
+      editingDriverId = null;
+      selectedDriver = null;
+      renderAll();
+      showToast('Выезд сохранён');
+    } catch (err) {
+      showToast('Ошибка сохранения: ' + (err && err.message) || 'Неизвестная ошибка', 'error');
+    }
+  }
+
   // ─── Sync edited route to driver cabinet ─────────────────
   async function finishEditing() {
+    if (editingRouteId) {
+      cancelEditTrip();
+      return;
+    }
     var driverId = editingDriverId;
     editingDriverId = null;
     selectedDriver = null;
@@ -2994,20 +3067,55 @@
   }
 
   // ─── Finish route per driver (multi-trip) ────────────────
-  function showFinishRouteDialog() {
+  async function showFinishRouteDialog() {
     var existing = document.getElementById('dcFinishRouteModal');
     if (existing) existing.remove();
 
-    // Count address orders (not suppliers, not POI) per driver
-    var driverAddrCounts = {};
+    // Считаем ВСЕ точки: заказы, поставщики, партнёры, POI
+    var driverPointCounts = {};
+    var driverPointDetails = {};
     orders.forEach(function (o, idx) {
-      if (o.isSupplier || o.isPoi || !o.geocoded) return;
+      if (!o.geocoded && !o.isSupplier && !o.isPoi) return;
       var did = getOrderDriverId(idx);
       if (!did) return;
       var key = String(did);
-      if (!driverAddrCounts[key]) driverAddrCounts[key] = 0;
-      driverAddrCounts[key]++;
+      if (!driverPointCounts[key]) {
+        driverPointCounts[key] = 0;
+        driverPointDetails[key] = { addr: 0, sup: 0, part: 0, poi: 0 };
+      }
+      driverPointCounts[key]++;
+      if (o.isSupplier) driverPointDetails[key].sup++;
+      else if (o.isPartner) driverPointDetails[key].part++;
+      else if (o.isPoi) driverPointDetails[key].poi++;
+      else driverPointDetails[key].addr++;
     });
+
+    var totalPoints = 0;
+    Object.keys(driverPointCounts).forEach(function (k) { totalPoints += driverPointCounts[k]; });
+    if (totalPoints === 0) {
+      showToast('Нет точек для отправки в путевые листы', 'error');
+      return;
+    }
+
+    // Существующие выезды на сегодня — показываем какой будет создан
+    var routeDate = new Date().toISOString().split('T')[0];
+    var existingByDriver = {};
+    if (window.VehiclesDB && window.VehiclesDB.getRoutesByDate) {
+      try {
+        var allRoutes = await window.VehiclesDB.getRoutesByDate(routeDate);
+        (allRoutes || []).forEach(function (r) {
+          var did = String(r.driver_id != null ? r.driver_id : (r.driverId || ''));
+          if (!did) return;
+          if (!existingByDriver[did]) existingByDriver[did] = 0;
+          existingByDriver[did]++;
+        });
+      } catch (e) { /* ignore */ }
+    }
+
+    function tripLabel(driverId) {
+      var next = (existingByDriver[String(driverId)] || 0) + 1;
+      return '→ выезд №' + next;
+    }
 
     var modal = document.createElement('div');
     modal.id = 'dcFinishRouteModal';
@@ -3016,32 +3124,43 @@
 
     var driverBtns = '';
     dbDrivers.forEach(function (dr, di) {
-      var count = driverAddrCounts[String(dr.id)] || 0;
+      var count = driverPointCounts[String(dr.id)] || 0;
       if (count === 0) return;
       var c = COLORS[di % COLORS.length];
-      var label = dr.name.split(' ')[0];
+      var label = (dr.name || '').split(' ')[0];
+      var d = driverPointDetails[String(dr.id)] || {};
+      var parts = [];
+      if (d.addr) parts.push(d.addr + ' адр.');
+      if (d.sup) parts.push(d.sup + ' пост.');
+      if (d.part) parts.push(d.part + ' парт.');
+      if (d.poi) parts.push(d.poi + ' ПВЗ');
+      var detail = parts.length ? ' (' + parts.join(', ') + ')' : '';
       driverBtns += '<button class="btn btn-outline dc-finish-route-driver" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
         '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
         '<span style="flex:1;text-align:left;">' + escapeHtml(label) + '</span>' +
-        '<span style="color:#888;font-size:11px;">' + count + ' адр.</span>' +
+        '<span style="color:#888;font-size:11px;">' + count + ' т.' + detail + ' ' + tripLabel(dr.id) + '</span>' +
         '</button>';
     });
 
-    if (!driverBtns) {
-      showToast('Нет адресов для отправки в путевые листы', 'error');
-      return;
-    }
+    var allSummary = [];
+    Object.keys(driverPointCounts).forEach(function (k) {
+      var name = (dbDrivers.find(function (d) { return String(d.id) === k; }) || {}).name || ('Водитель ' + k);
+      var short = (name || '').split(' ')[0];
+      allSummary.push(short + ': ' + tripLabel(k) + ' (' + driverPointCounts[k] + ' т.)');
+    });
 
-    var totalAddrs = 0;
-    Object.keys(driverAddrCounts).forEach(function (k) { totalAddrs += driverAddrCounts[k]; });
-
-    modal.innerHTML = '<div class="modal-content" style="max-width:400px;">' +
+    modal.innerHTML = '<div class="modal-content" style="max-width:480px;">' +
       '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Отправить в путевые листы</h3>' +
-      '<div style="font-size:12px;color:#888;margin-bottom:8px;">Адреса будут сохранены как выезд в кабинете водителя.<br>Поставщики остаются на карте.<br>Заказы из 1С получат статус «В доставке».</div>' +
+      '<div style="font-size:12px;color:#888;margin-bottom:10px;">' +
+      'Будет создан <b style="color:#22c55e;">новый выезд</b>. Существующие выезды не изменяются.<br>' +
+      'Сохраняются: заказы, поставщики, партнёры, ПВЗ.</div>' +
+      '<div style="font-size:11px;color:#666;margin-bottom:8px;padding:8px;background:rgba(0,0,0,0.2);border-radius:6px;">' +
+      'Дата: ' + routeDate + (Object.keys(existingByDriver).length ? ' · Уже есть выезды у ' + Object.keys(existingByDriver).length + ' водителей' : '') + '</div>' +
       '<div style="display:flex;flex-direction:column;gap:6px;">' +
       driverBtns +
       '<div style="border-top:1px solid #333;margin:4px 0;"></div>' +
-      '<button class="btn btn-outline dc-finish-route-driver" data-driver-id="__all__" style="color:var(--accent);border-color:var(--accent);width:100%;">Все водители (' + totalAddrs + ' адр.)</button>' +
+      '<button class="btn btn-outline dc-finish-route-driver" data-driver-id="__all__" style="color:var(--accent);border-color:var(--accent);width:100%;">Все водители (' + totalPoints + ' точек)</button>' +
+      '<div style="font-size:11px;color:#666;">' + allSummary.join(' · ') + '</div>' +
       '<button class="btn btn-outline dc-finish-route-cancel" style="margin-top:4px;width:100%;">Отмена</button>' +
       '</div></div>';
 
@@ -3054,13 +3173,178 @@
         modal.remove();
         var driverId = btn.dataset.driverId;
         if (driverId === '__all__') {
-          // Batch: сохраняет маршруты ВСЕХ водителей включая КБТ-помощников (у них 0 своих адресов)
           await finishDistribution();
         } else {
           await finishDriverRoute(driverId);
         }
       });
     });
+  }
+
+  async function showEditTripDialog() {
+    var existing = document.getElementById('dcEditTripModal');
+    if (existing) existing.remove();
+
+    var routeDate = new Date().toISOString().split('T')[0];
+    var allRoutes = [];
+    if (window.VehiclesDB && window.VehiclesDB.getRoutesByDate) {
+      try {
+        allRoutes = await window.VehiclesDB.getRoutesByDate(routeDate) || [];
+      } catch (e) { /* ignore */ }
+    }
+
+    var routesByDriver = {};
+    allRoutes.forEach(function (r) {
+      var did = String(r.driver_id != null ? r.driver_id : (r.driverId || ''));
+      if (!did) return;
+      if (!routesByDriver[did]) routesByDriver[did] = [];
+      var dr = r.driver || (r.drivers && (Array.isArray(r.drivers) ? r.drivers[0] : r.drivers));
+      var pts = (r.points || []).length;
+      routesByDriver[did].push({
+        route: r,
+        tripNum: routesByDriver[did].length + 1,
+        pointsCount: pts,
+      });
+    });
+
+    if (Object.keys(routesByDriver).length === 0) {
+      showToast('Нет выездов для редактирования на сегодня', 'error');
+      return;
+    }
+
+    var modal = document.createElement('div');
+    modal.id = 'dcEditTripModal';
+    modal.className = 'modal is-open';
+    modal.style.cssText = 'z-index:10000;';
+
+    var step = 1;
+    var selectedDriverId = null;
+    var selectedRoute = null;
+
+    function renderModal() {
+      if (step === 1) {
+        var driverBtns = '';
+        dbDrivers.forEach(function (dr, di) {
+          var list = routesByDriver[String(dr.id)] || [];
+          if (list.length === 0) return;
+          var c = COLORS[di % COLORS.length];
+          driverBtns += '<button class="btn btn-outline dc-edit-trip-driver" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
+            '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
+            '<span style="flex:1;text-align:left;">' + escapeHtml(dr.name) + '</span>' +
+            '<span style="color:#888;font-size:11px;">' + list.length + ' выезд.</span>' +
+            '</button>';
+        });
+        modal.innerHTML = '<div class="modal-content" style="max-width:420px;">' +
+          '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Редактировать выезд</h3>' +
+          '<div style="font-size:12px;color:#888;margin-bottom:10px;">1. Выберите водителя</div>' +
+          '<div style="display:flex;flex-direction:column;gap:6px;">' + driverBtns +
+          '<button class="btn btn-outline dc-edit-trip-cancel" style="margin-top:8px;width:100%;">Отмена</button>' +
+          '</div></div>';
+      } else if (step === 2 && selectedDriverId) {
+        var list = routesByDriver[String(selectedDriverId)] || [];
+        var driverName = (dbDrivers.find(function (d) { return String(d.id) === String(selectedDriverId); }) || {}).name || 'Водитель';
+        var tripBtns = '';
+        list.forEach(function (t) {
+          var addr = (t.route.points || []).filter(function (p) { return !p.isSupplier; }).length;
+          var sup = (t.route.points || []).filter(function (p) { return p.isSupplier; }).length;
+          var desc = [];
+          if (addr) desc.push(addr + ' адр.');
+          if (sup) desc.push(sup + ' пост.');
+          tripBtns += '<button class="btn btn-outline dc-edit-trip-select" data-route-id="' + t.route.id + '" data-trip-num="' + t.tripNum + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
+            '<span style="font-weight:700;">Выезд №' + t.tripNum + '</span>' +
+            '<span style="color:#888;font-size:11px;">' + (desc.length ? desc.join(', ') : t.pointsCount + ' т.') + '</span>' +
+            '</button>';
+        });
+        modal.innerHTML = '<div class="modal-content" style="max-width:420px;">' +
+          '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Редактировать выезд</h3>' +
+          '<div style="font-size:12px;color:#888;margin-bottom:10px;">2. Водитель: <b style="color:#ddd;">' + escapeHtml(driverName) + '</b>. Выберите выезд:</div>' +
+          '<div style="display:flex;flex-direction:column;gap:6px;">' + tripBtns +
+          '<button class="btn btn-outline dc-edit-trip-back" style="margin-top:8px;width:100%;">← Назад</button>' +
+          '<button class="btn btn-outline dc-edit-trip-cancel" style="width:100%;">Отмена</button>' +
+          '</div></div>';
+      }
+      bindEditTripModalEvents();
+    }
+
+    function bindEditTripModalEvents() {
+      modal.querySelectorAll('.dc-edit-trip-driver').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          selectedDriverId = btn.dataset.driverId;
+          step = 2;
+          renderModal();
+        });
+      });
+      modal.querySelectorAll('.dc-edit-trip-select').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var routeId = parseInt(btn.dataset.routeId);
+          var tripNum = parseInt(btn.dataset.tripNum);
+          var list = routesByDriver[String(selectedDriverId)] || [];
+          var t = list.find(function (x) { return x.route.id === routeId; });
+          if (!t) return;
+          modal.remove();
+          await loadTripForEditing(t.route, selectedDriverId, tripNum);
+          if (typeof window.switchSection === 'function') window.switchSection('distribution');
+          renderAll();
+        });
+      });
+      var backBtn = modal.querySelector('.dc-edit-trip-back');
+      if (backBtn) backBtn.addEventListener('click', function () { step = 1; selectedDriverId = null; renderModal(); });
+      var cancelBtn = modal.querySelector('.dc-edit-trip-cancel');
+      if (cancelBtn) cancelBtn.addEventListener('click', function () { modal.remove(); });
+    }
+
+    renderModal();
+    document.body.appendChild(modal);
+  }
+
+  function loadTripForEditing(route, driverId, tripNum) {
+    var pts = (route.points || []).slice();
+    var driverIdx = dbDrivers.findIndex(function (d) { return String(d.id) === String(driverId); });
+    if (driverIdx < 0) driverIdx = 0;
+    orders = [];
+    assignments = [];
+    pts.forEach(function (pt) {
+      var order = {
+        id: 'pt_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        address: pt.address || '',
+        lat: pt.lat,
+        lng: pt.lng,
+        geocoded: !!(pt.lat && pt.lng),
+        phone: pt.phone || null,
+        timeSlot: pt.timeSlot || null,
+        formattedAddress: pt.formattedAddress || null,
+        isSupplier: !!pt.isSupplier,
+        isPartner: !!pt.isPartner,
+        isPoi: !!pt.isPoi,
+        isKbt: !!pt.isKbt,
+        telegramSent: !!pt.telegramSent,
+        telegramStatus: pt.telegramStatus || null,
+        items1c: pt.items1c || null,
+        itemsSent: !!pt.itemsSent,
+        itemsSentText: pt.itemsSentText || null,
+        partnerName: pt.partnerName || null,
+        poiLabel: pt.poiLabel || null,
+        customer_order_id: pt.customer_order_id || null,
+        order_1c_id: pt.order_1c_id || null,
+        status: pt.status || 'assigned',
+      };
+      if (pt.isKbt && pt.helperDriverSlot != null) {
+        order.helperDriverSlot = pt.helperDriverSlot;
+      } else if (pt.helperDriverId && dbDrivers) {
+        var hi = dbDrivers.findIndex(function (d) { return String(d.id) === String(pt.helperDriverId); });
+        if (hi >= 0) order.helperDriverSlot = hi;
+      }
+      orders.push(order);
+      assignments.push(parseInt(driverId));
+    });
+    driverSlots = dbDrivers.map(function (d) { return d.id; });
+    selectedDriver = null;
+    editingRouteId = route.id;
+    editingDriverId = driverId;
+    editingTripNum = tripNum;
+    variants = [];
+    activeVariant = -1;
+    _fitBoundsNext = true;
   }
 
   async function finishDriverRoute(driverId) {
@@ -3128,37 +3412,15 @@
     var supCount = points.length - addrCount;
 
     try {
-      var saveMode = 'new'; // default: create new trip
-      var existingRoutes = [];
-      var latestRoute = null;
-      if (window.VehiclesDB && window.VehiclesDB.getDriverRoutes) {
-        existingRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId), routeDate);
-        latestRoute = (existingRoutes && existingRoutes.length) ? existingRoutes[existingRoutes.length - 1] : null;
-        if (existingRoutes && existingRoutes.length > 0) {
-          var newSig = buildRoutePointsSignature(points);
-          var duplicateRouteId = null;
-          for (var ri = 0; ri < existingRoutes.length; ri++) {
-            var r = existingRoutes[ri];
-            if (!r || !Array.isArray(r.points)) continue;
-            if (buildRoutePointsSignature(r.points) === newSig) {
-              duplicateRouteId = r.id;
-              break;
-            }
-          }
-          var selected = await askExistingTripAction(driverName, routeDate, !!duplicateRouteId);
-          if (!selected) return; // cancel
-          saveMode = selected; // 'new' | 'edit'
-        }
-      }
-
-      // Save route based on selected mode, then mark completed
+      // Всегда создаём новый выезд — никогда не перезаписываем. История сохраняется.
       var savedRoute;
-      if (saveMode === 'edit' && latestRoute && window.VehiclesDB && window.VehiclesDB.updateRoutePoints) {
-        savedRoute = await window.VehiclesDB.updateRoutePoints(latestRoute.id, points);
-      } else if (window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
+      if (window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
         savedRoute = await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId), routeDate, points);
+      } else if (window.VehiclesDB && window.VehiclesDB.saveDriverRoutes) {
+        var saved = await window.VehiclesDB.saveDriverRoutes([{ driver_id: parseInt(driverId), route_date: routeDate, points: points }]);
+        savedRoute = saved && saved[0] ? saved[0] : null;
       } else {
-        savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId), routeDate, points);
+        throw new Error('VehiclesDB недоступен');
       }
       if (savedRoute && savedRoute.id) {
         await window.VehiclesDB.completeDriverRoute(savedRoute.id);
@@ -4495,11 +4757,22 @@
 
       // Edit mode banner
       var editBannerHtml = '';
-      if (editingDriverId) {
+      if (editingRouteId && editingDriverId) {
         var editDrv = dbDrivers.find(function (d) { return String(d.id) === String(editingDriverId); });
         var editDi = dbDrivers.indexOf(editDrv);
         var editColor = editDi >= 0 ? COLORS[editDi % COLORS.length] : '#888';
-        var editName = editDrv ? editDrv.name.split(' ')[0] : '?';
+        var editName = editDrv ? (editDrv.name || '').split(' ')[0] : '?';
+        editBannerHtml = '<div class="dc-edit-mode-banner" style="background:rgba(107,114,128,0.2);border:1px solid #6b7280;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+          '<span style="width:14px;height:14px;border-radius:50%;background:' + editColor + ';flex-shrink:0;"></span>' +
+          '<span style="flex:1;font-size:13px;font-weight:600;color:#e0e0e0;">Редактируете выезд №' + editingTripNum + ' (' + escapeHtml(editName) + '). Добавьте точки и нажмите Сохранить.</span>' +
+          '<button class="btn btn-sm dc-save-edited-trip" style="background:#22c55e;color:#fff;border:none;font-size:11px;padding:4px 12px;">Сохранить выезд</button>' +
+          '<button class="btn btn-sm dc-edit-mode-done" style="background:#6b7280;color:#fff;border:none;font-size:11px;padding:4px 12px;">Отмена</button>' +
+          '</div>';
+      } else if (editingDriverId) {
+        var editDrv = dbDrivers.find(function (d) { return String(d.id) === String(editingDriverId); });
+        var editDi = dbDrivers.indexOf(editDrv);
+        var editColor = editDi >= 0 ? COLORS[editDi % COLORS.length] : '#888';
+        var editName = editDrv ? (editDrv.name || '').split(' ')[0] : '?';
         editBannerHtml = '<div class="dc-edit-mode-banner" style="background:rgba(59,130,246,0.15);border:1px solid #3b82f6;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">' +
           '<span style="width:14px;height:14px;border-radius:50%;background:' + editColor + ';flex-shrink:0;"></span>' +
           '<span style="flex:1;font-size:13px;font-weight:600;color:#e0e0e0;">Редактирование: ' + escapeHtml(editName) + '</span>' +
@@ -4550,10 +4823,10 @@
       variantsHtml += '</div>';
     }
 
-    // Finish button — show when any order has a driver assigned
+    // Finish button — show when any order has a driver assigned (скрываем при редактировании выезда)
     let finishHtml = '';
     var hasAnyDriverAssigned = orders.some(function (o, i) { return getOrderDriverId(i) != null; });
-    if (hasAnyDriverAssigned) {
+    if (hasAnyDriverAssigned && !editingRouteId) {
       // Count suppliers by Telegram status
       var unsentSupplierCount = orders.filter(function (o, i) { return o.isSupplier && o.geocoded && !o.telegramSent && getOrderDriverId(i); }).length;
       var pendingCount = orders.filter(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; }).length;
@@ -4573,6 +4846,8 @@
         '<button class="btn dc-btn-finish ready">' +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg> ' +
         'Отправить в путевые листы</button>' +
+        '<button class="btn dc-btn-edit-trip" style="background:#6b7280;color:#fff;border:none;margin-top:4px;display:flex;align-items:center;gap:6px;">' +
+        '✎ Редактировать выезд</button>' +
         '<button class="btn dc-btn-finish-suppliers" style="background:#10b981;color:#fff;border:none;margin-top:4px;display:flex;align-items:center;gap:6px;">' +
         '🏁 Поставщики — сохранить выезд</button>' +
         '<button class="btn dc-btn-telegram" style="background:#229ED9;color:#fff;border:none;margin-top:6px;display:flex;align-items:center;gap:6px;">' +
@@ -5081,6 +5356,8 @@
     // Finish distribution
     const finishBtn = sidebar.querySelector('.dc-btn-finish');
     if (finishBtn) finishBtn.addEventListener('click', showFinishRouteDialog);
+    const editTripBtn = sidebar.querySelector('.dc-btn-edit-trip');
+    if (editTripBtn) editTripBtn.addEventListener('click', showEditTripDialog);
     const finishSuppliersBtn = sidebar.querySelector('.dc-btn-finish-suppliers');
     if (finishSuppliersBtn) finishSuppliersBtn.addEventListener('click', showFinishSuppliersDialog);
     const telegramBtn = sidebar.querySelector('.dc-btn-telegram');
@@ -5135,11 +5412,18 @@
       });
     });
 
-    // Edit mode "Done" button
+    // Edit mode "Done" / "Отмена" button
     var doneBtn = sidebar.querySelector('.dc-edit-mode-done');
     if (doneBtn) {
       doneBtn.addEventListener('click', function () {
         finishEditing();
+      });
+    }
+    // Save edited trip button
+    var saveEditBtn = sidebar.querySelector('.dc-save-edited-trip');
+    if (saveEditBtn) {
+      saveEditBtn.addEventListener('click', function () {
+        saveEditedTrip();
       });
     }
 

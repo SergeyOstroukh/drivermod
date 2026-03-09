@@ -847,7 +847,7 @@
 			var helperPt = trip.points.find(function (pt) { return pt.isKbtHelper && pt.mainDriverName; });
 			var isHelperTrip = !!helperPt;
 
-			html += '<details class="route-trip-details route-trip-card" ' + (allDone ? '' : 'open') + ' style="margin-bottom:12px;">';
+			html += '<details class="route-trip-details route-trip-card' + (allDone ? ' route-trip-completed' : '') + '" ' + (allDone ? '' : 'open') + ' style="margin-bottom:12px;">';
 			html += '<summary class="route-trip-summary" style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
 			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
 			html += icon + ' Выезд ' + trip.tripNum;
@@ -867,8 +867,9 @@
 
 			// Actions for active trip
 			if (!allDone) {
-				html += '<div style="display:flex;gap:8px;margin-bottom:8px;padding:4px 0;">';
+				html += '<div style="display:flex;gap:8px;margin-bottom:8px;padding:4px 0;flex-wrap:wrap;">';
 				html += '<button class="btn btn-primary btn-sm route-build-trip-btn" data-route-id="' + trip.route.id + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg> Построить маршрут</button>';
+				html += '<button class="btn btn-outline btn-sm route-complete-trip-btn" data-route-id="' + trip.route.id + '" title="Отметить выезд как завершённый">✓ Завершить выезд</button>';
 				html += '</div>';
 			}
 
@@ -1030,6 +1031,20 @@
 				if (!tab || tab === driverRouteViewTab) return;
 				driverRouteViewTab = tab;
 				renderDriverRoutes(currentRoutesData);
+			});
+		});
+
+		// Complete trip button (whole trip)
+		document.querySelectorAll('.route-complete-trip-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var routeId = btn.dataset.routeId;
+				if (!routeId || !window.VehiclesDB || !window.VehiclesDB.completeDriverRoute) return;
+				try {
+					await window.VehiclesDB.completeDriverRoute(parseInt(routeId));
+					await refreshDriverRoute();
+				} catch (err) {
+					console.error('Ошибка завершения выезда:', err);
+				}
 			});
 		});
 
@@ -4743,6 +4758,8 @@
 		if (_deliveriesFilterDriverId) {
 			rows = rows.filter(function (r) { return String(r.driverId) === String(_deliveriesFilterDriverId); });
 			routes = routes.filter(function (r) { return String(r.driverId) === String(_deliveriesFilterDriverId); });
+			// Перенумеровать выезды по порядку для выбранного водителя (1, 2, 3...)
+			routes = routes.map(function (t, ti) { return Object.assign({}, t, { tripNum: ti + 1 }); });
 		}
 		if (_deliveriesFilterStatus) {
 			var statusOk = function (r) {
@@ -4810,9 +4827,10 @@
 		}
 	}
 
-	// Expose functions needed by inline HTML handlers
+	// Expose functions needed by inline HTML handlers and other modules
 	window.closeDriverRoute = closeDriverRoute;
 	window.refreshDriverRoute = refreshDriverRoute;
+	window.switchSection = switchSection;
 
 	document.addEventListener("DOMContentLoaded", init);
 })();
