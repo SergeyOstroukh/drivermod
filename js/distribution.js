@@ -2873,23 +2873,21 @@
           for (var ri = 0; ri < savedRoutes.length; ri++) {
             var r = savedRoutes[ri];
             var pts = r.points || [];
+            var routePointsChanged = false;
             for (var pi = 0; pi < pts.length; pi++) {
               var pt = pts[pi];
               if (pt.customer_order_id != null) {
-                await client.from('customer_orders').update({
-                  assigned_driver_id: r.driver_id,
-                  driver_route_id: r.id,
-                  status: 'in_delivery',
-                }).eq('id', pt.customer_order_id);
-              }
-              if (pt.order_1c_id) {
-                var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
-                if (fnUrl && fnUrl.indexOf('http') === 0) {
-                  var hdrs = { 'Content-Type': 'application/json' };
-                  if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
-                  fetch(fnUrl, { method: 'POST', headers: hdrs, body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+                var syncMeta = await syncCustomerOrderStatusTo1C(client, config, pt.customer_order_id, pt.order_1c_id, 'in_delivery', r.driver_id, r.id);
+                if (syncMeta) {
+                  pts[pi] = Object.assign({}, pt, syncMeta);
+                  routePointsChanged = true;
                 }
               }
+            }
+            if (routePointsChanged && window.VehiclesDB && typeof window.VehiclesDB.updateRoutePoints === 'function') {
+              try {
+                await window.VehiclesDB.updateRoutePoints(r.id, pts);
+              } catch (_) {}
             }
           }
         }
@@ -3167,20 +3165,22 @@
         for (var pi = 0; pi < points.length; pi++) {
           var p = points[pi];
           if (p.customer_order_id != null) {
-            await client.from('customer_orders').update({
-              assigned_driver_id: parseInt(driverId),
-              driver_route_id: savedRoute ? savedRoute.id : null,
-              status: 'in_delivery',
-            }).eq('id', p.customer_order_id);
-          }
-          if (p.order_1c_id) {
-            var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
-            if (fnUrl && fnUrl.indexOf('http') === 0) {
-              var hdrs = { 'Content-Type': 'application/json' };
-              if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
-              fetch(fnUrl, { method: 'POST', headers: hdrs, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
+            var pointSyncMeta = await syncCustomerOrderStatusTo1C(
+              client,
+              config,
+              p.customer_order_id,
+              p.order_1c_id,
+              'in_delivery',
+              parseInt(driverId),
+              savedRoute ? savedRoute.id : null
+            );
+            if (pointSyncMeta) {
+              points[pi] = Object.assign({}, p, pointSyncMeta);
             }
           }
+        }
+        if (savedRoute && savedRoute.id && window.VehiclesDB && typeof window.VehiclesDB.updateRoutePoints === 'function') {
+          try { await window.VehiclesDB.updateRoutePoints(savedRoute.id, points); } catch (_) {}
         }
       }
 
@@ -3766,6 +3766,66 @@
       window._dcSupabase = supabase.createClient(config.url, config.anonKey);
     }
     return window._dcSupabase;
+  }
+
+  async function syncCustomerOrderStatusTo1C(client, config, customerOrderId, order1cId, statusValue, driverId, routeId) {
+    if (!client || customerOrderId == null) return null;
+    var nowIso = new Date().toISOString();
+    await client.from('customer_orders').update({
+      assigned_driver_id: driverId != null ? driverId : null,
+      driver_route_id: routeId != null ? routeId : null,
+      status: statusValue,
+      sync_1c_state: order1cId ? 'pending' : null,
+      sync_1c_last_error: null,
+      sync_1c_status_sent: statusValue,
+      sync_1c_updated_at: nowIso,
+    }).eq('id', customerOrderId);
+    if (!order1cId) return { sync_1c_state: null, sync_1c_last_error: null, sync_1c_status_sent: statusValue, sync_1c_updated_at: nowIso };
+    var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+    if (!fnUrl || fnUrl.indexOf('http') !== 0) {
+      await client.from('customer_orders').update({
+        sync_1c_state: 'error',
+        sync_1c_last_error: 'Invalid Supabase function URL',
+        sync_1c_status_sent: statusValue,
+        sync_1c_updated_at: new Date().toISOString(),
+      }).eq('id', customerOrderId);
+      return { sync_1c_state: 'error', sync_1c_last_error: 'Invalid Supabase function URL', sync_1c_status_sent: statusValue, sync_1c_updated_at: new Date().toISOString() };
+    }
+    var hdrs = { 'Content-Type': 'application/json' };
+    if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
+    try {
+      var response = await fetch(fnUrl, {
+        method: 'POST',
+        headers: hdrs,
+        body: JSON.stringify({ order_1c_id: order1cId, status: statusValue }),
+      });
+      var payload = {};
+      try { payload = await response.json(); } catch (_) {}
+      if (!response.ok || payload.ok === false || payload.sent === false) {
+        var errText = (payload && (payload.error || payload.message)) || ('HTTP ' + response.status);
+        throw new Error(errText);
+      }
+      await client.from('customer_orders').update({
+        sync_1c_state: 'ok',
+        sync_1c_last_error: null,
+        sync_1c_status_sent: statusValue,
+        sync_1c_updated_at: new Date().toISOString(),
+      }).eq('id', customerOrderId);
+      return { sync_1c_state: 'ok', sync_1c_last_error: null, sync_1c_status_sent: statusValue, sync_1c_updated_at: new Date().toISOString() };
+    } catch (err) {
+      await client.from('customer_orders').update({
+        sync_1c_state: 'error',
+        sync_1c_last_error: err && err.message ? err.message : String(err),
+        sync_1c_status_sent: statusValue,
+        sync_1c_updated_at: new Date().toISOString(),
+      }).eq('id', customerOrderId);
+      return {
+        sync_1c_state: 'error',
+        sync_1c_last_error: err && err.message ? err.message : String(err),
+        sync_1c_status_sent: statusValue,
+        sync_1c_updated_at: new Date().toISOString(),
+      };
+    }
   }
 
   // Save/update confirmation record when sending.

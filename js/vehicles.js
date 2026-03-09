@@ -930,6 +930,11 @@
 		} else if (pt.order_1c_id || pt.customer_order_id) {
 			var statusLabel = s === 'in_delivery' ? 'В доставке' : (s === 'delivered' ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'Распределён'));
 			var orderLabel = pt.order_1c_id ? ('Заказ 1С: ' + pt.order_1c_id) : ('Заказ 1С #' + pt.customer_order_id);
+			var syncState = pt.sync_1c_state || (pt.order_1c_id ? 'pending' : '');
+			var syncLine = syncState === 'ok'
+				? '✓ Синхронизировано с 1С'
+				: (syncState === 'error' ? '⚠ Ошибка 1С' : (syncState ? '⏳ Ждет отправки в 1С' : ''));
+			var hasSyncError = !!pt.sync_1c_last_error;
 			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
 			h += '<span style="font-size:11px;color:#888;">' + orderLabel + ' — ' + statusLabel + '</span>';
 			if (s !== 'delivered' && s !== 'cancelled') {
@@ -938,6 +943,15 @@
 				h += '<button type="button" class="btn btn-outline btn-sm route-1c-status-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '" data-status="cancelled" style="color:var(--danger);border-color:var(--danger);">Отменён</button>';
 			}
 			h += '</div>';
+			if (syncLine) {
+				h += '<div class="route-point-meta" style="margin-top:4px;">' + syncLine + '</div>';
+			}
+			if (hasSyncError) {
+				h += '<div class="route-point-meta" style="margin-top:4px;color:var(--danger);">' + escapeHtml(String(pt.sync_1c_last_error || '')) + '</div>';
+				h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+				h += '<button type="button" class="btn btn-outline btn-sm route-1c-retry-btn" data-route-id="' + routeId + '" data-pt-index="' + ptIndex + '">Повторить отправку в 1С</button>';
+				h += '</div>';
+			}
 		} else {
 			var statusLabel = s === 'in_delivery' ? 'В пути' : (s === 'completed' ? 'Доставлен' : (s === 'cancelled' ? 'Отменён' : 'В маршруте'));
 			h += '<div class="route-point-status" style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
@@ -992,6 +1006,13 @@
 				await set1COrderStatus(routeId, ptIndex, newStatus);
 			});
 		});
+		document.querySelectorAll('.route-1c-retry-btn').forEach(function (btn) {
+			btn.addEventListener('click', async function () {
+				var routeId = btn.dataset.routeId;
+				var ptIndex = parseInt(btn.dataset.ptIndex);
+				await retry1CStatusSync(routeId, ptIndex);
+			});
+		});
 
 		// Поставщик/партнёр — смена статуса
 		document.querySelectorAll('.route-supplier-status-btn').forEach(function (btn) {
@@ -1029,34 +1050,10 @@
 					for (var ri = 0; ri < currentRoutesData.length; ri++) {
 						var route = currentRoutesData[ri];
 						var pts = route.points || [];
-						var changed = false;
-						var newPoints = pts.map(function (pt) {
-							if ((pt.order_1c_id || pt.customer_order_id) && pt.status !== 'in_delivery' && pt.status !== 'delivered' && pt.status !== 'cancelled') {
-								changed = true;
-								return Object.assign({}, pt, { status: 'in_delivery' });
-							}
-							return pt;
-						});
-						if (changed) {
-							var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
-							currentRoutesData[ri] = updated;
-							for (var pi = 0; pi < newPoints.length; pi++) {
-								var p = newPoints[pi];
-								if (p.status === 'in_delivery' && p.customer_order_id) {
-									var config = window.SUPABASE_CONFIG || {};
-									if (config.url && window.supabase) {
-										var client = window.supabase.createClient(config.url, config.anonKey);
-										await client.from('customer_orders').update({ status: 'in_delivery' }).eq('id', p.customer_order_id);
-									}
-									if (p.order_1c_id) {
-										var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
-										if (fnUrl && fnUrl.indexOf('http') === 0) {
-											var hdrs = { 'Content-Type': 'application/json' };
-											if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
-											fetch(fnUrl, { method: 'POST', headers: hdrs, body: JSON.stringify({ order_1c_id: p.order_1c_id, status: 'in_delivery' }) }).catch(function () {});
-										}
-									}
-								}
+						for (var pi = 0; pi < pts.length; pi++) {
+							var p = pts[pi];
+							if ((p.order_1c_id || p.customer_order_id) && p.status !== 'in_delivery' && p.status !== 'delivered' && p.status !== 'cancelled') {
+								await set1COrderStatus(route.id, pi, 'in_delivery');
 							}
 						}
 					}
@@ -1076,42 +1073,156 @@
 		});
 	}
 
+	async function setRoutePointSyncState(routeId, ptIndex, patch) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points || !route.points[ptIndex]) return null;
+		var newPoints = route.points.map(function (p, i) {
+			return i === ptIndex ? Object.assign({}, p, patch) : p;
+		});
+		var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
+		currentRoutesData = currentRoutesData.map(function (r) {
+			return String(r.id) === String(routeId) ? updated : r;
+		});
+		return updated.points && updated.points[ptIndex] ? updated.points[ptIndex] : null;
+	}
+
+	async function sync1CStatusWithServer(routeId, ptIndex, newStatus) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points || !route.points[ptIndex]) return;
+		var pt = route.points[ptIndex];
+		if (!pt || pt.customer_order_id == null) return;
+		var config = window.SUPABASE_CONFIG || {};
+		if (!config.url || !window.supabase) {
+			var cfgErr = 'Supabase не настроен';
+			await setRoutePointSyncState(routeId, ptIndex, {
+				sync_1c_state: 'error',
+				sync_1c_last_error: cfgErr,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: new Date().toISOString(),
+			});
+			throw new Error(cfgErr);
+		}
+		var client = window.supabase.createClient(config.url, config.anonKey);
+		var nowIso = new Date().toISOString();
+		var nextRetry = Number(pt.sync_1c_retry_count || 0) + 1;
+		await client.from('customer_orders').update({
+			status: newStatus,
+			sync_1c_state: 'pending',
+			sync_1c_last_error: null,
+			sync_1c_status_sent: newStatus,
+			sync_1c_updated_at: nowIso,
+		}).eq('id', pt.customer_order_id);
+		await setRoutePointSyncState(routeId, ptIndex, {
+			sync_1c_state: 'pending',
+			sync_1c_last_error: null,
+			sync_1c_status_sent: newStatus,
+			sync_1c_updated_at: nowIso,
+		});
+		if (!pt.order_1c_id) {
+			await client.from('customer_orders').update({
+				sync_1c_state: 'ok',
+				sync_1c_last_error: null,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: new Date().toISOString(),
+			}).eq('id', pt.customer_order_id);
+			await setRoutePointSyncState(routeId, ptIndex, {
+				sync_1c_state: 'ok',
+				sync_1c_last_error: null,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: new Date().toISOString(),
+			});
+			return;
+		}
+		var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
+		var hdrs = { 'Content-Type': 'application/json' };
+		if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
+		try {
+			var response = await fetch(fnUrl, {
+				method: 'POST',
+				headers: hdrs,
+				body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: newStatus }),
+			});
+			var payload = {};
+			try { payload = await response.json(); } catch (_) {}
+			if (!response.ok || payload.ok === false || payload.sent === false) {
+				var errText = (payload && (payload.error || payload.message)) || ('HTTP ' + response.status);
+				throw new Error(errText);
+			}
+			var okTs = new Date().toISOString();
+			await client.from('customer_orders').update({
+				sync_1c_state: 'ok',
+				sync_1c_last_error: null,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: okTs,
+			}).eq('id', pt.customer_order_id);
+			await setRoutePointSyncState(routeId, ptIndex, {
+				sync_1c_state: 'ok',
+				sync_1c_last_error: null,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: okTs,
+			});
+		} catch (err) {
+			var errText = err && err.message ? err.message : String(err);
+			var errTs = new Date().toISOString();
+			await client.from('customer_orders').update({
+				sync_1c_state: 'error',
+				sync_1c_last_error: errText,
+				sync_1c_retry_count: nextRetry,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: errTs,
+			}).eq('id', pt.customer_order_id);
+			await setRoutePointSyncState(routeId, ptIndex, {
+				sync_1c_state: 'error',
+				sync_1c_last_error: errText,
+				sync_1c_retry_count: nextRetry,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: errTs,
+			});
+			throw err;
+		}
+	}
+
+	async function retry1CStatusSync(routeId, ptIndex) {
+		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+		if (!route || !route.points || !route.points[ptIndex]) return;
+		var pt = route.points[ptIndex];
+		var statusToSend = pt.sync_1c_status_sent || pt.status || 'assigned';
+		try {
+			await sync1CStatusWithServer(routeId, ptIndex, statusToSend);
+			renderDriverRoutes(currentRoutesData);
+		} catch (err) {
+			console.error('Ошибка повторной синхронизации 1С:', err);
+			alert('Не удалось дослать статус в 1С: ' + (err && err.message ? err.message : String(err)));
+			renderDriverRoutes(currentRoutesData);
+		}
+	}
+
 	async function set1COrderStatus(routeId, ptIndex, newStatus) {
 		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
 		if (!route || !route.points) return;
 		var pt = route.points[ptIndex];
 		if (!pt || (!pt.order_1c_id && !pt.customer_order_id)) return;
 		var newPoints = route.points.map(function (p, i) {
-			return i === ptIndex ? Object.assign({}, p, { status: newStatus }) : p;
+			if (i !== ptIndex) return p;
+			return Object.assign({}, p, {
+				status: newStatus,
+				sync_1c_state: p.order_1c_id ? 'pending' : (p.sync_1c_state || null),
+				sync_1c_last_error: null,
+				sync_1c_status_sent: newStatus,
+				sync_1c_updated_at: new Date().toISOString(),
+			});
 		});
 		try {
 			var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
 			currentRoutesData = currentRoutesData.map(function (r) {
 				return String(r.id) === String(routeId) ? updated : r;
 			});
-			if (pt.customer_order_id != null) {
-				var config = window.SUPABASE_CONFIG || {};
-				if (config.url && window.supabase) {
-					var client = window.supabase.createClient(config.url, config.anonKey);
-					await client.from('customer_orders').update({ status: newStatus }).eq('id', pt.customer_order_id);
-				}
-				if (pt.order_1c_id) {
-					var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
-					if (fnUrl && fnUrl.indexOf('http') === 0) {
-						var hdrs = { 'Content-Type': 'application/json' };
-						if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
-						fetch(fnUrl, {
-							method: 'POST',
-							headers: hdrs,
-							body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: newStatus }),
-						}).catch(function () {});
-					}
-				}
-			}
+			await sync1CStatusWithServer(routeId, ptIndex, newStatus);
 			renderDriverRoutes(currentRoutesData);
 		} catch (err) {
 			console.error('Ошибка обновления статуса заказа 1С:', err);
-			alert('Не удалось обновить статус: ' + err.message);
+			alert('Статус точки сохранен, но синхронизация с 1С не выполнена: ' + err.message);
+			renderDriverRoutes(currentRoutesData);
 		}
 	}
 
@@ -1195,29 +1306,13 @@
 			currentRoutesData = currentRoutesData.map(function (r) {
 				return String(r.id) === String(routeId) ? updated : r;
 			});
-			if (is1COrder && pt.customer_order_id != null) {
-				var config = window.SUPABASE_CONFIG || {};
-				if (config.url && window.supabase) {
-					var client = window.supabase.createClient(config.url, config.anonKey);
-					await client.from('customer_orders').update({ status: 'delivered' }).eq('id', pt.customer_order_id);
-				}
-				if (pt.order_1c_id) {
-					var fnUrl = (config.url || '').replace(/\/$/, '') + '/functions/v1/push-order-status-to-1c';
-					if (fnUrl && fnUrl.indexOf('http') === 0) {
-						var hdrs = { 'Content-Type': 'application/json' };
-						if (config.anonKey) hdrs['Authorization'] = 'Bearer ' + config.anonKey;
-						fetch(fnUrl, {
-							method: 'POST',
-							headers: hdrs,
-							body: JSON.stringify({ order_1c_id: pt.order_1c_id, status: 'delivered' }),
-						}).catch(function () {});
-					}
-				}
+			if (is1COrder) {
+				await sync1CStatusWithServer(routeId, pointIndex, 'delivered');
 			}
 			renderDriverRoutes(currentRoutesData);
 		} catch (err) {
 			console.error("Ошибка обновления статуса точки:", err);
-			alert("Не удалось обновить статус: " + err.message);
+			alert("Статус точки сохранен, но синхронизация с 1С не выполнена: " + err.message);
 		}
 	}
 

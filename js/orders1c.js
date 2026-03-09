@@ -84,19 +84,36 @@
     return div.innerHTML;
   }
 
+  function get1CSyncMeta(order) {
+    var state = (order && order.sync_1c_state) || "";
+    if (state === "ok") {
+      return { text: "✓ Синхронизировано с 1С", cls: "orders1c-sync-ok", retry: false };
+    }
+    if (state === "pending") {
+      return { text: "⏳ Ждет отправки в 1С", cls: "orders1c-sync-pending", retry: false };
+    }
+    if (state === "error") {
+      return { text: "⚠ Ошибка 1С", cls: "orders1c-sync-error", retry: true };
+    }
+    if (order && order.order_1c_id) {
+      return { text: "⏳ Ждет отправки в 1С", cls: "orders1c-sync-pending", retry: false };
+    }
+    return { text: "—", cls: "orders1c-sync-muted", retry: false };
+  }
+
   function renderTable() {
     var tbody = document.getElementById("orders1cTableBody");
     if (!tbody) return;
 
     var list = filteredOrders();
     if (orders.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Нет заказов на выбранную дату</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);">Нет заказов на выбранную дату</td></tr>';
       updateSelectionUI();
       return;
     }
 
     if (list.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Нет заказов по выбранным фильтрам</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);">Нет заказов по выбранным фильтрам</td></tr>';
       updateSelectionUI();
       return;
     }
@@ -105,6 +122,8 @@
       .map(function (o) {
         var checked = selectedIds.has(o.id) ? ' checked="checked"' : "";
         var statusLabel = STATUS_LABELS[o.status] || o.status;
+        var syncMeta = get1CSyncMeta(o);
+        var syncError = (o.sync_1c_last_error || "").trim();
         var itemsStr = o.items != null ? (typeof o.items === "string" ? o.items : JSON.stringify(o.items)) : "";
         var itemsDisplay = [itemsStr, o.amount != null ? o.amount + " ₽" : ""].filter(Boolean).join(" · ") || "—";
         var rowClass = o.status === "on_map" ? " orders1c-row-on-map" : "";
@@ -139,6 +158,16 @@
           '">' +
           escapeHtml(statusLabel) +
           "</span></td>" +
+          '<td><div class="orders1c-sync-cell"><span class="orders1c-sync ' +
+          syncMeta.cls +
+          '">' +
+          escapeHtml(syncMeta.text) +
+          "</span>" +
+          (syncError ? '<div class="orders1c-sync-error-text">' + escapeHtml(syncError) + "</div>" : "") +
+          (syncMeta.retry
+            ? '<button type="button" class="btn btn-outline btn-sm orders1c-retry-btn" data-id="' + o.id + '">Повторить</button>'
+            : "") +
+          "</div></td>" +
           "</tr>"
         );
       })
@@ -151,6 +180,18 @@
         else selectedIds.delete(id);
         updateSelectionUI();
         updateSelectAllState();
+      });
+    });
+
+    tbody.querySelectorAll(".orders1c-retry-btn").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        var id = Number(btn.dataset.id);
+        btn.disabled = true;
+        try {
+          await retryOrder1CSync(id);
+        } finally {
+          btn.disabled = false;
+        }
       });
     });
 
@@ -178,17 +219,17 @@
     var client = getSupabaseClient();
     var tbody = document.getElementById("orders1cTableBody");
     if (!client) {
-      if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);">Не настроен Supabase</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);">Не настроен Supabase</td></tr>';
       return;
     }
 
-    if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);">Загрузка...</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);">Загрузка...</td></tr>';
 
     var selectedDate = getSelectedDate();
     try {
       var resp = await client
         .from("customer_orders")
-        .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status")
+        .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status, sync_1c_state, sync_1c_last_error, sync_1c_retry_count, sync_1c_updated_at, sync_1c_status_sent")
         .eq("order_date", selectedDate)
         .order("id", { ascending: true });
 
@@ -211,7 +252,63 @@
       updateSelectAllState();
     } catch (e) {
       console.error("orders1c load error", e);
-      if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--danger);">Ошибка: ' + escapeHtml(e.message || String(e)) + "</td></tr>";
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);">Ошибка: ' + escapeHtml(e.message || String(e)) + "</td></tr>";
+    }
+  }
+
+  async function retryOrder1CSync(orderId) {
+    var order = orders.find(function (o) { return Number(o.id) === Number(orderId); });
+    if (!order || !order.order_1c_id) {
+      alert("Для этого заказа нет номера 1С");
+      return;
+    }
+    var client = getSupabaseClient();
+    var config = window.SUPABASE_CONFIG || {};
+    if (!client || !config.url) {
+      alert("Не настроен Supabase");
+      return;
+    }
+    var statusToSend = order.status || "assigned";
+    var nextRetry = Number(order.sync_1c_retry_count || 0) + 1;
+    await client.from("customer_orders").update({
+      sync_1c_state: "pending",
+      sync_1c_last_error: null,
+      sync_1c_status_sent: statusToSend,
+      sync_1c_updated_at: new Date().toISOString(),
+    }).eq("id", order.id);
+
+    var fnUrl = (config.url || "").replace(/\/$/, "") + "/functions/v1/push-order-status-to-1c";
+    var hdrs = { "Content-Type": "application/json" };
+    if (config.anonKey) hdrs.Authorization = "Bearer " + config.anonKey;
+    try {
+      var response = await fetch(fnUrl, {
+        method: "POST",
+        headers: hdrs,
+        body: JSON.stringify({ order_1c_id: order.order_1c_id, status: statusToSend }),
+      });
+      var payload = {};
+      try { payload = await response.json(); } catch (_) {}
+      if (!response.ok || payload.ok === false || payload.sent === false) {
+        var errText = (payload && (payload.error || payload.message)) || ("HTTP " + response.status);
+        throw new Error(errText);
+      }
+      await client.from("customer_orders").update({
+        sync_1c_state: "ok",
+        sync_1c_last_error: null,
+        sync_1c_status_sent: statusToSend,
+        sync_1c_updated_at: new Date().toISOString(),
+      }).eq("id", order.id);
+    } catch (err) {
+      await client.from("customer_orders").update({
+        sync_1c_state: "error",
+        sync_1c_last_error: (err && err.message) ? err.message : String(err),
+        sync_1c_retry_count: nextRetry,
+        sync_1c_status_sent: statusToSend,
+        sync_1c_updated_at: new Date().toISOString(),
+      }).eq("id", order.id);
+      alert("Ошибка синхронизации с 1С: " + ((err && err.message) ? err.message : String(err)));
+    } finally {
+      loadOrders();
     }
   }
 
