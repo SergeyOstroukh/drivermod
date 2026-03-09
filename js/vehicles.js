@@ -801,7 +801,7 @@
 		html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">';
 		html += '<button type="button" class="btn btn-outline btn-sm driver-route-view-tab' + (driverRouteViewTab === 'delivery' ? ' active' : '') + '" data-view-tab="delivery">Доставка (' + deliveryMapPoints.length + ')</button>';
 		html += '<button type="button" class="btn btn-outline btn-sm driver-route-view-tab' + (driverRouteViewTab === 'suppliers' ? ' active' : '') + '" data-view-tab="suppliers">Поставщики (' + allSuppliers.length + ')</button>';
-		html += '<button type="button" class="btn btn-outline btn-sm driver-route-refresh-inline" title="Обновить статусы (из Telegram)" style="margin-left:auto;">🔄 Обновить</button>';
+		html += '<button type="button" class="btn btn-outline btn-sm driver-route-refresh-inline" title="Обновить статусы (из Telegram)" style="margin-left:auto;cursor:pointer;position:relative;z-index:10;flex-shrink:0;min-width:fit-content;">🔄 Обновить</button>';
 		html += '</div>';
 
 		var has1COrders = currentRoutesData.some(function (r) {
@@ -2980,7 +2980,15 @@
 	// Инициализация
 	function init() {
 		initNavigation();
-
+		var routeSection = document.getElementById('driverRouteSection');
+		if (routeSection) {
+			routeSection.addEventListener('click', function (e) {
+				if (e.target.closest && e.target.closest('.driver-route-refresh-inline')) {
+					e.preventDefault();
+					if (typeof refreshDriverRoute === 'function') refreshDriverRoute();
+				}
+			});
+		}
 		if (addDriverBtn) {
 			addDriverBtn.addEventListener("click", () => openDriverModal());
 		}
