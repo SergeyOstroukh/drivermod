@@ -3403,7 +3403,13 @@
     }
 
     try {
-      var savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId, 10), routeDate, supplierPoints);
+      var savedRoute = null;
+      if (window.VehiclesDB && window.VehiclesDB.saveDriverRouteForDriver) {
+        // Suppliers must be stored as a separate trip and never overwrite delivery trips.
+        savedRoute = await window.VehiclesDB.saveDriverRouteForDriver(parseInt(driverId, 10), routeDate, supplierPoints);
+      } else {
+        savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId, 10), routeDate, supplierPoints);
+      }
       if (savedRoute && savedRoute.id) {
         await window.VehiclesDB.completeDriverRoute(savedRoute.id);
       }
