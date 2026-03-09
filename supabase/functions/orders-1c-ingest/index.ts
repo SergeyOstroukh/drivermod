@@ -56,7 +56,8 @@ serve(async (req) => {
       delivery_time_slot: payload.delivery_time_slot ?? null,
       items: payload.items ?? null,
       amount: payload.amount ?? null,
-      status: "new",
+      // Do not force status on upsert update.
+      // For existing rows this preserves delivered/cancelled lifecycle.
     };
   }
 

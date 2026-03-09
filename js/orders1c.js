@@ -13,6 +13,7 @@
     cancelled: "Отменён",
   };
   var STATUS_SORT_ORDER = { new: 0, on_map: 1, in_delivery: 2, assigned: 3, delivered: 4, cancelled: 5 };
+  var MAP_ALLOWED_STATUSES = { new: true, cancelled: true, on_map: true };
 
   let orders = [];
   let driverNameById = {};
@@ -176,6 +177,8 @@
 
     tbody.innerHTML = list
       .map(function (o) {
+        var canMoveToMap = !!MAP_ALLOWED_STATUSES[o.status || "new"];
+        if (!canMoveToMap) selectedIds.delete(o.id);
         var checked = selectedIds.has(o.id) ? ' checked="checked"' : "";
         var statusLabel = STATUS_LABELS[o.status] || o.status;
         var syncMeta = get1CSyncMeta(o);
@@ -192,6 +195,7 @@
           o.id +
           '"' +
           checked +
+          (canMoveToMap ? "" : ' disabled="disabled" title="Этот статус нельзя снова перенести на карту"') +
           " /></td>" +
           "<td>" +
           escapeHtml(String(o.order_1c_id || "")) +
@@ -314,7 +318,7 @@
   function updateSelectAllState() {
     var selectAll = document.getElementById("orders1cSelectAll");
     if (!selectAll) return;
-    var list = filteredOrders();
+    var list = filteredOrders().filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"]; });
     var checkedCount = list.filter(function (o) { return selectedIds.has(o.id); }).length;
     selectAll.checked = list.length > 0 && checkedCount === list.length;
     selectAll.indeterminate = checkedCount > 0 && checkedCount < list.length;
@@ -485,11 +489,22 @@
   async function moveToMap() {
     var list = orders.filter(function (o) { return selectedIds.has(o.id); });
     if (list.length === 0) return;
+    var allowed = list.filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"]; });
+    var blocked = list.filter(function (o) { return !MAP_ALLOWED_STATUSES[o.status || "new"]; });
+    if (blocked.length > 0) {
+      var blockedNums = blocked.map(function (o) { return String(o.order_1c_id || o.id); }).join(", ");
+      alert("Эти заказы нельзя повторно отправить в доставку: " + blockedNums);
+    }
+    if (allowed.length === 0) return;
 
     var client = getSupabaseClient();
     if (client) {
-      var ids = list.map(function (o) { return o.id; });
-      var resp = await client.from("customer_orders").update({ status: "on_map" }).in("id", ids);
+      var ids = allowed.map(function (o) { return o.id; });
+      var resp = await client
+        .from("customer_orders")
+        .update({ status: "on_map" })
+        .in("id", ids)
+        .in("status", ["new", "cancelled", "on_map"]);
       if (resp.error) {
         if (resp.error.message && resp.error.message.indexOf("violates check constraint") !== -1) {
           alert("Не удалось поставить статус «На карте». Примените миграцию 032 (статус on_map) в Supabase → SQL Editor.");
@@ -501,7 +516,7 @@
       loadOrders();
     }
 
-    window.__dcPending1COrders = list.map(function (o) {
+    window.__dcPending1COrders = allowed.map(function (o) {
       return {
         id: o.id,
         order_1c_id: o.order_1c_id || "",
@@ -554,7 +569,7 @@
     var selectAll = document.getElementById("orders1cSelectAll");
     if (selectAll) {
       selectAll.addEventListener("change", function () {
-        var list = filteredOrders();
+        var list = filteredOrders().filter(function (o) { return !!MAP_ALLOWED_STATUSES[o.status || "new"]; });
         if (selectAll.checked) {
           list.forEach(function (o) { selectedIds.add(o.id); });
         } else {

@@ -704,6 +704,11 @@
 	let currentRoutesData = []; // массив маршрутов (выездов) из БД
 	let showCompletedPoints = false;
 	let driverRouteViewTab = 'delivery'; // 'delivery' | 'suppliers'
+	var pointStatusSyncLocks = {};
+
+	function getPointSyncLockKey(routeId, ptIndex) {
+		return String(routeId) + ':' + String(ptIndex);
+	}
 
 	function renderDriverRoutes(routes) {
 		const listEl = document.getElementById("driverRouteList");
@@ -1103,6 +1108,17 @@
 			throw new Error(cfgErr);
 		}
 		var client = window.supabase.createClient(config.url, config.anonKey);
+		var currentResp = await client
+			.from('customer_orders')
+			.select('status')
+			.eq('id', pt.customer_order_id)
+			.maybeSingle();
+		if (currentResp && !currentResp.error && currentResp.data) {
+			var currentDbStatus = currentResp.data.status;
+			if (currentDbStatus === 'delivered' && newStatus !== 'cancelled') {
+				throw new Error('Заказ уже завершен (delivered) и не может быть отправлен повторно');
+			}
+		}
 		var nowIso = new Date().toISOString();
 		var nextRetry = Number(pt.sync_1c_retry_count || 0) + 1;
 		await client.from('customer_orders').update({
@@ -1185,6 +1201,9 @@
 	async function retry1CStatusSync(routeId, ptIndex) {
 		var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
 		if (!route || !route.points || !route.points[ptIndex]) return;
+		var lockKey = getPointSyncLockKey(routeId, ptIndex);
+		if (pointStatusSyncLocks[lockKey]) return;
+		pointStatusSyncLocks[lockKey] = true;
 		var pt = route.points[ptIndex];
 		var statusToSend = pt.sync_1c_status_sent || pt.status || 'assigned';
 		try {
@@ -1194,6 +1213,8 @@
 			console.error('Ошибка повторной синхронизации 1С:', err);
 			alert('Не удалось дослать статус в 1С: ' + (err && err.message ? err.message : String(err)));
 			renderDriverRoutes(currentRoutesData);
+		} finally {
+			pointStatusSyncLocks[lockKey] = false;
 		}
 	}
 
@@ -1202,6 +1223,10 @@
 		if (!route || !route.points) return;
 		var pt = route.points[ptIndex];
 		if (!pt || (!pt.order_1c_id && !pt.customer_order_id)) return;
+		if (pt.status === 'delivered' && newStatus === 'delivered') return;
+		var lockKey = getPointSyncLockKey(routeId, ptIndex);
+		if (pointStatusSyncLocks[lockKey]) return;
+		pointStatusSyncLocks[lockKey] = true;
 		var newPoints = route.points.map(function (p, i) {
 			if (i !== ptIndex) return p;
 			return Object.assign({}, p, {
@@ -1223,6 +1248,8 @@
 			console.error('Ошибка обновления статуса заказа 1С:', err);
 			alert('Статус точки сохранен, но синхронизация с 1С не выполнена: ' + err.message);
 			renderDriverRoutes(currentRoutesData);
+		} finally {
+			pointStatusSyncLocks[lockKey] = false;
 		}
 	}
 
