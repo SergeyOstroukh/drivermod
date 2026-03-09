@@ -569,6 +569,9 @@
 					<select id="orders1cTimeFilter" class="form-input" style="width:auto;padding:6px 10px;font-size:0.9rem;">
 						<option value="">Время доставки — все</option>
 					</select>
+					<input id="orders1cSearchInput" class="form-input" type="search" placeholder="Поиск по № заказа 1С" style="width:240px;padding:6px 10px;font-size:0.9rem;" />
+					<button id="orders1cSearchBtn" class="btn btn-outline btn-sm" type="button">Найти заказ</button>
+					<button id="orders1cExportBtn" class="btn btn-outline btn-sm" type="button">Выгрузить в Excel</button>
 					<button id="orders1cRefreshBtn" class="btn btn-outline btn-sm" type="button">Обновить</button>
 				</div>
 				<div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
@@ -579,6 +582,7 @@
 				</div>
 			</section>
 			<section class="orders1c-content" style="margin-top:12px;">
+				<div id="orders1cSearchResult" class="orders1c-search-result" style="display:none;"></div>
 				<div class="table-wrapper">
 					<table class="distributed-table" id="orders1cTable">
 						<thead>

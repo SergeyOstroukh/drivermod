@@ -15,6 +15,7 @@
   var STATUS_SORT_ORDER = { new: 0, on_map: 1, in_delivery: 2, assigned: 3, delivered: 4, cancelled: 5 };
 
   let orders = [];
+  let driverNameById = {};
   let selectedIds = new Set();
   let realtimeChannel = null;
 
@@ -49,6 +50,46 @@
   function getTimeFilter() {
     var el = document.getElementById("orders1cTimeFilter");
     return el ? (el.value || "").trim() : "";
+  }
+
+  function getSearchQuery() {
+    var el = document.getElementById("orders1cSearchInput");
+    return el ? (el.value || "").trim() : "";
+  }
+
+  function statusForSearchLabel(status) {
+    if (status === "delivered") return "Продано (доставлено)";
+    if (status === "cancelled") return "Отменено";
+    return STATUS_LABELS[status] || status || "—";
+  }
+
+  function getDriverName(order) {
+    if (!order) return "Не назначен";
+    var id = order.assigned_driver_id;
+    if (id == null) return "Не назначен";
+    return driverNameById[String(id)] || ("ID " + id);
+  }
+
+  function formatItems(items) {
+    if (items == null || items === "") return "—";
+    if (typeof items === "string") return items;
+    if (Array.isArray(items)) {
+      return items
+        .map(function (it) {
+          if (typeof it === "string") return it;
+          var name = it && (it.name || it.title || it.product || "");
+          var qty = it && (it.qty || it.quantity || it.count || "");
+          if (name && qty) return name + " x" + qty;
+          return name || JSON.stringify(it);
+        })
+        .join("; ");
+    }
+    return JSON.stringify(items);
+  }
+
+  function csvEscape(value) {
+    var s = value == null ? "" : String(value);
+    return '"' + s.replace(/"/g, '""') + '"';
   }
 
   function filteredOrders() {
@@ -199,6 +240,56 @@
     updateSelectAllState();
   }
 
+  function renderSearchResults(list, query) {
+    var box = document.getElementById("orders1cSearchResult");
+    if (!box) return;
+    var q = (query || "").trim();
+    if (!q) {
+      box.style.display = "none";
+      box.innerHTML = "";
+      return;
+    }
+    if (!list || list.length === 0) {
+      box.style.display = "block";
+      box.innerHTML = '<div class="orders1c-search-empty">По запросу <b>' + escapeHtml(q) + "</b> заказов не найдено</div>";
+      return;
+    }
+    box.style.display = "block";
+    box.innerHTML = list
+      .map(function (o) {
+        var amountLabel = o.amount != null ? (o.amount + " ₽") : "—";
+        return (
+          '<div class="orders1c-search-card">' +
+          '<div class="orders1c-search-title">№ 1С: ' + escapeHtml(String(o.order_1c_id || "")) + "</div>" +
+          '<div class="orders1c-search-meta">Статус: <b>' + escapeHtml(statusForSearchLabel(o.status)) + "</b></div>" +
+          '<div class="orders1c-search-meta">Дата доставки: ' + escapeHtml(o.order_date || "—") + "</div>" +
+          '<div class="orders1c-search-meta">Водитель: ' + escapeHtml(getDriverName(o)) + "</div>" +
+          '<div class="orders1c-search-meta">Клиент: ' + escapeHtml((o.customer_name || "—") + (o.phone ? " (" + o.phone + ")" : "")) + "</div>" +
+          '<div class="orders1c-search-meta">Адрес: ' + escapeHtml(o.delivery_address || "—") + "</div>" +
+          '<div class="orders1c-search-meta">Товар: ' + escapeHtml(formatItems(o.items)) + "</div>" +
+          '<div class="orders1c-search-meta">Сумма: ' + escapeHtml(amountLabel) + "</div>" +
+          "</div>"
+        );
+      })
+      .join("");
+  }
+
+  async function loadDriverNameMap(client, list) {
+    var ids = [];
+    (list || []).forEach(function (o) {
+      if (o && o.assigned_driver_id != null && ids.indexOf(Number(o.assigned_driver_id)) === -1) {
+        ids.push(Number(o.assigned_driver_id));
+      }
+    });
+    if (ids.length === 0) return;
+    var resp = await client.from("drivers").select("id, name").in("id", ids);
+    if (resp && !resp.error) {
+      (resp.data || []).forEach(function (d) {
+        driverNameById[String(d.id)] = d.name || ("ID " + d.id);
+      });
+    }
+  }
+
   function updateSelectionUI() {
     var countEl = document.getElementById("orders1cSelectedCount");
     var btnEl = document.getElementById("orders1cMoveToMapBtn");
@@ -229,12 +320,13 @@
     try {
       var resp = await client
         .from("customer_orders")
-        .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status, sync_1c_state, sync_1c_last_error, sync_1c_retry_count, sync_1c_updated_at, sync_1c_status_sent")
+        .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, delivery_time_slot, items, amount, status, assigned_driver_id, sync_1c_state, sync_1c_last_error, sync_1c_retry_count, sync_1c_updated_at, sync_1c_status_sent")
         .eq("order_date", selectedDate)
         .order("id", { ascending: true });
 
       if (resp.error) throw resp.error;
       var raw = resp.data || [];
+      await loadDriverNameMap(client, raw);
       orders = raw.slice().sort(function (a, b) {
         var pa = STATUS_SORT_ORDER[a.status] !== undefined ? STATUS_SORT_ORDER[a.status] : 6;
         var pb = STATUS_SORT_ORDER[b.status] !== undefined ? STATUS_SORT_ORDER[b.status] : 6;
@@ -249,10 +341,74 @@
       }
       renderTimeFilterOptions();
       renderTable();
+      renderSearchResults([], "");
       updateSelectAllState();
     } catch (e) {
       console.error("orders1c load error", e);
       if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);">Ошибка: ' + escapeHtml(e.message || String(e)) + "</td></tr>";
+    }
+  }
+
+  function exportOrdersToExcelCsv() {
+    if (!orders || orders.length === 0) {
+      alert("Нет данных для выгрузки");
+      return;
+    }
+    var rows = [];
+    rows.push([
+      "Дата доставки",
+      "№ заказа 1С",
+      "Статус доставки",
+      "Водитель",
+    ]);
+    orders.forEach(function (o) {
+      rows.push([
+        o.order_date || "",
+        o.order_1c_id || "",
+        STATUS_LABELS[o.status] || o.status || "",
+        getDriverName(o),
+      ]);
+    });
+    var csv = "\uFEFF" + rows.map(function (row) {
+      return row.map(csvEscape).join(";");
+    }).join("\r\n");
+    var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    var dateLabel = getSelectedDate() || todayStr();
+    a.href = url;
+    a.download = "orders_1c_" + dateLabel + ".csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  async function searchByOrderNumber() {
+    var query = getSearchQuery();
+    if (!query) {
+      renderSearchResults([], "");
+      return;
+    }
+    var client = getSupabaseClient();
+    if (!client) {
+      alert("Не настроен Supabase");
+      return;
+    }
+    try {
+      var resp = await client
+        .from("customer_orders")
+        .select("id, order_1c_id, order_date, customer_name, delivery_address, phone, items, amount, status, assigned_driver_id")
+        .ilike("order_1c_id", "%" + query + "%")
+        .order("order_date", { ascending: false })
+        .limit(20);
+      if (resp.error) throw resp.error;
+      var result = resp.data || [];
+      await loadDriverNameMap(client, result);
+      renderSearchResults(result, query);
+    } catch (e) {
+      console.error("orders1c search error", e);
+      alert("Ошибка поиска: " + (e.message || String(e)));
     }
   }
 
@@ -355,6 +511,22 @@
   function bindEvents() {
     var refreshBtn = document.getElementById("orders1cRefreshBtn");
     if (refreshBtn) refreshBtn.addEventListener("click", function () { loadOrders(); });
+
+    var exportBtn = document.getElementById("orders1cExportBtn");
+    if (exportBtn) exportBtn.addEventListener("click", function () { exportOrdersToExcelCsv(); });
+
+    var searchBtn = document.getElementById("orders1cSearchBtn");
+    if (searchBtn) searchBtn.addEventListener("click", function () { searchByOrderNumber(); });
+
+    var searchInput = document.getElementById("orders1cSearchInput");
+    if (searchInput) {
+      searchInput.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          searchByOrderNumber();
+        }
+      });
+    }
 
     var moveBtn = document.getElementById("orders1cMoveToMapBtn");
     if (moveBtn) moveBtn.addEventListener("click", function () { moveToMap(); });
