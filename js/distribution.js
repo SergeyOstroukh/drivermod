@@ -5222,18 +5222,15 @@
         order_1c_id: o.order_1c_id || '',
       };
     });
-    var keepOrders = [];
-    var keepAssignments = [];
-    for (var k = 0; k < orders.length; k++) {
-      if (orders[k].isSupplier) {
-        keepOrders.push(orders[k]);
-        if (assignments) keepAssignments.push(assignments[k]);
-      }
-    }
-    orders = keepOrders;
-    assignments = keepAssignments.length > 0 ? keepAssignments : null;
-    variants = [];
-    activeVariant = -1;
+    // IMPORTANT: importing 1C orders must NEVER wipe existing map points.
+    // Keep all current points and only append new 1C points (with dedupe).
+    var existing1C = {};
+    orders.forEach(function (o) {
+      if (!o) return;
+      if (o.customer_order_id != null) existing1C['id:' + String(o.customer_order_id)] = true;
+      if (o.order_1c_id) existing1C['num:' + String(o.order_1c_id)] = true;
+    });
+
     isGeocoding = true;
     _fitBoundsNext = true;
     renderAll();
@@ -5247,16 +5244,31 @@
           o.customer_order_id = parseInt(o.customer_order_id, 10);
         }
       });
-      orders = orders.concat(geocoded);
-      markLocalMutation();
-      if (assignments) {
-        for (var a = 0; a < geocoded.length; a++) assignments.push(-1);
-      } else {
-        assignments = geocoded.map(function () { return -1; });
+      var toAppend = geocoded.filter(function (o) {
+        var byId = o.customer_order_id != null ? existing1C['id:' + String(o.customer_order_id)] : false;
+        var byNum = o.order_1c_id ? existing1C['num:' + String(o.order_1c_id)] : false;
+        if (byId || byNum) return false;
+        if (o.customer_order_id != null) existing1C['id:' + String(o.customer_order_id)] = true;
+        if (o.order_1c_id) existing1C['num:' + String(o.order_1c_id)] = true;
+        return true;
+      });
+
+      if (!assignments) {
+        assignments = orders.map(function () { return -1; });
+      } else if (assignments.length < orders.length) {
+        while (assignments.length < orders.length) assignments.push(-1);
       }
-      var ok = geocoded.filter(function (o) { return o.geocoded; }).length;
-      var fail = geocoded.length - ok;
-      showToast('Заказы 1С на карту: ' + ok + (fail > 0 ? ', ошибок: ' + fail : ''), fail > 0 ? 'error' : undefined);
+
+      orders = orders.concat(toAppend);
+      markLocalMutation();
+      for (var a = 0; a < toAppend.length; a++) assignments.push(-1);
+
+      var ok = toAppend.filter(function (o) { return o.geocoded; }).length;
+      var fail = toAppend.length - ok;
+      var skipped = geocoded.length - toAppend.length;
+      var msg = 'Заказы 1С на карту: ' + ok + (fail > 0 ? ', ошибок: ' + fail : '');
+      if (skipped > 0) msg += ', пропущено дублей: ' + skipped;
+      showToast(msg, fail > 0 ? 'error' : undefined);
     } catch (err) {
       showToast('Ошибка геокодирования: ' + err.message, 'error');
     } finally {
