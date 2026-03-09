@@ -656,8 +656,18 @@
 	let driverRouteMapInstance = null;
 	let driverRoutePlacemarks = [];
 	let currentRouteDriverId = null;
+	let _routePollTimer = null;
+	var ROUTE_POLL_INTERVAL_MS = 20000;
+
+	function stopRoutePolling() {
+		if (_routePollTimer) {
+			clearInterval(_routePollTimer);
+			_routePollTimer = null;
+		}
+	}
 
 	async function openDriverRoute(driver) {
+		stopRoutePolling();
 		currentRouteDriverId = driver.id;
 		driverRouteViewTab = 'delivery';
 		const section = document.getElementById("driverRouteSection");
@@ -675,18 +685,44 @@
 		const titleEl = document.getElementById("driverRouteTitle");
 		if (titleEl) titleEl.textContent = "Маршрут: " + (driver.name || "Водитель");
 
-		// Load all routes (multiple trips)
-		const today = new Date().toISOString().split("T")[0];
+		// Load routes from DB (statuses from Telegram уже в driver_routes)
+		var today = new Date().toISOString().split("T")[0];
 		try {
-			const routes = await window.VehiclesDB.getDriverRoutes(driver.id, today);
+			var routes = await window.VehiclesDB.getDriverRoutes(driver.id, today);
 			renderDriverRoutes(routes);
 		} catch (err) {
 			console.error("Ошибка загрузки маршрутов:", err);
 			renderDriverRoutes([]);
 		}
+		// Auto-refresh: статусы из Telegram подтянутся каждые 20 сек
+		_routePollTimer = setInterval(function () {
+			var sec = document.getElementById("driverRouteSection");
+			if (sec && sec.style.display === "block" && currentRouteDriverId) {
+				var d = new Date().toISOString().split("T")[0];
+				window.VehiclesDB.getDriverRoutes(currentRouteDriverId, d).then(function (r) {
+					renderDriverRoutes(r);
+				}).catch(function () {});
+			}
+		}, ROUTE_POLL_INTERVAL_MS);
+	}
+
+	async function refreshDriverRoute() {
+		if (!currentRouteDriverId) return;
+		const btn = document.getElementById("driverRouteRefreshBtn");
+		if (btn) btn.disabled = true;
+		const today = new Date().toISOString().split("T")[0];
+		try {
+			const routes = await window.VehiclesDB.getDriverRoutes(currentRouteDriverId, today);
+			renderDriverRoutes(routes);
+		} catch (err) {
+			console.error("Ошибка обновления маршрута:", err);
+		} finally {
+			if (btn) btn.disabled = false;
+		}
 	}
 
 	function closeDriverRoute() {
+		stopRoutePolling();
 		const section = document.getElementById("driverRouteSection");
 		if (section) {
 			section.style.display = "none";
@@ -4764,6 +4800,7 @@
 
 	// Expose functions needed by inline HTML handlers
 	window.closeDriverRoute = closeDriverRoute;
+	window.refreshDriverRoute = refreshDriverRoute;
 
 	document.addEventListener("DOMContentLoaded", init);
 })();

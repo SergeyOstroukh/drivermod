@@ -275,6 +275,14 @@
 				Назад
 			</button>
 			<h2 id="driverRouteTitle" style="margin:0;font-size:1.1rem;">Маршрут</h2>
+			<button id="driverRouteRefreshBtn" class="btn btn-outline btn-sm" type="button" title="Обновить маршрут (подтянуть статусы из Telegram)" style="margin-left:auto;" onclick="refreshDriverRoute()">
+				<svg class="btn-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polyline points="23 4 23 10 17 10"></polyline>
+					<polyline points="1 20 1 14 7 14"></polyline>
+					<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+				</svg>
+				Обновить
+			</button>
 		</section>
 		<div class="driver-route-layout">
 			<div id="driverRouteMap" class="driver-route-map"></div>
