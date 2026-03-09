@@ -1139,7 +1139,9 @@
     }
     placemarks = [];
 
-    var geocoded = orders.filter(function (o) { return o.geocoded && o.lat && o.lng; });
+    var geocoded = orders.filter(function (o) {
+      return o.geocoded && o.lat && o.lng && !o.supplierCancelled;
+    });
     if (geocoded.length === 0) return;
 
     // Detect overlapping points and compute offsets
@@ -1587,15 +1589,7 @@
   window.__dc_delete = async function (orderId) {
     var idx = orders.findIndex(function (o) { return o.id === orderId; });
     if (idx === -1) return;
-    var orderToDelete = orders[idx];
-    var affectedDriverId = getOrderDriverId(idx);
-    await rollbackCustomerOrderOnMapRemoval(orderToDelete);
-    orders.splice(idx, 1);
-    if (assignments) { assignments.splice(idx, 1); }
-    variants = []; activeVariant = -1;
-    renderAll();
-    showToast('Точка удалена');
-    if (affectedDriverId) scheduleSyncDriver(String(affectedDriverId));
+    await performDeleteOrder(idx);
   };
 
   window.__dc_toggleKbt = function (globalIdx) {
@@ -3306,7 +3300,7 @@
     // Count supplier orders per driver (only assigned and geocoded)
     var driverSupplierCounts = {};
     orders.forEach(function (o, idx) {
-      if (!o.isSupplier || o.isPoi) return;
+      if (!o.isSupplier || o.isPoi || o.supplierCancelled) return;
       var did = getOrderDriverId(idx);
       if (!did) return;
       var key = String(did);
@@ -3373,13 +3367,94 @@
     return (pt.address || '') + '|' + (pt.lat || '') + '|' + (pt.lng || '');
   }
 
+  async function removeSupplierFromDriverRoute(driverId, order) {
+    if (!order || !order.isSupplier || !window.VehiclesDB || !window.VehiclesDB.getDriverRoutes || !window.VehiclesDB.updateRoutePoints) return;
+    var routeDate = new Date().toISOString().split('T')[0];
+    var targetKey = pointKey(order);
+    try {
+      var allRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId, 10), routeDate);
+      for (var ri = 0; ri < allRoutes.length; ri++) {
+        var r = allRoutes[ri];
+        var pts = (r.points || []).slice();
+        var idx = pts.findIndex(function (p) { return p.isSupplier && pointKey(p) === targetKey; });
+        if (idx >= 0) {
+          pts.splice(idx, 1);
+          for (var i = 0; i < pts.length; i++) pts[i].orderNum = i + 1;
+          await window.VehiclesDB.updateRoutePoints(r.id, pts);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('removeSupplierFromDriverRoute:', e);
+    }
+  }
+
+  async function performDeleteOrder(idx, skipConfirm) {
+    if (idx < 0 || idx >= orders.length) return;
+    var orderToDelete = orders[idx];
+    var affectedDriverId = getOrderDriverId(idx);
+    var isAssignedSupplier = orderToDelete.isSupplier && affectedDriverId;
+
+    if (isAssignedSupplier && !skipConfirm) {
+      var existing = document.getElementById('dcDelSupplierConfirmModal');
+      if (existing) existing.remove();
+      var driverName = getDriverNameById(affectedDriverId);
+      var modal = document.createElement('div');
+      modal.id = 'dcDelSupplierConfirmModal';
+      modal.className = 'modal is-open';
+      modal.style.cssText = 'z-index:10000;';
+      modal.innerHTML = '<div class="modal-content" style="max-width:420px;">' +
+        '<h3 class="modal-title" style="margin-bottom:16px;text-align:center;">Удалить поставщика?</h3>' +
+        '<p style="font-size:13px;color:#e0e0e0;margin-bottom:16px;">Поставщик <strong>' + escapeHtml(orderToDelete.address) + '</strong> распределён водителю <strong>' + escapeHtml(driverName) + '</strong>.</p>' +
+        '<p style="font-size:12px;color:#888;margin-bottom:16px;">Удалить из списка на сегодня? Поставщик исчезнет с карты, из меню и из маршрута водителя.</p>' +
+        '<div style="display:flex;gap:8px;">' +
+        '<button class="btn btn-primary dc-del-supplier-confirm" style="flex:1;background:#ef4444;border-color:#ef4444;">Да, удалить</button>' +
+        '<button class="btn btn-outline dc-del-supplier-cancel" style="flex:1;">Отмена</button>' +
+        '</div></div>';
+      document.body.appendChild(modal);
+      modal.querySelector('.dc-del-supplier-cancel').addEventListener('click', function () { modal.remove(); });
+      modal.querySelector('.dc-del-supplier-confirm').addEventListener('click', async function () {
+        modal.remove();
+        await performDeleteOrder(idx, true);
+      });
+      return;
+    }
+
+    await rollbackCustomerOrderOnMapRemoval(orderToDelete);
+    if (orderToDelete && orderToDelete.isSupplier) {
+      if (orderToDelete.supplierCancelled) {
+        await clearSupplierItemsForOrder(orderToDelete);
+        orders.splice(idx, 1);
+        if (assignments) assignments.splice(idx, 1);
+      } else {
+        if (affectedDriverId) {
+          await removeSupplierFromDriverRoute(affectedDriverId, orderToDelete);
+        }
+        orderToDelete.supplierCancelled = true;
+        orderToDelete.assignedDriverId = null;
+        if (assignments && assignments[idx] >= 0) assignments[idx] = -1;
+      }
+    } else {
+      await clearSupplierItemsForOrder(orderToDelete);
+      orders.splice(idx, 1);
+      if (assignments) assignments.splice(idx, 1);
+    }
+    variants = [];
+    activeVariant = -1;
+    renderAll();
+    saveState();
+    flushCloudStateSave();
+    _fitBoundsNext = true;
+    showToast(orderToDelete.isSupplier ? 'Поставщик отменён' : 'Точка удалена');
+  }
+
   async function finishSupplierRoute(driverId) {
     var routeDate = new Date().toISOString().split('T')[0];
     var driverName = getDriverNameById(driverId);
 
     var newSupplierPoints = [];
     orders.forEach(function (order, idx) {
-      if (!order.isSupplier || order.isPoi) return;
+      if (!order.isSupplier || order.isPoi || order.supplierCancelled) return;
       var did = getOrderDriverId(idx);
       if (!did || String(did) !== String(driverId)) return;
 
@@ -4165,21 +4240,23 @@
     const isSettlementOnly = order.geocoded && order.settlementOnly;
     const isEditing = editingOrderId === order.id;
     const isPlacing = placingOrderId === order.id;
+    const isCancelled = order.isSupplier && order.supplierCancelled;
     const safeId = order.id.replace(/[^a-zA-Z0-9\-]/g, '');
 
     let itemClass = 'dc-order-item';
     if (isFailed) itemClass += ' failed';
     if (isSettlementOnly) itemClass += ' settlement-only';
     if (isPlacing) itemClass += ' placing';
+    if (isCancelled) itemClass += ' dc-order-cancelled';
 
-    var hasSlot = slotIdx >= 0;
+    var hasSlot = slotIdx >= 0 && !isCancelled;
     var isSelected = !!_selectedOrderIds[order.id];
     var html = '<div class="' + itemClass + '" data-order-id="' + order.id + '" style="' + (hasSlot ? 'border-left-color:' + color + ';' : '') + (isSelected ? 'box-shadow:inset 0 0 0 2px #22c55e;' : '') + '">';
     var numBg;
     if (order.isPoi) {
       numBg = 'background:' + (hasSlot ? color : (order.poiColor || '#3b82f6')) + ';color:#111;border-radius:4px;font-weight:800;text-shadow:0 0 2px rgba(255,255,255,.8);';
     } else if (order.isSupplier) {
-      numBg = hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff');
+      numBg = isCancelled ? 'background:#6b7280;color:#fff' : (hasSlot ? 'background:' + color + ';color:#fff' : (isFailed ? 'background:#ef4444;color:#fff' : 'background:#10b981;color:#fff'));
     } else if (order.isPartner) {
       numBg = hasSlot ? 'background:' + color + ';color:#fff;border-radius:6px;' : (isFailed ? 'background:#ef4444;color:#fff;border-radius:6px;' : 'background:#e0e0e0;color:#333;border:1px solid #999;border-radius:6px;');
     } else {
@@ -4195,6 +4272,9 @@
       html += '</div>';
     }
     if (order.formattedAddress) html += '<div class="dc-order-faddr">📍 ' + order.formattedAddress + '</div>';
+    if (isCancelled) {
+      html += '<div style="margin-top:4px;"><span style="font-size:11px;color:#ef4444;font-weight:600;padding:2px 8px;border-radius:6px;border:1px solid #ef4444;">Отменён</span></div>';
+    }
     if (isSettlementOnly) {
       html += '<div class="dc-order-warn">⚠ Найден только населённый пункт — уточните точку на карте</div>';
     }
@@ -4222,19 +4302,21 @@
       html += '<div style="font-size:10px;color:#a78bfa;margin-top:2px;">📋 Товар из 1С загружен</div>';
     }
     // Inline driver assignment — directly from DB drivers list
-    var driverDisplayName = driverId ? getDriverNameById(driverId) : (hasSlot ? getDriverName(slotIdx) : null);
-    html += '<div class="dc-order-driver-assign" style="margin-top:3px;">';
-    if (hasSlot || driverId) {
-      html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:' + color + ';cursor:pointer;font-size:12px;font-weight:600;" title="Нажмите чтобы сменить водителя">👤 ' + driverDisplayName + ' ▾</span>';
-    } else if (order.geocoded && editingDriverId) {
-      var editDrvName = getDriverNameById(editingDriverId);
-      html += '<button class="dc-quick-assign-btn" data-idx="' + idx + '" data-driver-id="' + editingDriverId + '" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px;">+ ' + escapeHtml(editDrvName) + '</button>';
-    } else if (order.geocoded) {
-      html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
+    if (!isCancelled) {
+      var driverDisplayName = driverId ? getDriverNameById(driverId) : (hasSlot ? getDriverName(slotIdx) : null);
+      html += '<div class="dc-order-driver-assign" style="margin-top:3px;">';
+      if (hasSlot || driverId) {
+        html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:' + color + ';cursor:pointer;font-size:12px;font-weight:600;" title="Нажмите чтобы сменить водителя">👤 ' + driverDisplayName + ' ▾</span>';
+      } else if (order.geocoded && editingDriverId) {
+        var editDrvName = getDriverNameById(editingDriverId);
+        html += '<button class="dc-quick-assign-btn" data-idx="' + idx + '" data-driver-id="' + editingDriverId + '" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;display:flex;align-items:center;gap:4px;">+ ' + escapeHtml(editDrvName) + '</button>';
+      } else if (order.geocoded) {
+        html += '<span class="dc-assign-label" data-idx="' + idx + '" style="color:#999;cursor:pointer;font-size:11px;" title="Назначить водителя">+ Назначить водителя ▾</span>';
+      }
+      html += '</div>';
     }
-    html += '</div>';
     // Telegram send indicator + confirmation status for suppliers
-    if (order.isSupplier && order.geocoded) {
+    if (!isCancelled && order.isSupplier && order.geocoded) {
       html += '<div class="dc-tg-row" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
       if (order.telegramSent && order.telegramStatus === 'picked_up') {
         html += '<span style="font-size:11px;color:#22c55e;font-weight:600;" title="Водитель забрал товар">📦 Забрал</span>';
@@ -4269,7 +4351,11 @@
     html += '</div>';
 
     // Actions
-    if (isFailed) {
+    if (isCancelled) {
+      html += '<div class="dc-order-actions">';
+      html += '<button class="btn btn-outline btn-sm dc-del-btn" data-id="' + order.id + '" title="Удалить окончательно" style="color:#888;border-color:#555;">✕ Удалить</button>';
+      html += '</div>';
+    } else if (isFailed) {
       html += '<div class="dc-order-actions">';
       html += '<button class="btn btn-outline btn-sm dc-edit-btn" data-id="' + order.id + '" title="Изменить адрес">✎</button>';
       html += '<button class="btn btn-outline btn-sm dc-place-btn" data-id="' + order.id + '" title="Поставить на карте">📍</button>';
@@ -5072,19 +5158,7 @@
       btn.addEventListener('click', async function () {
         const idx = orders.findIndex(function (o) { return o.id === btn.dataset.id; });
         if (idx === -1) return;
-        var orderToDelete = orders[idx];
-        var affectedDriverId = getOrderDriverId(idx);
-        if (orderToDelete && orderToDelete.isSupplier) {
-          await clearSupplierItemsForOrder(orderToDelete);
-        }
-        await rollbackCustomerOrderOnMapRemoval(orderToDelete);
-        orders.splice(idx, 1);
-        if (assignments) {
-          assignments.splice(idx, 1);
-        }
-        variants = []; activeVariant = -1;
-        renderAll();
-        if (affectedDriverId) scheduleSyncDriver(String(affectedDriverId));
+        await performDeleteOrder(idx);
       });
     });
 
