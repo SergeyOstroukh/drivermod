@@ -798,9 +798,10 @@
 		});
 
 		var html = '';
-		html += '<div style="display:flex;gap:6px;margin-bottom:10px;">';
+		html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap;">';
 		html += '<button type="button" class="btn btn-outline btn-sm driver-route-view-tab' + (driverRouteViewTab === 'delivery' ? ' active' : '') + '" data-view-tab="delivery">Доставка (' + deliveryMapPoints.length + ')</button>';
 		html += '<button type="button" class="btn btn-outline btn-sm driver-route-view-tab' + (driverRouteViewTab === 'suppliers' ? ' active' : '') + '" data-view-tab="suppliers">Поставщики (' + allSuppliers.length + ')</button>';
+		html += '<button type="button" class="btn btn-outline btn-sm driver-route-refresh-inline" title="Обновить статусы (из Telegram)" style="margin-left:auto;">🔄 Обновить</button>';
 		html += '</div>';
 
 		var has1COrders = currentRoutesData.some(function (r) {
@@ -1020,6 +1021,9 @@
 	}
 
 	function bindRouteEvents() {
+		document.querySelectorAll('.driver-route-refresh-inline').forEach(function (btn) {
+			btn.addEventListener('click', function () { refreshDriverRoute(); });
+		});
 		document.querySelectorAll('.driver-route-view-tab').forEach(function (btn) {
 			btn.addEventListener('click', function () {
 				var tab = btn.dataset.viewTab;
