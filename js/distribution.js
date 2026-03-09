@@ -1550,10 +1550,35 @@
     }
   }
 
-  window.__dc_delete = function (orderId) {
+  async function rollbackCustomerOrderOnMapRemoval(order) {
+    if (!order || order.customer_order_id == null) return;
+    var client = getSupabaseClient();
+    if (!client) return;
+    try {
+      await client
+        .from('customer_orders')
+        .update({
+          status: 'new',
+          assigned_driver_id: null,
+          driver_route_id: null,
+          sync_1c_state: null,
+          sync_1c_last_error: null,
+          sync_1c_status_sent: null,
+          sync_1c_updated_at: new Date().toISOString(),
+        })
+        .eq('id', order.customer_order_id)
+        .in('status', ['new', 'on_map', 'assigned']);
+    } catch (e) {
+      console.warn('rollback customer_order on map removal:', e);
+    }
+  }
+
+  window.__dc_delete = async function (orderId) {
     var idx = orders.findIndex(function (o) { return o.id === orderId; });
     if (idx === -1) return;
+    var orderToDelete = orders[idx];
     var affectedDriverId = getOrderDriverId(idx);
+    await rollbackCustomerOrderOnMapRemoval(orderToDelete);
     orders.splice(idx, 1);
     if (assignments) { assignments.splice(idx, 1); }
     variants = []; activeVariant = -1;
@@ -1590,10 +1615,18 @@
       // Keep supplier orders, remove only address orders
       var keepOrders = [];
       var keepAssignments = [];
+      var removedOrders = [];
       for (var k = 0; k < orders.length; k++) {
         if (orders[k].isSupplier) {
           keepOrders.push(orders[k]);
           if (assignments) keepAssignments.push(assignments[k]);
+        } else {
+          removedOrders.push(orders[k]);
+        }
+      }
+      if (removedOrders.length > 0) {
+        for (var ro = 0; ro < removedOrders.length; ro++) {
+          await rollbackCustomerOrderOnMapRemoval(removedOrders[ro]);
         }
       }
       orders = keepOrders;
@@ -4967,6 +5000,7 @@
         if (orderToDelete && orderToDelete.isSupplier) {
           await clearSupplierItemsForOrder(orderToDelete);
         }
+        await rollbackCustomerOrderOnMapRemoval(orderToDelete);
         orders.splice(idx, 1);
         if (assignments) {
           assignments.splice(idx, 1);

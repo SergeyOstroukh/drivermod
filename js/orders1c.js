@@ -72,7 +72,15 @@
 
   function formatItems(items) {
     if (items == null || items === "") return "—";
-    if (typeof items === "string") return items;
+    if (typeof items === "string") {
+      var txt = items.trim();
+      if ((txt.startsWith("[") && txt.endsWith("]")) || (txt.startsWith("{") && txt.endsWith("}"))) {
+        try {
+          return formatItems(JSON.parse(txt));
+        } catch (_) {}
+      }
+      return txt;
+    }
     if (Array.isArray(items)) {
       return items
         .map(function (it) {
@@ -85,6 +93,13 @@
         .join("; ");
     }
     return JSON.stringify(items);
+  }
+
+  function formatAmount(amount) {
+    if (amount == null || amount === "") return "";
+    var n = Number(amount);
+    if (!isFinite(n)) return String(amount) + " ₽";
+    return n.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + " ₽";
   }
 
   function csvEscape(value) {
@@ -165,8 +180,7 @@
         var statusLabel = STATUS_LABELS[o.status] || o.status;
         var syncMeta = get1CSyncMeta(o);
         var syncError = (o.sync_1c_last_error || "").trim();
-        var itemsStr = o.items != null ? (typeof o.items === "string" ? o.items : JSON.stringify(o.items)) : "";
-        var itemsDisplay = [itemsStr, o.amount != null ? o.amount + " ₽" : ""].filter(Boolean).join(" · ") || "—";
+        var itemsDisplay = [formatItems(o.items), formatAmount(o.amount)].filter(Boolean).join(" · ") || "—";
         var rowClass = o.status === "on_map" ? " orders1c-row-on-map" : "";
         return (
           "<tr data-order-id=\"" +
