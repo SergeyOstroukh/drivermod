@@ -165,6 +165,40 @@ serve(async (req) => {
         });
       }
 
+      // 4. When driver marks "Забрал" — update driver_routes so it shows in their cabinet
+      if (action === "pickup" && chatId) {
+        try {
+          const { data: driver } = await supabase
+            .from("drivers")
+            .select("id")
+            .eq("telegram_chat_id", chatId)
+            .maybeSingle();
+          if (driver?.id) {
+            const routeDate = new Date().toISOString().split("T")[0];
+            const { data: routes } = await supabase
+              .from("driver_routes")
+              .select("id,points")
+              .eq("driver_id", driver.id)
+              .eq("route_date", routeDate);
+            if (routes?.length) {
+              for (const r of routes) {
+                const pts = (r.points || []) as Record<string, unknown>[];
+                const idx = pts.findIndex(
+                  (p) => p.isSupplier && (p.distribution_order_id as string) === orderId
+                );
+                if (idx >= 0) {
+                  pts[idx] = { ...pts[idx], status: "picked_up" };
+                  await supabase.from("driver_routes").update({ points: pts }).eq("id", r.id);
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to update driver_routes for pickup:", e);
+        }
+      }
+
       console.log(`Callback processed: order=${orderId}, action=${action}, driver=${driverName}`);
     }
 

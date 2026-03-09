@@ -3410,6 +3410,27 @@
     }
   }
 
+  async function markSupplierPickedUpInDriverRoute(driverId, order) {
+    if (!order || !order.isSupplier || !window.VehiclesDB || !window.VehiclesDB.getDriverRoutes || !window.VehiclesDB.updateRoutePoints) return;
+    var routeDate = new Date().toISOString().split('T')[0];
+    var targetKey = pointKey(order);
+    try {
+      var allRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId, 10), routeDate);
+      for (var ri = 0; ri < allRoutes.length; ri++) {
+        var r = allRoutes[ri];
+        var pts = (r.points || []).slice();
+        var idx = pts.findIndex(function (p) { return p.isSupplier && pointKey(p) === targetKey; });
+        if (idx >= 0) {
+          pts[idx] = Object.assign({}, pts[idx], { status: 'picked_up' });
+          await window.VehiclesDB.updateRoutePoints(r.id, pts);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('markSupplierPickedUpInDriverRoute:', e);
+    }
+  }
+
   async function performDeleteOrder(idx, skipConfirm) {
     if (idx < 0 || idx >= orders.length) return;
     var orderToDelete = orders[idx];
@@ -3493,6 +3514,7 @@
         items1c: order.items1c || null,
         itemsSent: !!order.itemsSent,
         itemsSentText: order.itemsSentText || null,
+        distribution_order_id: order.id || null,
       };
       newSupplierPoints.push(pt);
     });
@@ -4124,7 +4146,10 @@
           applied++;
           var oidx = orders.indexOf(order);
           var did = oidx >= 0 ? getOrderDriverId(oidx) : null;
-          if (did) saveSupplierPointStatusToDb(order, did);
+          if (did) {
+            saveSupplierPointStatusToDb(order, did);
+            if (nextStatus === 'picked_up') markSupplierPickedUpInDriverRoute(did, order);
+          }
         }
       });
 
