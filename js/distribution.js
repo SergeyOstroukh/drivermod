@@ -12,6 +12,8 @@
   const ORIGINAL_COLORS = COLORS.slice();
   const DISTRIBUTION_STATE_TABLE = 'distribution_state';
   const SUPPLIER_STATUS_TABLE = 'supplier_point_status';
+  const LOCAL_MUTATION_PULL_BLOCK_MS = 15000;
+  const CLOUD_SHRINK_GUARD_MS = 30000;
   const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
   const PARTNER_ALIASES_KEY = 'dc_partner_aliases';
 
@@ -790,7 +792,7 @@
 
   async function pullCloudStateIfNewer(silent) {
     if (_cloudTableMissing || _isApplyingCloudState) return;
-    if (Date.now() - _lastLocalMutationTs < 3500) return;
+    if (Date.now() - _lastLocalMutationTs < LOCAL_MUTATION_PULL_BLOCK_MS) return;
     if (editingOrderId || placingOrderId || isGeocoding) return;
     var ae = document.activeElement;
     if (ae && (ae.id === 'dcSupplierInput' || ae.id === 'dcAddressInput' || ae.id === 'dcPartnerInput')) return;
@@ -802,6 +804,15 @@
     var cloudOrders = cloud.state.orders;
     if (Array.isArray(cloudOrders) && cloudOrders.length === 0 && orders.length > 0) {
       // Do not allow empty cloud state to overwrite existing local points.
+      return;
+    }
+    if (
+      Date.now() - _lastLocalMutationTs < CLOUD_SHRINK_GUARD_MS &&
+      Array.isArray(cloudOrders) &&
+      cloudOrders.length < orders.length
+    ) {
+      // Prevent short-lived "disappear/reappear" flicker when stale cloud snapshot
+      // arrives right after local point creation.
       return;
     }
     if (!applyStateSnapshot(cloud.state)) return;
