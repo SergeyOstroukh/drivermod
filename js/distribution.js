@@ -3389,6 +3389,27 @@
     }
   }
 
+  async function markSupplierCancelledInDriverRoute(driverId, order) {
+    if (!order || !order.isSupplier || !window.VehiclesDB || !window.VehiclesDB.getDriverRoutes || !window.VehiclesDB.updateRoutePoints) return;
+    var routeDate = new Date().toISOString().split('T')[0];
+    var targetKey = pointKey(order);
+    try {
+      var allRoutes = await window.VehiclesDB.getDriverRoutes(parseInt(driverId, 10), routeDate);
+      for (var ri = 0; ri < allRoutes.length; ri++) {
+        var r = allRoutes[ri];
+        var pts = (r.points || []).slice();
+        var idx = pts.findIndex(function (p) { return p.isSupplier && pointKey(p) === targetKey; });
+        if (idx >= 0) {
+          pts[idx] = Object.assign({}, pts[idx], { status: 'cancelled' });
+          await window.VehiclesDB.updateRoutePoints(r.id, pts);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('markSupplierCancelledInDriverRoute:', e);
+    }
+  }
+
   async function performDeleteOrder(idx, skipConfirm) {
     if (idx < 0 || idx >= orders.length) return;
     var orderToDelete = orders[idx];
@@ -4138,7 +4159,7 @@
     if (_tgPollTimer) { clearInterval(_tgPollTimer); _tgPollTimer = null; }
   }
 
-  // ─── Cancel supplier — send cancellation to driver, unassign ──
+  // ─── Cancel supplier — send cancellation to driver, unassign, update route in DB ──
   async function cancelOneFromTelegram(orderId) {
     var botToken = window.TELEGRAM_BOT_TOKEN;
 
@@ -4147,9 +4168,14 @@
     var order = orders[orderIdx];
     if (!order.isSupplier) return;
 
-    // Get the driver this was sent to
+    // Get the driver this was sent to (before we unassign)
     var driverId = getOrderDriverId(orderIdx);
     var driver = driverId ? dbDrivers.find(function (d) { return d.id === driverId; }) : null;
+
+    // Mark as cancelled in driver's route in DB so they see "Отменён" in their маршрутник
+    if (driverId) {
+      await markSupplierCancelledInDriverRoute(driverId, order);
+    }
 
     // Send cancellation message if driver has telegram
     if (botToken && driver && driver.telegram_chat_id && driver.telegram_chat_id > 0 && order.telegramSent) {
