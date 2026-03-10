@@ -3034,6 +3034,10 @@
     });
     try {
       await window.VehiclesDB.updateRoutePoints(parseInt(editingRouteId), points);
+      // Если маршрут был завершён (старые данные) — сбрасываем статус обратно в active
+      if (window.VehiclesDB.reactivateDriverRoute) {
+        await window.VehiclesDB.reactivateDriverRoute(parseInt(editingRouteId));
+      }
       var routeId = parseInt(editingRouteId);
       var did = editingDriverId;
       editingRouteId = null;

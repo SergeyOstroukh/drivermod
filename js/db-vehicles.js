@@ -964,6 +964,25 @@
 	}
 
 	/**
+	 * Сбрасывает статус маршрута обратно в 'active' (например после редактирования логистом)
+	 */
+	async function reactivateDriverRoute(routeId) {
+		try {
+			const client = initSupabase();
+			const { data, error } = await client
+				.from('driver_routes')
+				.update({ status: 'active' })
+				.eq('id', routeId)
+				.select('*')
+				.single();
+			if (error) throw error;
+			return data;
+		} catch (err) {
+			console.error('Ошибка сброса статуса маршрута:', err);
+		}
+	}
+
+	/**
 	 * Сохраняет маршрут (выезд) для одного водителя (INSERT, не удаляет другие)
 	 */
 	async function saveDriverRouteForDriver(driverId, routeDate, points) {
@@ -1151,6 +1170,7 @@
 		getRoutesByDate,
 		deleteDriverRoute,
 		completeDriverRoute,
+		reactivateDriverRoute,
 		updateRoutePoints
 	};
 })();
