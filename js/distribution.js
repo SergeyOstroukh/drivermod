@@ -26,6 +26,8 @@
   let editingDriverId = null; // режим редактирования маршрута водителя
   let editingRouteId = null; // ID выезда при «Редактировать выезд»
   let editingTripNum = 0; // номер выезда для баннера
+  let _editBackupOrders = null;   // backup orders до входа в режим редактирования (чтобы не терять точки с карты)
+  let _editBackupAssignments = null;
   let isGeocoding = false;
   let mapInstance = null;
   let placemarks = [];
@@ -1194,8 +1196,9 @@
       if (_hideAssigned && order.isSupplier && orderDriverId) return;
       if (_hideConfirmed && order.isSupplier && (order.telegramStatus === 'confirmed' || order.telegramStatus === 'picked_up')) return;
       var isVisible;
+      // При редактировании выезда — показывать ВСЕ точки на карте (ничего не скрывать до «Сбросить данные»)
       if (editingDriverId) {
-        isVisible = !orderDriverId || String(orderDriverId) === String(editingDriverId);
+        isVisible = true;
       } else {
         isVisible = selectedDriver === null || (orderDriverId != null && String(orderDriverId) === String(selectedDriver)) || (selectedDriver === '__unassigned__' && !orderDriverId);
       }
@@ -2771,6 +2774,11 @@
       variants = [];
       activeVariant = -1;
       selectedDriver = null;
+      editingRouteId = null;
+      editingDriverId = null;
+      editingTripNum = 0;
+      _editBackupOrders = null;
+      _editBackupAssignments = null;
       clearTimeout(_cloudSaveTimer);
       _allowEmptyCloudWriteUntil = Date.now() + 5000;
       _suppressCloudSaveUntil = Date.now() + 5000;
@@ -2940,6 +2948,12 @@
   }
 
   function cancelEditTrip() {
+    if (_editBackupOrders != null) {
+      orders = _editBackupOrders.map(function (o) { return Object.assign({}, o); });
+      assignments = _editBackupAssignments ? _editBackupAssignments.slice() : null;
+      _editBackupOrders = null;
+      _editBackupAssignments = null;
+    }
     editingRouteId = null;
     editingTripNum = 0;
     editingDriverId = null;
@@ -2994,11 +3008,70 @@
     });
     try {
       await window.VehiclesDB.updateRoutePoints(parseInt(editingRouteId), points);
+      var routeId = parseInt(editingRouteId);
+      var did = editingDriverId;
       editingRouteId = null;
       editingTripNum = 0;
-      var name = getDriverNameById(editingDriverId);
       editingDriverId = null;
       selectedDriver = null;
+
+      // Восстанавливаем карту: backup + обновлённые точки маршрута (старые точки этого выезда заменяем на сохранённые)
+      if (_editBackupOrders != null) {
+        var belongsToEditedRoute = function (o) {
+          if (o._driverRouteId === routeId) return true;
+          if (o.id && String(o.id).indexOf('restored-' + routeId + '-') === 0) return true;
+          return false;
+        };
+        var otherOrders = [];
+        var otherAssignments = [];
+        var bakAssign = _editBackupAssignments || [];
+        _editBackupOrders.forEach(function (o, i) {
+          if (!belongsToEditedRoute(o)) {
+            otherOrders.push(o);
+            otherAssignments.push(bakAssign[i] != null ? bakAssign[i] : -1);
+          }
+        });
+        var driverSlotIdx = dbDrivers.findIndex(function (d) { return String(d.id) === String(did); });
+        if (driverSlotIdx < 0) driverSlotIdx = 0;
+        points.forEach(function (pt) {
+          if (!pt || (!pt.lat && !pt.lng && !pt.isSupplier && !pt.isPoi)) return;
+          var o = {
+            id: 'restored-' + routeId + '-' + otherOrders.length + '-' + Date.now(),
+            address: pt.address || '',
+            phone: pt.phone || null,
+            timeSlot: pt.timeSlot || null,
+            geocoded: !!(pt.lat && pt.lng),
+            lat: pt.lat || null,
+            lng: pt.lng || null,
+            formattedAddress: pt.formattedAddress || null,
+            error: null,
+            assignedDriverId: did,
+            status: pt.status || 'assigned',
+            _driverRouteId: routeId,
+          };
+          if (pt.isSupplier) {
+            o.isSupplier = true;
+            o.telegramSent = !!pt.telegramSent;
+            o.telegramStatus = pt.telegramStatus || null;
+            o.items1c = pt.items1c || null;
+            o.itemsSent = !!pt.itemsSent;
+            o.itemsSentText = pt.itemsSentText || null;
+          }
+          if (pt.isPartner) { o.isPartner = true; o.partnerName = pt.partnerName || pt.address || null; }
+          if (pt.isPoi) { o.isPoi = true; o.poiLabel = pt.poiLabel || null; }
+          if (pt.isKbt) { o.isKbt = true; o.helperDriverId = pt.helperDriverId || null; o.helperDriverName = pt.helperDriverName || null; }
+          if (pt.customer_order_id != null || pt.order_1c_id) {
+            o.customer_order_id = pt.customer_order_id || null;
+            o.order_1c_id = pt.order_1c_id || null;
+          }
+          otherOrders.push(o);
+          otherAssignments.push(driverSlotIdx);
+        });
+        orders = otherOrders;
+        assignments = otherAssignments;
+        _editBackupOrders = null;
+        _editBackupAssignments = null;
+      }
       renderAll();
       showToast('Выезд сохранён');
     } catch (err) {
@@ -3298,6 +3371,10 @@
   }
 
   function loadTripForEditing(route, driverId, tripNum) {
+    // Сохраняем текущие данные — с карты ничего не должно пропадать до «Сбросить данные»
+    _editBackupOrders = orders.map(function (o) { return Object.assign({}, o); });
+    _editBackupAssignments = assignments ? assignments.slice() : null;
+
     var pts = (route.points || []).slice();
     var driverIdx = dbDrivers.findIndex(function (d) { return String(d.id) === String(driverId); });
     if (driverIdx < 0) driverIdx = 0;
@@ -5881,6 +5958,7 @@
           error: null,
           assignedDriverId: route.driver_id || null,
           status: pt.status || 'assigned',
+          _driverRouteId: route.id || null,
         };
         if (isSupplier) {
           o.isSupplier = true;

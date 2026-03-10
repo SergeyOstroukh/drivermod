@@ -4695,11 +4695,12 @@
 					tripPoints.push(row);
 				});
 				if (tripPoints.length > 0) {
+					var driverId = route.driver_id ?? (route.driver && route.driver.id) ?? null;
 					routesWithPoints.push({
 						route: route,
-						tripNum: routesWithPoints.length + 1,
+						tripNum: 1, // будет пересчитан при рендере по водителю
 						driverName: route.driver && route.driver.name ? route.driver.name : null,
-						driverId: route.driver_id || null,
+						driverId: driverId,
 						points: tripPoints,
 						isCompleted: route.status === 'completed',
 					});
@@ -4758,8 +4759,27 @@
 		if (_deliveriesFilterDriverId) {
 			rows = rows.filter(function (r) { return String(r.driverId) === String(_deliveriesFilterDriverId); });
 			routes = routes.filter(function (r) { return String(r.driverId) === String(_deliveriesFilterDriverId); });
-			// Перенумеровать выезды по порядку для выбранного водителя (1, 2, 3...)
 			routes = routes.map(function (t, ti) { return Object.assign({}, t, { tripNum: ti + 1 }); });
+		} else {
+			// Группируем по водителю: номер выезда (Выезд 1, 2, 3...) — это порядок выездов у КОНКРЕТНОГО водителя, не глобальный
+			var byDriver = {};
+			routes.forEach(function (t) {
+				var k = (t.driverId != null && t.driverId !== '') ? String(t.driverId) : ('_route_' + (t.route && t.route.id ? t.route.id : ('x' + Math.random().toString(36).slice(2))));
+				if (!byDriver[k]) byDriver[k] = { name: t.driverName || '—', trips: [] };
+				byDriver[k].trips.push(t);
+			});
+			var driverKeys = Object.keys(byDriver).sort(function (a, b) {
+				var lastNameA = (byDriver[a].name || '').split(/\s+/)[0] || 'я';
+				var lastNameB = (byDriver[b].name || '').split(/\s+/)[0] || 'я';
+				return lastNameA.localeCompare(lastNameB, 'ru');
+			});
+			routes = [];
+			driverKeys.forEach(function (k) {
+				var grp = byDriver[k];
+				grp.trips.forEach(function (t, ti) {
+					routes.push(Object.assign({}, t, { tripNum: ti + 1 }));
+				});
+			});
 		}
 		if (_deliveriesFilterStatus) {
 			var statusOk = function (r) {
@@ -4797,12 +4817,18 @@
 
 		if (_deliveriesViewMode === 'trips' && routes.length > 0) {
 			var tripsHtml = '<div class="deliveries-trips">';
+			var lastDriverId = null;
 			routes.forEach(function (trip, ti) {
+				var showDriverHeader = !_deliveriesFilterDriverId && (lastDriverId !== trip.driverId);
+				if (showDriverHeader) {
+					lastDriverId = trip.driverId;
+					tripsHtml += '<div class="deliveries-driver-header" style="font-weight:700;font-size:13px;color:var(--accent);margin:' + (ti > 0 ? '16px 0 6px 0' : '0 0 6px 0') + ';padding-bottom:4px;border-bottom:1px solid var(--border);">' + escapeHtml(trip.driverName || '—') + '</div>';
+				}
 				var icon = trip.isCompleted ? '\u2705' : '\uD83D\uDE97';
 				tripsHtml += '<details class="deliveries-trip-details" ' + (ti === 0 ? 'open' : '') + ' style="margin-bottom:12px;">';
 				tripsHtml += '<summary style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 12px;background:var(--bg2);border-radius:8px;list-style:none;display:flex;align-items:center;gap:8px;">';
 				tripsHtml += '<span style="transition:transform .2s;">\u25B6</span> ';
-				tripsHtml += icon + ' Выезд ' + trip.tripNum + ' \u2014 ' + (trip.driverName || '\u2014') + ' <span style="font-weight:400;color:var(--muted);font-size:12px;">(' + trip.points.length + ' точек)</span>';
+				tripsHtml += icon + ' Выезд ' + trip.tripNum + ' <span style="font-weight:400;color:var(--muted);font-size:12px;">(' + trip.points.length + ' точек)</span>';
 				tripsHtml += '</summary>';
 				tripsHtml += '<div style="padding:8px 0 0 8px;">';
 				tripsHtml += '<table class="distributed-table" style="margin-top:4px;"><thead><tr><th style="width:40px;">\u2116</th><th>Адрес / партнёр</th><th style="width:100px;">Тип</th><th>Статус</th><th>Время</th></tr></thead><tbody>';
