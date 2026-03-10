@@ -2967,6 +2967,22 @@
       showToast('Ошибка: данные для сохранения недоступны', 'error');
       return;
     }
+    var pointKey = function (p) { return (p.address || '') + '|' + (p.lat || '') + '|' + (p.lng || '') + '|' + (p.isSupplier ? '1' : '0'); };
+    var dbPoints = [];
+    if (window.VehiclesDB.getRoutesByDate) {
+      try {
+        var routeDate = new Date().toISOString().split('T')[0];
+        var allRoutes = await window.VehiclesDB.getRoutesByDate(routeDate) || [];
+        var dbRoute = allRoutes.find(function (r) { return String(r.id) === String(editingRouteId); });
+        dbPoints = dbRoute && Array.isArray(dbRoute.points) ? dbRoute.points : [];
+      } catch (e) {}
+    }
+    var dbStatusByKey = {};
+    dbPoints.forEach(function (p) {
+      var k = pointKey(p);
+      var s = p.status;
+      if (s === 'completed' || s === 'delivered' || s === 'cancelled' || s === 'picked_up') dbStatusByKey[k] = s;
+    });
     var points = [];
     orders.forEach(function (order, idx) {
       if (!order.geocoded && !order.isSupplier && !order.isPoi) return;
@@ -3002,8 +3018,10 @@
       if (order.customer_order_id != null || order.order_1c_id) {
         pt.customer_order_id = order.customer_order_id || null;
         pt.order_1c_id = order.order_1c_id || null;
-        pt.status = order.status || 'assigned';
       }
+      var pk = pointKey(pt);
+      var savedStatus = dbStatusByKey[pk];
+      pt.status = savedStatus != null ? savedStatus : (order.status || 'assigned');
       points.push(pt);
     });
     try {
@@ -3017,9 +3035,18 @@
 
       // Восстанавливаем карту: backup + обновлённые точки маршрута (старые точки этого выезда заменяем на сохранённые)
       if (_editBackupOrders != null) {
+        var driverRouteCount = 1;
+        if (window.VehiclesDB && window.VehiclesDB.getRoutesByDate) {
+          try {
+            var routeDate = new Date().toISOString().split('T')[0];
+            var allRoutes = await window.VehiclesDB.getRoutesByDate(routeDate) || [];
+            driverRouteCount = allRoutes.filter(function (r) { return String(r.driver_id || '') === String(did); }).length;
+          } catch (e) { driverRouteCount = 1; }
+        }
         var belongsToEditedRoute = function (o) {
           if (o._driverRouteId === routeId) return true;
           if (o.id && String(o.id).indexOf('restored-' + routeId + '-') === 0) return true;
+          if (driverRouteCount <= 1 && String(o.assignedDriverId || '') === String(did)) return true;
           return false;
         };
         var otherOrders = [];
@@ -3033,8 +3060,14 @@
         });
         var driverSlotIdx = dbDrivers.findIndex(function (d) { return String(d.id) === String(did); });
         if (driverSlotIdx < 0) driverSlotIdx = 0;
+        var pointKey = function (p) { return (p.address || '') + '|' + (p.lat || '') + '|' + (p.lng || '') + '|' + (p.isSupplier ? '1' : '0'); };
+        var existingKeys = {};
+        otherOrders.forEach(function (o) { existingKeys[pointKey(o) + '|' + (o.assignedDriverId || '')] = true; });
         points.forEach(function (pt) {
           if (!pt || (!pt.lat && !pt.lng && !pt.isSupplier && !pt.isPoi)) return;
+          var pk = pointKey(pt) + '|' + did;
+          if (existingKeys[pk]) return;
+          existingKeys[pk] = true;
           var o = {
             id: 'restored-' + routeId + '-' + otherOrders.length + '-' + Date.now(),
             address: pt.address || '',
@@ -3499,8 +3532,14 @@
       } else {
         throw new Error('VehiclesDB недоступен');
       }
+      // Маршрут остаётся active до тех пор, пока водитель не нажмёт «Завершить выезд»
       if (savedRoute && savedRoute.id) {
-        await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+        orders.forEach(function (order, idx) {
+          if (!order.geocoded && !order.isSupplier && !order.isPoi) return;
+          var d = getOrderDriverId(idx);
+          if (!d || String(d) !== String(driverId)) return;
+          order._driverRouteId = savedRoute.id;
+        });
       }
 
       // KBT с помощником: сохранить маршрут помощнику
@@ -3928,7 +3967,16 @@
           savedRoute = await window.VehiclesDB.syncDriverRoute(parseInt(driverId, 10), routeDate, supplierPoints);
         }
         if (savedRoute && savedRoute.id) {
-          await window.VehiclesDB.completeDriverRoute(savedRoute.id);
+          var supOrderIndices = [];
+          orders.forEach(function (order, idx) {
+            if (!order.geocoded && !order.isSupplier && !order.isPoi) return;
+            var d = getOrderDriverId(idx);
+            if (!d || String(d) !== String(driverId)) return;
+            if (order.isSupplier) supOrderIndices.push(idx);
+          });
+          supOrderIndices.forEach(function (i) {
+            if (orders[i]) orders[i]._driverRouteId = savedRoute.id;
+          });
         }
         showToast('Поставщики для ' + driverName + ' сохранены (' + supplierPoints.length + '). Точки остаются на карте.');
       }

@@ -746,6 +746,27 @@
 		return String(routeId) + ':' + String(ptIndex);
 	}
 
+	function confirmDriverStatusChange(address, newStatus) {
+		var needsConfirm = newStatus === 'cancelled' || newStatus === 'completed' || newStatus === 'delivered' || newStatus === 'picked_up' || newStatus === 'route_complete';
+		if (!needsConfirm) return Promise.resolve(true);
+		return new Promise(function (resolve) {
+			var actionLabel = newStatus === 'route_complete' ? 'Завершить выезд' : (newStatus === 'cancelled' ? 'Отменить доставку' : (newStatus === 'picked_up' ? 'Забран' : 'Доставлен'));
+			var modal = document.createElement('div');
+			modal.className = 'modal is-open';
+			modal.style.cssText = 'z-index:10000;';
+			modal.innerHTML = '<div class="modal-content" style="max-width:420px;">' +
+				'<h3 class="modal-title" style="margin-bottom:12px;">Подтверждение</h3>' +
+				'<p style="margin-bottom:16px;color:var(--text-secondary);">Вы уверены? <strong>' + actionLabel + '</strong> — ' + (address || 'адрес') + '</p>' +
+				'<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+				'<button type="button" class="btn btn-outline dc-confirm-cancel">Отмена</button>' +
+				'<button type="button" class="btn btn-primary dc-confirm-ok">Подтвердить</button>' +
+				'</div></div>';
+			document.body.appendChild(modal);
+			modal.querySelector('.dc-confirm-ok').onclick = function () { modal.remove(); resolve(true); };
+			modal.querySelector('.dc-confirm-cancel').onclick = function () { modal.remove(); resolve(false); };
+		});
+	}
+
 	function renderDriverRoutes(routes) {
 		const listEl = document.getElementById("driverRouteList");
 		const mapEl = document.getElementById("driverRouteMap");
@@ -841,9 +862,10 @@
 			var activeCount = trip.points.filter(function (pt) {
 				return pt.status !== 'completed' && pt.status !== 'delivered' && pt.status !== 'cancelled';
 			}).length;
-			var allDone = trip.isCompleted || (trip.points.length > 0 && activeCount === 0);
+			// Серый цвет и «завершён» — ТОЛЬКО когда водитель нажал «Завершить выезд» (route.status === 'completed')
+			var allDone = trip.isCompleted;
 			var icon = allDone ? '\u2705' : '\uD83D\uDE97';
-			var statusText = trip.isCompleted ? 'завершён' : (allDone ? 'все точки пройдены' : activeCount + ' из ' + trip.points.length + ' активных');
+			var statusText = trip.isCompleted ? 'завершён' : (activeCount === 0 && trip.points.length > 0 ? 'все точки пройдены' : activeCount + ' из ' + trip.points.length + ' активных');
 			var helperPt = trip.points.find(function (pt) { return pt.isKbtHelper && pt.mainDriverName; });
 			var isHelperTrip = !!helperPt;
 
@@ -1039,6 +1061,7 @@
 			btn.addEventListener('click', async function () {
 				var routeId = btn.dataset.routeId;
 				if (!routeId || !window.VehiclesDB || !window.VehiclesDB.completeDriverRoute) return;
+				if (!(await confirmDriverStatusChange('весь маршрут', 'route_complete'))) return;
 				try {
 					await window.VehiclesDB.completeDriverRoute(parseInt(routeId));
 					await refreshDriverRoute();
@@ -1063,6 +1086,9 @@
 				var routeId = btn.dataset.routeId;
 				var ptIndex = parseInt(btn.dataset.ptIndex);
 				var newStatus = btn.dataset.status;
+				var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+				var pt = route && route.points && route.points[ptIndex] ? route.points[ptIndex] : null;
+				if (!(await confirmDriverStatusChange(pt ? pt.address : '', newStatus))) return;
 				await set1COrderStatus(routeId, ptIndex, newStatus);
 			});
 		});
@@ -1080,6 +1106,9 @@
 				var routeId = btn.dataset.routeId;
 				var ptIndex = parseInt(btn.dataset.ptIndex);
 				var newStatus = btn.dataset.status;
+				var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+				var pt = route && route.points && route.points[ptIndex] ? route.points[ptIndex] : null;
+				if (!(await confirmDriverStatusChange(pt ? pt.address : '', newStatus))) return;
 				await setSupplierPointStatus(routeId, ptIndex, newStatus);
 			});
 		});
@@ -1088,6 +1117,9 @@
 				var routeId = btn.dataset.routeId;
 				var ptIndex = parseInt(btn.dataset.ptIndex);
 				var newStatus = btn.dataset.status;
+				var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+				var pt = route && route.points && route.points[ptIndex] ? route.points[ptIndex] : null;
+				if (!(await confirmDriverStatusChange(pt ? pt.address : '', newStatus))) return;
 				await setPartnerPointStatus(routeId, ptIndex, newStatus);
 			});
 		});
@@ -1098,6 +1130,9 @@
 				var routeId = btn.dataset.routeId;
 				var ptIndex = parseInt(btn.dataset.ptIndex);
 				var newStatus = btn.dataset.status;
+				var route = currentRoutesData.find(function (r) { return String(r.id) === String(routeId); });
+				var pt = route && route.points && route.points[ptIndex] ? route.points[ptIndex] : null;
+				if (!(await confirmDriverStatusChange(pt ? pt.address : '', newStatus))) return;
 				await setAddressPointStatus(routeId, ptIndex, newStatus);
 			});
 		});
