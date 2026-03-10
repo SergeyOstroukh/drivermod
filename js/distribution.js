@@ -26,8 +26,10 @@
   let editingDriverId = null; // режим редактирования маршрута водителя
   let editingRouteId = null; // ID выезда при «Редактировать выезд»
   let editingTripNum = 0; // номер выезда для баннера
-  let _editBackupOrders = null;   // backup orders до входа в режим редактирования (чтобы не терять точки с карты)
+  let _editBackupOrders = null;        // все точки на карте КРОМЕ редактируемого маршрута
   let _editBackupAssignments = null;
+  let _editRouteOriginalOrders = null; // оригинальные точки редактируемого маршрута (для отмены)
+  let _editRouteOriginalAssignments = null;
   let isGeocoding = false;
   let mapInstance = null;
   let placemarks = [];
@@ -2779,6 +2781,8 @@
       editingTripNum = 0;
       _editBackupOrders = null;
       _editBackupAssignments = null;
+      _editRouteOriginalOrders = null;
+      _editRouteOriginalAssignments = null;
       clearTimeout(_cloudSaveTimer);
       _allowEmptyCloudWriteUntil = Date.now() + 5000;
       _suppressCloudSaveUntil = Date.now() + 5000;
@@ -2949,11 +2953,16 @@
 
   function cancelEditTrip() {
     if (_editBackupOrders != null) {
-      orders = _editBackupOrders.map(function (o) { return Object.assign({}, o); });
-      assignments = _editBackupAssignments ? _editBackupAssignments.slice() : null;
-      _editBackupOrders = null;
-      _editBackupAssignments = null;
+      // Восстанавливаем: все остальные точки + оригинальные точки этого маршрута
+      var restored = _editBackupOrders.concat(_editRouteOriginalOrders || []);
+      var restoredA = _editBackupAssignments.concat(_editRouteOriginalAssignments || []);
+      orders = restored;
+      assignments = restoredA;
     }
+    _editBackupOrders = null;
+    _editBackupAssignments = null;
+    _editRouteOriginalOrders = null;
+    _editRouteOriginalAssignments = null;
     editingRouteId = null;
     editingTripNum = 0;
     editingDriverId = null;
@@ -3033,43 +3042,16 @@
       editingDriverId = null;
       selectedDriver = null;
 
-      // Восстанавливаем карту: backup + обновлённые точки маршрута (старые точки этого выезда заменяем на сохранённые)
+      // Восстанавливаем карту: backup (без старых точек маршрута) + новые отредактированные точки
       if (_editBackupOrders != null) {
-        var driverRouteCount = 1;
-        if (window.VehiclesDB && window.VehiclesDB.getRoutesByDate) {
-          try {
-            var routeDate = new Date().toISOString().split('T')[0];
-            var allRoutes = await window.VehiclesDB.getRoutesByDate(routeDate) || [];
-            driverRouteCount = allRoutes.filter(function (r) { return String(r.driver_id || '') === String(did); }).length;
-          } catch (e) { driverRouteCount = 1; }
-        }
-        var belongsToEditedRoute = function (o) {
-          if (o._driverRouteId === routeId) return true;
-          if (o.id && String(o.id).indexOf('restored-' + routeId + '-') === 0) return true;
-          if (driverRouteCount <= 1 && String(o.assignedDriverId || '') === String(did)) return true;
-          return false;
-        };
-        var otherOrders = [];
-        var otherAssignments = [];
-        var bakAssign = _editBackupAssignments || [];
-        _editBackupOrders.forEach(function (o, i) {
-          if (!belongsToEditedRoute(o)) {
-            otherOrders.push(o);
-            otherAssignments.push(bakAssign[i] != null ? bakAssign[i] : -1);
-          }
-        });
         var driverSlotIdx = dbDrivers.findIndex(function (d) { return String(d.id) === String(did); });
         if (driverSlotIdx < 0) driverSlotIdx = 0;
-        var pointKey = function (p) { return (p.address || '') + '|' + (p.lat || '') + '|' + (p.lng || '') + '|' + (p.isSupplier ? '1' : '0'); };
-        var existingKeys = {};
-        otherOrders.forEach(function (o) { existingKeys[pointKey(o) + '|' + (o.assignedDriverId || '')] = true; });
+        var newOrders = _editBackupOrders.slice();
+        var newAssignments = _editBackupAssignments.slice();
         points.forEach(function (pt) {
           if (!pt || (!pt.lat && !pt.lng && !pt.isSupplier && !pt.isPoi)) return;
-          var pk = pointKey(pt) + '|' + did;
-          if (existingKeys[pk]) return;
-          existingKeys[pk] = true;
           var o = {
-            id: 'restored-' + routeId + '-' + otherOrders.length + '-' + Date.now(),
+            id: 'restored-' + routeId + '-' + newOrders.length + '-' + Date.now(),
             address: pt.address || '',
             phone: pt.phone || null,
             timeSlot: pt.timeSlot || null,
@@ -3097,13 +3079,15 @@
             o.customer_order_id = pt.customer_order_id || null;
             o.order_1c_id = pt.order_1c_id || null;
           }
-          otherOrders.push(o);
-          otherAssignments.push(driverSlotIdx);
+          newOrders.push(o);
+          newAssignments.push(driverSlotIdx);
         });
-        orders = otherOrders;
-        assignments = otherAssignments;
+        orders = newOrders;
+        assignments = newAssignments;
         _editBackupOrders = null;
         _editBackupAssignments = null;
+        _editRouteOriginalOrders = null;
+        _editRouteOriginalAssignments = null;
       }
       renderAll();
       showToast('Выезд сохранён');
@@ -3404,9 +3388,28 @@
   }
 
   function loadTripForEditing(route, driverId, tripNum) {
-    // Сохраняем текущие данные — с карты ничего не должно пропадать до «Сбросить данные»
-    _editBackupOrders = orders.map(function (o) { return Object.assign({}, o); });
-    _editBackupAssignments = assignments ? assignments.slice() : null;
+    // Разделяем текущие точки на две группы:
+    // 1) _editBackupOrders — все точки КРОМЕ точек редактируемого маршрута
+    // 2) _editRouteOriginalOrders — точки редактируемого маршрута (нужны только для отмены)
+    var routeId = route.id;
+    _editBackupOrders = [];
+    _editBackupAssignments = [];
+    _editRouteOriginalOrders = [];
+    _editRouteOriginalAssignments = [];
+    var bakAssign = assignments || [];
+    orders.forEach(function (o, i) {
+      var isFromThisRoute =
+        (o._driverRouteId != null && String(o._driverRouteId) === String(routeId)) ||
+        (o._driverRouteId == null && String(o.assignedDriverId || '') === String(driverId));
+      var assign = bakAssign[i] != null ? bakAssign[i] : -1;
+      if (isFromThisRoute) {
+        _editRouteOriginalOrders.push(Object.assign({}, o));
+        _editRouteOriginalAssignments.push(assign);
+      } else {
+        _editBackupOrders.push(Object.assign({}, o));
+        _editBackupAssignments.push(assign);
+      }
+    });
 
     var pts = (route.points || []).slice();
     var driverIdx = dbDrivers.findIndex(function (d) { return String(d.id) === String(driverId); });
