@@ -2994,9 +2994,8 @@
     });
     var points = [];
     orders.forEach(function (order, idx) {
+      // In edit mode all orders[] belong to the route being edited — no driver filter needed
       if (!order.geocoded && !order.isSupplier && !order.isPoi) return;
-      var did = getOrderDriverId(idx);
-      if (!did || String(did) !== String(editingDriverId)) return;
       var pt = {
         address: order.address,
         lat: order.lat,
@@ -3448,7 +3447,7 @@
         if (hi >= 0) order.helperDriverSlot = hi;
       }
       orders.push(order);
-      assignments.push(parseInt(driverId));
+      assignments.push(driverIdx); // slot index, not driver ID
     });
     driverSlots = dbDrivers.map(function (d) { return d.id; });
     selectedDriver = null;
