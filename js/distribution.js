@@ -5285,7 +5285,8 @@
               var lng = parseFloat(item.dataset.lng);
               var oid = item.dataset.orderId;
               if (lat && lng && mapInstance) {
-                mapInstance.setCenter([lat, lng], 17, { duration: 300 });
+                var currentZoom = typeof mapInstance.getZoom === 'function' ? mapInstance.getZoom() : undefined;
+                mapInstance.setCenter([lat, lng], currentZoom, { duration: 300 });
                 // Open balloon on the placemark at this location
                 mapInstance.balloon.open([lat, lng]);
                 setTimeout(function () { mapInstance.balloon.close(); }, 3000);
