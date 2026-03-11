@@ -4150,6 +4150,16 @@
 	let _deliveriesFilterDriverId = '';
 	let _deliveriesFilterStatus = '';
 	let _deliveriesFilterDate = '';
+	const SUPPLIER_STATUS_TABLE = 'supplier_point_status';
+
+	function getSupabaseClientForInwork() {
+		const config = window.SUPABASE_CONFIG || {};
+		if (!config.url || !config.anonKey || !window.supabase) return null;
+		if (!window._dcSupabase) {
+			window._dcSupabase = window.supabase.createClient(config.url, config.anonKey);
+		}
+		return window._dcSupabase;
+	}
 
 	function getTodayLocalDateString() {
 		const now = new Date();
@@ -4161,10 +4171,11 @@
 
 	async function loadDistributedHistoryForDate(routeDate) {
 		const targetDate = routeDate || getTodayLocalDateString();
-		if (!window.VehiclesDB || !window.VehiclesDB.getRoutesByDate) {
+		const client = getSupabaseClientForInwork();
+		if (!client) {
 			_distributedHistoryRows = [];
 			_distributedHistoryDate = '';
-			_distributedHistoryError = 'История маршрутов недоступна';
+			_distributedHistoryError = 'Supabase не настроен';
 			_distributedHistoryLoading = false;
 			return;
 		}
@@ -4173,30 +4184,43 @@
 		_distributedHistoryError = '';
 		if (_distributedSectionOpen) renderDistributedSuppliers();
 		try {
-			const routes = await window.VehiclesDB.getRoutesByDate(targetDate);
-			const rows = [];
-			(routes || []).forEach(function (route) {
-				const points = Array.isArray(route.points) ? route.points : [];
-				points.forEach(function (pt) {
-					if (!pt || !pt.isSupplier) return;
-					rows.push({
-						address: pt.address || '',
-						supplierName: pt.address || '',
-						driverName: route.driver && route.driver.name ? route.driver.name : null,
-						driverId: route.driver_id || null,
-						timeSlot: pt.timeSlot || '',
-						phone: pt.phone || '',
-						geocoded: true,
-						inDb: true,
-						telegramStatus: pt.telegramStatus || null,
-						telegramSent: !!pt.telegramSent,
-						items1c: pt.items1c || null,
-						itemsSent: !!pt.itemsSent,
-						itemsSentText: pt.itemsSentText || null,
-						_source: 'history',
-						_routeCreatedAt: route.created_at || null,
-					});
-				});
+			const resp = await client
+				.from(SUPPLIER_STATUS_TABLE)
+				.select(`
+					route_date,
+					driver_id,
+					address,
+					lat,
+					lng,
+					telegram_sent,
+					telegram_status,
+					items_sent,
+					items_sent_text,
+					updated_at,
+					drivers(name)
+				`)
+				.eq('route_date', targetDate);
+			if (resp.error) throw resp.error;
+			const rows = (resp.data || []).map(function (r) {
+				let driverRef = r.drivers;
+				if (Array.isArray(driverRef)) driverRef = driverRef[0] || null;
+				return {
+					address: r.address || '',
+					supplierName: r.address || '',
+					driverName: driverRef && driverRef.name ? driverRef.name : null,
+					driverId: r.driver_id || null,
+					timeSlot: '',
+					phone: '',
+					geocoded: !!(r.lat && r.lng),
+					inDb: true,
+					telegramStatus: r.telegram_status || null,
+					telegramSent: !!r.telegram_sent,
+					items1c: r.items_sent_text || null,
+					itemsSent: !!r.items_sent,
+					itemsSentText: r.items_sent_text || null,
+					_source: 'supplier_point_status',
+					_routeCreatedAt: r.updated_at || null,
+				};
 			});
 			_distributedHistoryRows = rows;
 			_distributedHistoryDate = targetDate;
@@ -4212,9 +4236,7 @@
 
 	function getDistributedRowsData() {
 		const selectedDate = _distributedFilterDate || getTodayLocalDateString();
-		const today = getTodayLocalDateString();
 		const hasHistoryForSelectedDate = _distributedHistoryDate === selectedDate;
-		const isTodaySelected = selectedDate === today;
 
 		let allSuppliers = [];
 		let allDrivers = [];
@@ -4228,21 +4250,9 @@
 				}
 			});
 			allDrivers = Object.keys(driverMap).map(function (k) { return driverMap[k]; });
-		} else if (selectedDate === today && window.DistributionUI && window.DistributionUI.getDistributedSuppliers) {
-			allSuppliers = window.DistributionUI.getDistributedSuppliers();
-			allDrivers = window.DistributionUI.getDistributionDrivers();
 		} else {
 			allSuppliers = [];
 			allDrivers = [];
-		}
-
-		// For today, append live rows from DistributionUI.
-		// They represent the current assignment and should win over history snapshots.
-		if (isTodaySelected && window.DistributionUI && window.DistributionUI.getDistributedSuppliers) {
-			const liveRows = window.DistributionUI.getDistributedSuppliers() || [];
-			liveRows.forEach(function (r) {
-				allSuppliers.push({ ...r, _source: 'live', _routeCreatedAt: null });
-			});
 		}
 
 		// Keep one factual row per supplier.
@@ -4270,17 +4280,8 @@
 			}
 
 			const prev = bySupplier[key];
-			const prevLive = prev._source === 'live';
-			const nextLive = r._source === 'live';
-
-			// Current in-memory row always wins over saved route snapshots.
-			if (nextLive && !prevLive) {
-				bySupplier[key] = { ...prev, ...r };
-				return;
-			}
-			if (!nextLive && prevLive) {
-				return;
-			}
+			const prevWeight = statusWeight[prev.telegramStatus] != null ? statusWeight[prev.telegramStatus] : -1;
+			const nextWeight = statusWeight[r.telegramStatus] != null ? statusWeight[r.telegramStatus] : -1;
 
 			// Prefer newer route snapshot when both rows are from history.
 			const prevTs = toTs(prev._routeCreatedAt);
@@ -4289,9 +4290,6 @@
 				bySupplier[key] = { ...prev, ...r };
 				return;
 			}
-
-			const prevWeight = statusWeight[prev.telegramStatus] != null ? statusWeight[prev.telegramStatus] : -1;
-			const nextWeight = statusWeight[r.telegramStatus] != null ? statusWeight[r.telegramStatus] : -1;
 
 			// Prefer row with stronger status (picked_up > confirmed > sent > rejected > empty).
 			if (nextWeight > prevWeight) {
@@ -4351,13 +4349,7 @@
 
 	function getDistributedItemLists(row) {
 		var lists = [];
-		if (window.DistributionUI && window.DistributionUI.getSupplierItems) {
-			var found = window.DistributionUI.getSupplierItems(row.supplierName || row.address);
-			if (found && found.length) {
-				lists = found.filter(function (x) { return !!x; });
-			}
-		}
-		if (lists.length === 0 && row.items1c) {
+		if (row.items1c) {
 			lists = [row.items1c];
 		}
 		return lists;
@@ -4681,7 +4673,8 @@
 	// Real-time: distribution module calls this on every change
 	window._onDistributionChanged = function () {
 		if (_distributedSectionOpen && (_distributedFilterDate || getTodayLocalDateString()) === getTodayLocalDateString()) {
-			renderDistributedSuppliers();
+			var date = _distributedFilterDate || getTodayLocalDateString();
+			loadDistributedHistoryForDate(date).then(function () { renderDistributedSuppliers(); });
 		}
 		if (_inworkSubTab === 'deliveries' && (_deliveriesFilterDate || getTodayLocalDateString()) === getTodayLocalDateString()) {
 			loadDistributedDeliveriesForDate(_deliveriesFilterDate).then(function () { renderDistributedDeliveries(); });
