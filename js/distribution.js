@@ -46,6 +46,7 @@
   let _suppressCloudSaveUntil = 0; // после полного сброса — не восстанавливать старые данные
   let _lastAppliedCloudTs = 0;
   let _lastLocalMutationTs = 0;
+  let _hasUnpublishedLocalChanges = false;
   let _selectedOrderIds = {};
   let _mapSelectMode = false;
   let _lastSavedStateSig = '';
@@ -541,8 +542,13 @@
 
   function markLocalMutation() {
     _lastLocalMutationTs = Date.now();
+    _hasUnpublishedLocalChanges = true;
     // Persist soon after any local change so another device can load it.
     saveState();
+  }
+
+  function clearLocalDraftLock() {
+    _hasUnpublishedLocalChanges = false;
   }
 
   function pruneSelectedOrders() {
@@ -809,6 +815,7 @@
     var cloud = await loadCloudState();
     if (cloud && cloud.state && applyStateSnapshot(cloud.state)) {
       _lastAppliedCloudTs = cloud.updatedAt || 0;
+      clearLocalDraftLock();
       await mergeSupplierStatusesFromDb();
       return true;
     }
@@ -817,6 +824,7 @@
 
   async function pullCloudStateIfNewer(silent) {
     if (_cloudTableMissing || _isApplyingCloudState) return;
+    if (_hasUnpublishedLocalChanges) return;
     if (Date.now() - _lastLocalMutationTs < LOCAL_MUTATION_PULL_BLOCK_MS) return;
     if (editingOrderId || placingOrderId || isGeocoding) return;
     var ae = document.activeElement;
@@ -842,6 +850,7 @@
     }
     if (!applyStateSnapshot(cloud.state)) return;
     _lastAppliedCloudTs = cloudTs;
+    clearLocalDraftLock();
     await mergeSupplierStatusesFromDb();
 
     _isApplyingCloudState = true;
@@ -2550,6 +2559,7 @@
             supplierData: supplier,
           });
         });
+        markLocalMutation();
         editingOrderId = null;
         renderAll();
         showToast('Поставщик найден в базе');
@@ -2576,6 +2586,7 @@
               supplierData: supplier,
             });
           });
+          markLocalMutation();
           editingOrderId = null;
           renderAll();
           showToast('Поставщик найден, адрес геокодирован');
@@ -2591,6 +2602,7 @@
               error: 'Нет координат — поставьте точку на карте',
             });
           });
+          markLocalMutation();
           editingOrderId = null;
           renderAll();
           showToast('Поставщик в базе, но адрес не найден — поставьте на карте', 'error');
@@ -2608,6 +2620,7 @@
         if (o.id !== orderId) return o;
         return Object.assign({}, o, { address: addr, lat: geo.lat, lng: geo.lng, formattedAddress: geo.formattedAddress, geocoded: true, error: null, settlementOnly: geo.settlementOnly || false });
       });
+      markLocalMutation();
       editingOrderId = null;
       renderAll();
       if (geo.settlementOnly) {
@@ -2812,6 +2825,7 @@
       _allowEmptyCloudWriteUntil = Date.now() + 5000;
       _suppressCloudSaveUntil = Date.now() + 5000;
       await clearCloudState();
+      clearLocalDraftLock();
       showToast('Точки на карте сброшены');
     } else {
       var keep = []; var keepA = [];
@@ -2836,6 +2850,7 @@
         clearTimeout(_cloudSaveTimer);
         _suppressCloudSaveUntil = Date.now() + 5000;
         await clearCloudState();
+        clearLocalDraftLock();
       }
     }
     _fitBoundsNext = true;
@@ -2970,6 +2985,7 @@
         }
       }
       flushCloudStateSave();
+      clearLocalDraftLock();
       showToast('Маршруты опубликованы! Водители увидят их в путевом листе');
     } catch (err) {
       showToast('Ошибка сохранения: ' + err.message, 'error');
@@ -3634,6 +3650,7 @@
       variants = []; activeVariant = -1;
       saveState();
       flushCloudStateSave();
+      clearLocalDraftLock();
       _fitBoundsNext = true;
       renderAll();
       var parts = [];
@@ -4017,6 +4034,7 @@
 
       saveState();
       flushCloudStateSave();
+      clearLocalDraftLock();
       _fitBoundsNext = true;
       renderAll();
     } catch (err) {
