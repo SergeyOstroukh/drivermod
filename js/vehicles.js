@@ -153,6 +153,7 @@
 			}
 		} else if (section === "inwork") {
 			_distributedSectionOpen = true;
+			setInworkLiveIndicator('connecting');
 			if (!_distributedFilterDate) _distributedFilterDate = getTodayLocalDateString();
 			var df = document.getElementById("distributedDateFilter");
 			if (df) df.value = _distributedFilterDate;
@@ -4174,6 +4175,27 @@
 		return `${y}-${m}-${d}`;
 	}
 
+	function setInworkLiveIndicator(state) {
+		var el = document.getElementById('inworkLiveStatus');
+		if (!el) return;
+		el.classList.remove('is-live', 'is-connecting', 'is-offline');
+		if (state === 'live') {
+			el.classList.add('is-live');
+			el.textContent = '● Live';
+			el.title = 'Подключено к realtime';
+			return;
+		}
+		if (state === 'offline') {
+			el.classList.add('is-offline');
+			el.textContent = '● Offline';
+			el.title = 'Нет realtime-подключения';
+			return;
+		}
+		el.classList.add('is-connecting');
+		el.textContent = '● Connecting...';
+		el.title = 'Подключение к realtime...';
+	}
+
 	async function refreshInworkActiveSubtab(force) {
 		if (!_distributedSectionOpen) return;
 		if (_inworkAutoRefreshBusy && !force) return;
@@ -4212,6 +4234,7 @@
 		var client = getSupabaseClientForInwork();
 		if (!client || !_inworkRealtimeChannel) {
 			_inworkRealtimeChannel = null;
+			setInworkLiveIndicator('offline');
 			return;
 		}
 		try {
@@ -4220,13 +4243,21 @@
 			console.warn('Не удалось отписаться от realtime В работе:', e);
 		} finally {
 			_inworkRealtimeChannel = null;
+			setInworkLiveIndicator('offline');
 		}
 	}
 
 	function startInworkRealtimeUpdates() {
 		var client = getSupabaseClientForInwork();
-		if (!client || typeof client.channel !== 'function') return;
-		if (_inworkRealtimeChannel) return;
+		if (!client || typeof client.channel !== 'function') {
+			setInworkLiveIndicator('offline');
+			return;
+		}
+		if (_inworkRealtimeChannel) {
+			setInworkLiveIndicator('live');
+			return;
+		}
+		setInworkLiveIndicator('connecting');
 
 		var channel = client
 			.channel('inwork-live-' + Date.now())
@@ -4240,8 +4271,15 @@
 		_inworkRealtimeChannel = channel;
 		channel.subscribe(function (status) {
 			if (status === 'SUBSCRIBED') {
+				setInworkLiveIndicator('live');
 				scheduleInworkRealtimeRefresh();
+				return;
 			}
+			if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+				setInworkLiveIndicator('offline');
+				return;
+			}
+			setInworkLiveIndicator('connecting');
 		});
 	}
 
