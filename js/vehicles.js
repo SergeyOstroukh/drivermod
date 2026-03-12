@@ -1384,6 +1384,7 @@
 		});
 		try {
 			var updated = await window.VehiclesDB.updateRoutePoints(route.id, newPoints);
+			await syncSupplierPointStatusToDb(route, pt, newStatus);
 			currentRoutesData = currentRoutesData.map(function (r) {
 				return String(r.id) === String(routeId) ? updated : r;
 			});
@@ -4175,6 +4176,39 @@
 		return `${y}-${m}-${d}`;
 	}
 
+	function buildSupplierPointKeyForInwork(point) {
+		var addr = String((point && point.address) || '').replace(/\s+/g, ' ').trim();
+		var lat = point && point.lat != null ? Number(point.lat).toFixed(5) : '';
+		var lng = point && point.lng != null ? Number(point.lng).toFixed(5) : '';
+		return addr + '|' + lat + '|' + lng;
+	}
+
+	async function syncSupplierPointStatusToDb(route, point, newStatus) {
+		if (!route || !point || !point.isSupplier) return;
+		var client = getSupabaseClientForInwork();
+		if (!client) return;
+		var driverId = route.driver_id || (route.driver && route.driver.id) || null;
+		if (!driverId) return;
+		var routeDate = route.route_date || getTodayLocalDateString();
+		var statusForDb = newStatus;
+		var pointKey = buildSupplierPointKeyForInwork(point);
+		try {
+			await client.from(SUPPLIER_STATUS_TABLE).upsert({
+				route_date: routeDate,
+				driver_id: parseInt(driverId, 10),
+				point_key: pointKey,
+				address: point.address || null,
+				lat: point.lat != null ? point.lat : null,
+				lng: point.lng != null ? point.lng : null,
+				telegram_sent: true,
+				telegram_status: statusForDb,
+				updated_at: new Date().toISOString(),
+			}, { onConflict: 'route_date,driver_id,point_key', ignoreDuplicates: false });
+		} catch (e) {
+			console.warn('syncSupplierPointStatusToDb error:', e);
+		}
+	}
+
 	function setInworkLiveIndicator(state) {
 		var el = document.getElementById('inworkLiveStatus');
 		if (!el) return;
@@ -4373,6 +4407,7 @@
 		// This prevents showing old driver assignments after reassignment.
 		const statusWeight = {
 			'picked_up': 3,
+			'cancelled': 3,
 			'confirmed': 2,
 			'sent': 1,
 			'rejected': 0
@@ -4432,9 +4467,9 @@
 
 		// Filter by status
 		if (_distributedFilterStatus === 'completed') {
-			rows = rows.filter(function (r) { return r.telegramStatus === 'picked_up'; });
+			rows = rows.filter(function (r) { return r.telegramStatus === 'picked_up' || r.telegramStatus === 'cancelled'; });
 		} else if (_distributedFilterStatus === 'pending') {
-			rows = rows.filter(function (r) { return r.telegramStatus !== 'picked_up'; });
+			rows = rows.filter(function (r) { return r.telegramStatus !== 'picked_up' && r.telegramStatus !== 'cancelled'; });
 		}
 
 		// Sort: picked_up last, then by driver name, then by supplier name
@@ -4454,6 +4489,7 @@
 
 	function getDistributedStatusLabel(row) {
 		if (row.telegramStatus === 'picked_up') return 'Забрал';
+		if (row.telegramStatus === 'cancelled') return 'Отменён';
 		if (row.telegramStatus === 'confirmed') return 'Принял';
 		if (row.telegramStatus === 'rejected') return 'Отклонил';
 		if (row.telegramSent) return 'Ждём';
@@ -4740,6 +4776,8 @@
 			const tdStatus = document.createElement('td');
 			if (isPickedUp) {
 				tdStatus.innerHTML = '<span style="color:#22c55e;font-weight:600;">📦 Забрал</span>';
+			} else if (row.telegramStatus === 'cancelled') {
+				tdStatus.innerHTML = '<span style="color:#ef4444;font-weight:600;">❌ Отменён</span>';
 			} else if (row.telegramStatus === 'confirmed') {
 				tdStatus.innerHTML = '<span style="color:#3b82f6;">✅ Принял</span>';
 			} else if (row.telegramStatus === 'rejected') {
