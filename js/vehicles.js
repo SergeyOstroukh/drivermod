@@ -158,8 +158,10 @@
 			if (df) df.value = _distributedFilterDate;
 			loadDistributedHistoryForDate(_distributedFilterDate).then(function () { renderDistributedSuppliers(); });
 			switchInworkSubtab(_inworkSubTab || 'suppliers');
+			startInworkRealtimeUpdates();
 		} else {
 			_distributedSectionOpen = false;
+			stopInworkRealtimeUpdates();
 		}
 		if (section === "partners") {
 			if (window.PartnersUI && window.PartnersUI.onSectionActivated) {
@@ -4151,6 +4153,9 @@
 	let _deliveriesFilterStatus = '';
 	let _deliveriesFilterDate = '';
 	const SUPPLIER_STATUS_TABLE = 'supplier_point_status';
+	let _inworkRealtimeChannel = null;
+	let _inworkRealtimeRefreshTimer = null;
+	let _inworkAutoRefreshBusy = false;
 
 	function getSupabaseClientForInwork() {
 		const config = window.SUPABASE_CONFIG || {};
@@ -4167,6 +4172,77 @@
 		const m = String(now.getMonth() + 1).padStart(2, '0');
 		const d = String(now.getDate()).padStart(2, '0');
 		return `${y}-${m}-${d}`;
+	}
+
+	async function refreshInworkActiveSubtab(force) {
+		if (!_distributedSectionOpen) return;
+		if (_inworkAutoRefreshBusy && !force) return;
+		_inworkAutoRefreshBusy = true;
+		try {
+			if (_inworkSubTab === 'deliveries') {
+				var dDate = _deliveriesFilterDate || getTodayLocalDateString();
+				await loadDistributedDeliveriesForDate(dDate);
+				renderDistributedDeliveries();
+			} else {
+				var sDate = _distributedFilterDate || getTodayLocalDateString();
+				await loadDistributedHistoryForDate(sDate);
+				renderDistributedSuppliers();
+			}
+		} catch (e) {
+			console.error('Ошибка авто-обновления вкладки "В работе":', e);
+		} finally {
+			_inworkAutoRefreshBusy = false;
+		}
+	}
+
+	function scheduleInworkRealtimeRefresh() {
+		if (!_distributedSectionOpen) return;
+		if (_inworkRealtimeRefreshTimer) clearTimeout(_inworkRealtimeRefreshTimer);
+		_inworkRealtimeRefreshTimer = setTimeout(function () {
+			_inworkRealtimeRefreshTimer = null;
+			refreshInworkActiveSubtab(true);
+		}, 250);
+	}
+
+	async function stopInworkRealtimeUpdates() {
+		if (_inworkRealtimeRefreshTimer) {
+			clearTimeout(_inworkRealtimeRefreshTimer);
+			_inworkRealtimeRefreshTimer = null;
+		}
+		var client = getSupabaseClientForInwork();
+		if (!client || !_inworkRealtimeChannel) {
+			_inworkRealtimeChannel = null;
+			return;
+		}
+		try {
+			await client.removeChannel(_inworkRealtimeChannel);
+		} catch (e) {
+			console.warn('Не удалось отписаться от realtime В работе:', e);
+		} finally {
+			_inworkRealtimeChannel = null;
+		}
+	}
+
+	function startInworkRealtimeUpdates() {
+		var client = getSupabaseClientForInwork();
+		if (!client || typeof client.channel !== 'function') return;
+		if (_inworkRealtimeChannel) return;
+
+		var channel = client
+			.channel('inwork-live-' + Date.now())
+			.on('postgres_changes', { event: '*', schema: 'public', table: SUPPLIER_STATUS_TABLE }, function () {
+				scheduleInworkRealtimeRefresh();
+			})
+			.on('postgres_changes', { event: '*', schema: 'public', table: 'driver_routes' }, function () {
+				scheduleInworkRealtimeRefresh();
+			});
+
+		_inworkRealtimeChannel = channel;
+		channel.subscribe(function (status) {
+			if (status === 'SUBSCRIBED') {
+				scheduleInworkRealtimeRefresh();
+			}
+		});
 	}
 
 	async function loadDistributedHistoryForDate(routeDate) {
@@ -4463,6 +4539,9 @@
 			var df = document.getElementById("deliveriesDateFilter");
 			if (df) df.value = _deliveriesFilterDate;
 			loadDistributedDeliveriesForDate(_deliveriesFilterDate).then(function () { renderDistributedDeliveries(); });
+		} else if (_distributedSectionOpen) {
+			var sDate = _distributedFilterDate || getTodayLocalDateString();
+			loadDistributedHistoryForDate(sDate).then(function () { renderDistributedSuppliers(); });
 		}
 	}
 
@@ -4672,12 +4751,8 @@
 
 	// Real-time: distribution module calls this on every change
 	window._onDistributionChanged = function () {
-		if (_distributedSectionOpen && (_distributedFilterDate || getTodayLocalDateString()) === getTodayLocalDateString()) {
-			var date = _distributedFilterDate || getTodayLocalDateString();
-			loadDistributedHistoryForDate(date).then(function () { renderDistributedSuppliers(); });
-		}
-		if (_inworkSubTab === 'deliveries' && (_deliveriesFilterDate || getTodayLocalDateString()) === getTodayLocalDateString()) {
-			loadDistributedDeliveriesForDate(_deliveriesFilterDate).then(function () { renderDistributedDeliveries(); });
+		if (_distributedSectionOpen) {
+			refreshInworkActiveSubtab(true);
 		}
 	};
 

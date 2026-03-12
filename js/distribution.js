@@ -630,6 +630,25 @@
     } catch (e) { console.warn('saveSupplierPointStatus error:', e); }
   }
 
+  async function removeSupplierPointStatusFromDb(order, driverId) {
+    if (!order || !order.isSupplier || !driverId) return;
+    var client = getSupabaseClient();
+    if (!client) return;
+    var pointKey = buildSupplierPointKey(order, driverId);
+    var parsedDriverId = parseInt(driverId, 10);
+    if (!parsedDriverId) return;
+    try {
+      await client
+        .from(SUPPLIER_STATUS_TABLE)
+        .delete()
+        .eq('route_date', getStateDateKey())
+        .eq('driver_id', parsedDriverId)
+        .eq('point_key', pointKey);
+    } catch (e) {
+      console.warn('removeSupplierPointStatus error:', e);
+    }
+  }
+
   async function mergeSupplierStatusesFromDb() {
     var client = getSupabaseClient();
     if (!client) return;
@@ -1463,6 +1482,9 @@
       var match = dbDrivers.find(function (d) { return String(d.id) === String(driverId); });
       driverId = match ? match.id : driverId;
     }
+    if (order.isSupplier && oldDriverId && String(oldDriverId) !== String(driverId || '')) {
+      removeSupplierPointStatusFromDb(order, oldDriverId);
+    }
     order.assignedDriverId = driverId || null;
     // Also clear algorithm assignment when unassigning
     if (!driverId && assignments && assignments[globalIdx] >= 0) {
@@ -1495,6 +1517,9 @@
       if (driverId != null && dbDrivers.length > 0) {
         var match = dbDrivers.find(function (d) { return String(d.id) === String(driverId); });
         normalizedDriverId = match ? match.id : driverId;
+      }
+      if (order.isSupplier && oldDriverId && String(oldDriverId) !== String(normalizedDriverId || '')) {
+        removeSupplierPointStatusFromDb(order, oldDriverId);
       }
       order.assignedDriverId = normalizedDriverId || null;
       if (!normalizedDriverId && assignments && assignments[idx] >= 0) {
@@ -3848,6 +3873,9 @@
 
     await rollbackCustomerOrderOnMapRemoval(orderToDelete);
     if (orderToDelete && orderToDelete.isSupplier) {
+      if (affectedDriverId) {
+        await removeSupplierPointStatusFromDb(orderToDelete, affectedDriverId);
+      }
       if (orderToDelete.supplierCancelled) {
         await clearSupplierItemsForOrder(orderToDelete);
         orders.splice(idx, 1);
@@ -4627,6 +4655,9 @@
     order.itemsSent = false;
     order.itemsSentText = null;
     order.assignedDriverId = null;
+    if (driverId) {
+      await removeSupplierPointStatusFromDb(order, driverId);
+    }
     if (assignments && assignments[orderIdx] >= 0) {
       assignments[orderIdx] = -1;
     }
