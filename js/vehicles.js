@@ -4370,6 +4370,81 @@
 					_routeCreatedAt: r.updated_at || null,
 				};
 			});
+
+			// Also load non-distributed suppliers from the cloud map state
+			try {
+				const stateResp = await client
+					.from('distribution_state')
+					.select('state_json')
+					.eq('state_date', targetDate)
+					.maybeSingle();
+				if (!stateResp.error && stateResp.data && stateResp.data.state_json) {
+					const stateJson = stateResp.data.state_json;
+					const stateOrders = Array.isArray(stateJson.orders) ? stateJson.orders : [];
+					const stateAssignments = stateJson.assignments || [];
+					const stateDriverSlots = stateJson.driverSlots || [];
+
+					// Collect driver IDs needed for name lookup
+					const driverIdSet = new Set();
+					stateOrders.forEach(function (o, idx) {
+						if (!o.isSupplier) return;
+						var dId = o.assignedDriverId
+							|| (stateAssignments[idx] >= 0 ? stateDriverSlots[stateAssignments[idx]] : null)
+							|| null;
+						if (dId) driverIdSet.add(String(dId));
+					});
+
+					// Load driver names for those IDs
+					var driverNamesMap = {};
+					if (driverIdSet.size > 0) {
+						var driverIds = Array.from(driverIdSet).map(Number).filter(Boolean);
+						var drvResp = await client.from('drivers').select('id, name').in('id', driverIds);
+						if (!drvResp.error) {
+							(drvResp.data || []).forEach(function (d) {
+								driverNamesMap[String(d.id)] = d.name;
+							});
+						}
+					}
+
+					// Build set of supplier names already covered by supplier_point_status
+					var existingKeys = new Set(rows.map(function (r) {
+						return String(r.supplierName || r.address || '').trim().toLowerCase();
+					}));
+
+					stateOrders.forEach(function (o, idx) {
+						if (!o.isSupplier) return;
+						var supplierName = o.supplierName || o.address || '';
+						if (!supplierName) return;
+						var key = String(supplierName).trim().toLowerCase();
+						if (existingKeys.has(key)) return; // already covered by supplier_point_status
+						var dId = o.assignedDriverId
+							|| (stateAssignments[idx] >= 0 ? stateDriverSlots[stateAssignments[idx]] : null)
+							|| null;
+						var dName = dId ? (driverNamesMap[String(dId)] || null) : null;
+						rows.push({
+							address: supplierName,
+							supplierName: supplierName,
+							driverName: dName,
+							driverId: dId || null,
+							timeSlot: o.timeSlot || o.extractedTimeSlot || '',
+							phone: o.phone || '',
+							geocoded: !!o.geocoded,
+							inDb: false,
+							telegramStatus: o.telegramStatus || null,
+							telegramSent: !!o.telegramSent,
+							items1c: null,
+							itemsSent: false,
+							itemsSentText: null,
+							_source: 'distribution_state',
+							_routeCreatedAt: null,
+						});
+						existingKeys.add(key);
+					});
+				}
+			} catch (stateErr) {
+				console.warn('Не удалось подгрузить поставщиков из distribution_state:', stateErr);
+			}
+
 			_distributedHistoryRows = rows;
 			_distributedHistoryDate = targetDate;
 		} catch (err) {
