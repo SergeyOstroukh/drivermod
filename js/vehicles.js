@@ -846,7 +846,7 @@
 		// ── Suppliers view ──
 		if (driverRouteViewTab === 'suppliers' && allSuppliers.length > 0) {
 			var activeSup = allSuppliers.filter(function (s) { return s.status !== 'completed' && s.status !== 'picked_up' && s.status !== 'cancelled'; }).length;
-			html += '<details class="route-trip-details route-trip-card" open style="margin-bottom:12px;">';
+			html += '<details class="route-trip-details route-trip-card" data-route-id="__suppliers__" open style="margin-bottom:12px;">';
 			html += '<summary class="route-trip-summary" style="color:#10b981;font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;">';
 			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
 			html += '\uD83C\uDFE2 Поставщики (' + allSuppliers.length + ')';
@@ -872,7 +872,7 @@
 			var helperPt = trip.points.find(function (pt) { return pt.isKbtHelper && pt.mainDriverName; });
 			var isHelperTrip = !!helperPt;
 
-			html += '<details class="route-trip-details route-trip-card' + (allDone ? ' route-trip-completed' : '') + '" ' + (allDone ? '' : 'open') + ' style="margin-bottom:12px;">';
+			html += '<details class="route-trip-details route-trip-card' + (allDone ? ' route-trip-completed' : '') + '" data-route-id="' + trip.route.id + '" ' + (allDone ? '' : 'open') + ' style="margin-bottom:12px;">';
 			html += '<summary class="route-trip-summary" style="font-weight:700;font-size:14px;cursor:pointer;padding:8px 0;list-style:none;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
 			html += '<span style="transition:transform .2s;display:inline-block;">&#9654;</span> ';
 			html += icon + ' Выезд ' + trip.tripNum;
@@ -916,16 +916,28 @@
 			html += '<div class="route-empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg><p>На сегодня маршрут не назначен</p></div>';
 		}
 
-		listEl.innerHTML = html;
+	// Preserve open/closed state of trip sections across re-renders
+	var savedOpenState = {};
+	listEl.querySelectorAll('.route-trip-details[data-route-id]').forEach(function (det) {
+		savedOpenState[det.dataset.routeId] = det.open;
+	});
 
-		// Rotate arrows on details open/close
-		listEl.querySelectorAll('.route-trip-details').forEach(function (det) {
-			var arrow = det.querySelector('summary span');
+	listEl.innerHTML = html;
+
+	// Restore open/closed state
+	listEl.querySelectorAll('.route-trip-details[data-route-id]').forEach(function (det) {
+		var saved = savedOpenState[det.dataset.routeId];
+		if (saved !== undefined) det.open = saved;
+	});
+
+	// Rotate arrows on details open/close
+	listEl.querySelectorAll('.route-trip-details').forEach(function (det) {
+		var arrow = det.querySelector('summary span');
+		if (arrow) arrow.style.transform = det.open ? 'rotate(90deg)' : '';
+		det.addEventListener('toggle', function () {
 			if (arrow) arrow.style.transform = det.open ? 'rotate(90deg)' : '';
-			det.addEventListener('toggle', function () {
-				if (arrow) arrow.style.transform = det.open ? 'rotate(90deg)' : '';
-			});
 		});
+	});
 
 		// Bind events
 		bindRouteEvents();
