@@ -1174,7 +1174,7 @@
     placemarks = [];
 
     var geocoded = orders.filter(function (o) {
-      return o.geocoded && o.lat && o.lng && !o.supplierCancelled;
+      return o && o.id && o.geocoded && o.lat && o.lng && !o.supplierCancelled;
     });
     if (geocoded.length === 0) return;
 
@@ -1206,6 +1206,7 @@
     var _addrNum = {};
     var _addrCounter = 1;
     orders.forEach(function (o) {
+      if (!o || !o.id) return;
       if (!o.isSupplier && !o.isPartner && !o.isPoi) _addrNum[o.id] = _addrCounter++;
     });
 
@@ -4726,6 +4727,12 @@
   }
 
   function renderOrderItem(order, idx) {
+    // Defensive: invalid entries in `orders` should not crash the whole UI.
+    if (!order || !order.id) {
+      try { console.warn('[distribution] skip invalid order at idx', idx, order); } catch (e) {}
+      return '';
+    }
+
     const driverId = getOrderDriverId(idx);
     const slotIdx = getOrderSlotIdx(idx);
     const color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : '#ccc';
@@ -4734,7 +4741,7 @@
     const isEditing = editingOrderId === order.id;
     const isPlacing = placingOrderId === order.id;
     const isCancelled = order.isSupplier && order.supplierCancelled;
-    const safeId = order.id.replace(/[^a-zA-Z0-9\-]/g, '');
+    const safeId = String(order.id).replace(/[^a-zA-Z0-9\-]/g, '');
 
     let itemClass = 'dc-order-item';
     if (isFailed) itemClass += ' failed';
@@ -4914,7 +4921,9 @@
     var drvDetails = sidebar.querySelector('.dc-details-drivers');
     if (drvDetails) _driversListOpen = drvDetails.open;
 
-    const allOrders = orders.map(function (o, i) { return Object.assign({}, o, { globalIndex: i }); });
+    const allOrders = orders
+      .map(function (o, i) { return o ? Object.assign({}, o, { globalIndex: i }) : null; })
+      .filter(function (o) { return !!(o && o.id); });
     const supplierItems = allOrders.filter(function (o) { return o.isSupplier; }).reverse();
     const partnerItems = allOrders.filter(function (o) { return o.isPartner; }).reverse();
     const addressItems = allOrders.filter(function (o) { return !o.isSupplier && !o.isPartner; }).reverse();
