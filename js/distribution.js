@@ -13,7 +13,8 @@
   const DISTRIBUTION_STATE_TABLE = 'distribution_state';
   const SUPPLIER_STATUS_TABLE = 'supplier_point_status';
   const LOCAL_MUTATION_PULL_BLOCK_MS = 15000;
-  const CLOUD_SHRINK_GUARD_MS = 30000;
+  // Always reject cloud snapshots with fewer points than local (except after explicit reset).
+  const CLOUD_SHRINK_GUARD_MS = 24 * 60 * 60 * 1000;
   const SUPPLIER_ALIASES_KEY = 'dc_supplier_aliases';
   const PARTNER_ALIASES_KEY = 'dc_partner_aliases';
 
@@ -575,9 +576,11 @@
     return d ? d.name : 'Водитель ' + (slotIdx + 1);
   }
 
-  // ─── Persistence (localStorage + Supabase cloud state) ────
+  // ─── Persistence (Supabase cloud state) ────
   function getStateDateKey() {
-    return new Date().toISOString().split('T')[0];
+    // Local calendar date (Belarus UTC+3) — UTC date caused "empty map" overnight/morning.
+    var now = new Date();
+    return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
   }
 
   function buildStateSnapshot() {
@@ -591,6 +594,24 @@
       updatedAt: Date.now(),
       schemaVersion: 1,
     };
+  }
+
+  // Full map for cloud writes. During "edit trip" orders[] is truncated to one route —
+  // never persist that truncated view or other devices/tabs will lose points.
+  function buildCloudStateSnapshot() {
+    if (editingRouteId && _editBackupOrders) {
+      return {
+        orders: _editBackupOrders.concat(orders),
+        assignments: (_editBackupAssignments || []).concat(assignments || []),
+        driverCount: driverCount,
+        activeVariant: activeVariant,
+        driverSlots: driverSlots,
+        poiCoords: poiCoords,
+        updatedAt: Date.now(),
+        schemaVersion: 1,
+      };
+    }
+    return buildStateSnapshot();
   }
 
   function buildStateSignature() {
@@ -735,14 +756,14 @@
 
   async function saveCloudState(snapshot) {
     var client = getSupabaseClient();
-    if (!client || _cloudTableMissing) return;
+    if (!client || _cloudTableMissing) return false;
     if (!snapshot.orders || snapshot.orders.length === 0) {
       // Never auto-clear cloud state from incidental empty snapshots.
       // This prevents spontaneous loss of points on other opened sessions/tabs.
-      return;
+      return false;
     }
     // Не сохранять устаревший снапшот, если пользователь только что сделал полный сброс
-    if (_suppressCloudSaveUntil > Date.now()) return;
+    if (_suppressCloudSaveUntil > Date.now()) return false;
     try {
       var routeDate = getStateDateKey();
       var resp = await client
@@ -754,24 +775,37 @@
         }, { onConflict: 'state_date' });
       if (resp.error && resp.error.code === '42P01') {
         _cloudTableMissing = true;
+        return false;
       }
+      if (resp.error) {
+        console.warn('Cloud state save error:', resp.error);
+        return false;
+      }
+      _lastAppliedCloudTs = Date.now();
+      return true;
     } catch (e) {
       console.warn('Cloud state save error:', e);
+      return false;
     }
   }
 
   function scheduleCloudStateSave(snapshot) {
     clearTimeout(_cloudSaveTimer);
     _cloudSaveTimer = setTimeout(function () {
-      saveCloudState(snapshot);
+      _cloudSaveTimer = null;
+      saveCloudState(snapshot).then(function (ok) {
+        if (ok) clearLocalDraftLock();
+      });
     }, 1200);
   }
 
-  function flushCloudStateSave() {
+  async function flushCloudStateSave() {
     clearTimeout(_cloudSaveTimer);
-    var snap = buildStateSnapshot();
+    _cloudSaveTimer = null;
+    var snap = buildCloudStateSnapshot();
     if (snap.orders && snap.orders.length > 0) {
-      saveCloudState(snap);
+      var ok = await saveCloudState(snap);
+      if (ok) clearLocalDraftLock();
     }
   }
 
@@ -794,12 +828,24 @@
 
   function saveState() {
     try {
-      var sig = buildStateSignature();
+      // Don't persist mid-import snapshots (suppliers temporarily removed before re-add).
+      if (isLoadingSuppliers || isLoadingPartners) return;
+      // Signature for cloud uses the full map (incl. edit-trip backup), so truncated
+      // edit view never cancels a richer pending cloud write.
+      var cloudSnap = buildCloudStateSnapshot();
+      var sig = JSON.stringify({
+        orders: cloudSnap.orders,
+        assignments: cloudSnap.assignments,
+        driverCount: cloudSnap.driverCount,
+        activeVariant: cloudSnap.activeVariant,
+        driverSlots: cloudSnap.driverSlots,
+        poiCoords: cloudSnap.poiCoords,
+        schemaVersion: 1,
+      });
       if (sig === _lastSavedStateSig) return;
       _lastSavedStateSig = sig;
-      var data = buildStateSnapshot();
       if (!_isApplyingCloudState) {
-        scheduleCloudStateSave(data);
+        scheduleCloudStateSave(cloudSnap);
       }
     } catch (e) {
       console.warn('Distribution state save error:', e);
@@ -827,6 +873,7 @@
     if (_hasUnpublishedLocalChanges) return;
     if (Date.now() - _lastLocalMutationTs < LOCAL_MUTATION_PULL_BLOCK_MS) return;
     if (editingOrderId || placingOrderId || isGeocoding) return;
+    if (editingRouteId || isLoadingSuppliers || isLoadingPartners) return;
     var ae = document.activeElement;
     if (ae && (ae.id === 'dcSupplierInput' || ae.id === 'dcAddressInput' || ae.id === 'dcPartnerInput')) return;
 
@@ -839,13 +886,9 @@
       // Do not allow empty cloud state to overwrite existing local points.
       return;
     }
-    if (
-      Date.now() - _lastLocalMutationTs < CLOUD_SHRINK_GUARD_MS &&
-      Array.isArray(cloudOrders) &&
-      cloudOrders.length < orders.length
-    ) {
-      // Prevent short-lived "disappear/reappear" flicker when stale cloud snapshot
-      // arrives right after local point creation.
+    // Never let a smaller cloud snapshot erase local points (stale/race/edit-trip).
+    // Points leave the map only via explicit «Сбросить данные».
+    if (Array.isArray(cloudOrders) && cloudOrders.length < orders.length) {
       return;
     }
     if (!applyStateSnapshot(cloud.state)) return;
@@ -5839,15 +5882,29 @@
     // Apply custom driver colors
     loadDriverColors();
     applyCustomColors();
-    // Strict DB mode: distribution state is sourced from DB on each open.
-    var loadedFromDb = await loadBestAvailableState();
-    if (!loadedFromDb) {
-      orders = [];
-      assignments = null;
-      variants = [];
-      activeVariant = -1;
-      _lastSavedStateSig = buildStateSignature();
+
+    // Do not clobber in-memory points with a stale/empty cloud snapshot.
+    // Flush local draft first; only load from DB when this tab has no local map yet.
+    if (editingRouteId) {
+      await flushCloudStateSave();
+    } else if (_hasUnpublishedLocalChanges || _cloudSaveTimer || orders.length > 0) {
+      await flushCloudStateSave();
+      // Keep local map; optionally take a newer cloud only if it does not shrink.
+      await pullCloudStateIfNewer(true);
+    } else {
+      var loadedFromDb = await loadBestAvailableState();
+      if (!loadedFromDb) {
+        // Failed/empty cloud — leave whatever is in memory (usually empty on fresh open).
+        // Never wipe non-empty local orders here.
+        if (orders.length === 0) {
+          assignments = null;
+          variants = [];
+          activeVariant = -1;
+          _lastSavedStateSig = buildStateSignature();
+        }
+      }
     }
+
     // Ensure 1C items are loaded even after page refresh/session restore.
     if (orders.some(function (o) { return o.isSupplier; })) {
       await refreshSupplierItems();
