@@ -45,7 +45,7 @@ supabase login
 supabase link --project-ref mrdicoctfaxdrmoluqpi
 
 # Установите секреты
-supabase secrets set TELEGRAM_BOT_TOKEN=8341968562:AAG322AITdXhlZCQ_8PKQRnshwD6hyB_-VI
+supabase secrets set TELEGRAM_BOT_TOKEN=8341968562:AAEk-IOFDrAcpx09cPbpjGaUaFHe5flkqCk
 
 # Деплой функции (--no-verify-jwt чтобы Telegram мог вызывать без авторизации)
 supabase functions deploy telegram-webhook --no-verify-jwt
@@ -56,7 +56,7 @@ supabase functions deploy telegram-webhook --no-verify-jwt
 Откройте в браузере (или выполните curl):
 
 ```
-https://api.telegram.org/bot8341968562:AAG322AITdXhlZCQ_8PKQRnshwD6hyB_-VI/setWebhook?url=https://mrdicoctfaxdrmoluqpi.supabase.co/functions/v1/telegram-webhook
+https://api.telegram.org/bot8341968562:AAEk-IOFDrAcpx09cPbpjGaUaFHe5flkqCk/setWebhook?url=https://mrdicoctfaxdrmoluqpi.supabase.co/functions/v1/telegram-webhook
 ```
 
 Должны получить ответ:
@@ -67,7 +67,7 @@ https://api.telegram.org/bot8341968562:AAG322AITdXhlZCQ_8PKQRnshwD6hyB_-VI/setWe
 ## Шаг 4: Проверить
 
 ```
-https://api.telegram.org/bot8341968562:AAG322AITdXhlZCQ_8PKQRnshwD6hyB_-VI/getWebhookInfo
+https://api.telegram.org/bot8341968562:AAEk-IOFDrAcpx09cPbpjGaUaFHe5flkqCk/getWebhookInfo
 ```
 
 ## Готово!
