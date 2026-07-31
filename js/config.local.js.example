@@ -1,0 +1,6 @@
+// Скопируйте этот файл как js/config.local.js и вставьте токен:
+//   copy js\config.local.js.example js\config.local.js
+//
+// Токен берётся у @BotFather. Файл config.local.js в git не попадает.
+
+window.TELEGRAM_BOT_TOKEN = 'PASTE_TELEGRAM_BOT_TOKEN_HERE';

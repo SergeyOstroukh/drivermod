@@ -17,3 +17,6 @@ Thumbs.db
 # Logs
 *.log
 
+# Local secrets (Telegram bot token etc.)
+js/config.local.js
+

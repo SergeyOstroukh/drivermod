@@ -4191,7 +4191,7 @@
   async function sendToTelegram() {
     var botToken = window.TELEGRAM_BOT_TOKEN;
     if (!botToken) {
-      showToast('Telegram бот не настроен. Укажите токен в config.js', 'error');
+      showToast('Telegram бот не настроен. Создайте js/config.local.js с токеном', 'error');
       return;
     }
 

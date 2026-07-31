@@ -19,7 +19,7 @@ window.SUPABASE_CONFIG = {
 	anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1yZGljb2N0ZmF4ZHJtb2x1cXBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0MzY2MzYsImV4cCI6MjA4MTAxMjYzNn0.Xu2OQff1k2Oi58hngyEnyNWHh-KCHdnY9Bk1weotqGA'
 };
 
-// Telegram Bot Token (для рассылки маршрутов водителям)
-// Создайте бота через @BotFather в Telegram и вставьте токен сюда
-window.TELEGRAM_BOT_TOKEN = '8341968562:AAEk-IOFDrAcpx09cPbpjGaUaFHe5flkqCk';
+// Telegram Bot Token — не храните в git.
+// Создайте js/config.local.js (см. config.local.js.example) и вставьте токен туда.
+window.TELEGRAM_BOT_TOKEN = window.TELEGRAM_BOT_TOKEN || '';
 
