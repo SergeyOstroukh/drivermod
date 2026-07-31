@@ -563,6 +563,39 @@
 		}
 	}
 
+	/**
+	 * Создаёт или обновляет запись за конкретную дату (UNIQUE vehicle_id + log_date).
+	 * Старые дни не трогает.
+	 */
+	async function upsertMileageLog(entry) {
+		try {
+			const client = initSupabase();
+			const vehicleId = entry.vehicle_id;
+			const logDate = entry.log_date;
+			if (!vehicleId || !logDate) {
+				throw new Error('vehicle_id и log_date обязательны');
+			}
+
+			const { data: existing, error: findErr } = await client
+				.from('vehicle_mileage_log')
+				.select('id')
+				.eq('vehicle_id', vehicleId)
+				.eq('log_date', logDate)
+				.maybeSingle();
+
+			if (findErr) throw findErr;
+
+			if (existing && existing.id) {
+				const { id: _omit, ...payload } = entry;
+				return await updateMileageLog(existing.id, payload);
+			}
+			return await addMileageLog(entry);
+		} catch (err) {
+			console.error('Ошибка upsertMileageLog:', err);
+			throw err;
+		}
+	}
+
 	async function updateMileageLog(id, entry) {
 		try {
 			const client = initSupabase();
@@ -1151,6 +1184,7 @@
 		getMileageFilledVehicleIdsForDate,
 		getMileageLog,
 		addMileageLog,
+		upsertMileageLog,
 		addRepairMileageEntry,
 		updateMileageLog,
 		deleteMileageLog,

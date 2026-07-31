@@ -1666,6 +1666,7 @@
 			const shiftMileageLine = document.createElement("p");
 			shiftMileageLine.className = "card-subtitle";
 			shiftMileageLine.style.fontWeight = "500";
+			let showShiftLine = true;
 			if (vehicle.on_repair) {
 				shiftMileageLine.style.color = "var(--muted)";
 				shiftMileageLine.textContent = "🔧 На ремонте";
@@ -1681,18 +1682,18 @@
 						shiftMileageLine.textContent = "✅ Пробег за смену: заполнен";
 						shiftMileageLine.title = "Данные за сегодня внесены";
 					} else {
-						shiftMileageLine.style.color = "var(--danger, #ef4444)";
-						shiftMileageLine.textContent = "⚠️ Пробег за смену: не заполнен";
-						shiftMileageLine.title = "Введите пробег за смену";
+						// Не показываем «не заполнен» — без красной надписи и без давления на водителя
+						showShiftLine = false;
 					}
 				} else {
 					shiftMileageLine.style.color = "var(--muted)";
 					const lbl = status === "off" ? "Выходной" : status === "duty" ? "Дежурный" : status === "vacation" ? "Отпуск" : status === "sick" ? "Больничный" : "—";
 					shiftMileageLine.textContent = lbl + (lbl !== "—" ? ", пробег не требуется" : "");
 					shiftMileageLine.title = "В этот день пробег не обязателен";
+					if (lbl === "—") showShiftLine = false;
 				}
 			}
-			titleWrap.appendChild(shiftMileageLine);
+			if (showShiftLine) titleWrap.appendChild(shiftMileageLine);
 
 			// Расход топлива
 			if (vehicle.fuel_consumption) {
@@ -3443,6 +3444,13 @@
 		// Загружаем записи и проверяем, нужно ли показывать поле начального уровня топлива
 		await loadMileageLog(vehicle.id);
 		await checkAndShowFuelLevelField();
+		await suggestMileageBaselineIfGap();
+		syncMileageBaselineUi();
+		var baselineCb = document.getElementById("mileageNewBaseline");
+		if (baselineCb && !baselineCb._boundBaselineUi) {
+			baselineCb.addEventListener("change", syncMileageBaselineUi);
+			baselineCb._boundBaselineUi = true;
+		}
 	}
 
 	function closeMileageTable() {
@@ -3900,127 +3908,244 @@
 				alert("Ошибка: не выбран автомобиль");
 				return false;
 			}
-
-			// Проверяем, есть ли уже записи для этого автомобиля
-			const existingEntries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
-			const hasEntries = existingEntries.length > 0;
-
-			// Получаем значения из формы
-			const mileageReturn = parseInt(formData.get("mileage"));
-			const fuelRefill = parseFloat(formData.get("fuel_refill")) || null;
-			
-			// Определяем fuel_level_out
-			let fuelLevelOut = null;
-			if (!hasEntries) {
-				// Для первой записи получаем начальный уровень топлива при выезде
-				fuelLevelOut = parseFloat(formData.get("fuel_level_out")) || null;
-			} else {
-				// Для последующих записей: fuel_level_out = предыдущий fuel_level_return
-				const sortedExisting = [...existingEntries].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
-				const lastEntry = sortedExisting[sortedExisting.length - 1];
-				fuelLevelOut = lastEntry.fuel_level_return !== null && lastEntry.fuel_level_return !== undefined 
-					? parseFloat(lastEntry.fuel_level_return) 
-					: null;
-			}
-
-			const entry = {
-				vehicle_id: currentMileageVehicleId,
-				driver_id: parseInt(formData.get("driver_id")),
-				mileage: mileageReturn, // Километраж при возвращении
-				log_date: formData.get("log_date"),
-				fuel_level_out: fuelLevelOut, // Для первой записи - из формы, для последующих - из предыдущей записи
-				fuel_refill: fuelRefill,
-				notes: formData.get("notes")?.trim() || null
-			};
-
-			if (!entry.driver_id || isNaN(entry.driver_id)) {
-				alert("Выберите водителя");
+			if (!window.VehiclesDB.upsertMileageLog) {
+				alert("Обновите страницу (Ctrl+F5): нет функции сохранения");
 				return false;
 			}
 
-			if (!entry.mileage || isNaN(entry.mileage)) {
+			const existingEntries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
+			const hasEntries = existingEntries.length > 0;
+			const logDate = formData.get("log_date");
+			const mileageReturn = parseInt(formData.get("mileage"), 10);
+			const fuelRefillRaw = formData.get("fuel_refill");
+			const fuelRefill = fuelRefillRaw !== null && String(fuelRefillRaw).trim() !== ""
+				? parseFloat(fuelRefillRaw)
+				: null;
+			const fuelReturnRaw = formData.get("fuel_level_return");
+			const fuelReturnEntered = fuelReturnRaw !== null && String(fuelReturnRaw).trim() !== ""
+				? parseFloat(fuelReturnRaw)
+				: null;
+			const newBaseline = formData.get("new_baseline") === "on" ||
+				!!(document.getElementById("mileageNewBaseline") && document.getElementById("mileageNewBaseline").checked);
+
+			if (!logDate) {
+				alert("Укажите дату");
+				return false;
+			}
+			if (!mileageReturn || isNaN(mileageReturn)) {
 				alert("Укажите пробег");
 				return false;
 			}
 
-			if (!entry.log_date) {
-				alert("Укажите дату");
+			const driverId = parseInt(formData.get("driver_id"), 10);
+			if (!driverId || isNaN(driverId)) {
+				alert("Выберите водителя");
 				return false;
 			}
 
-			// Если это первая запись, fuel_level_out обязателен
-			if (!hasEntries && (!entry.fuel_level_out || entry.fuel_level_out <= 0)) {
-				alert("Для первой записи необходимо указать начальный уровень топлива при выезде");
-				return false;
-			}
+			const sameDay = existingEntries.find(function (e) { return e.log_date === logDate; });
+			const predecessors = existingEntries
+				.filter(function (e) { return e.log_date < logDate; })
+				.sort(function (a, b) { return new Date(a.log_date) - new Date(b.log_date); });
+			const pred = predecessors.length > 0 ? predecessors[predecessors.length - 1] : null;
 
-			// Сохраняем текущий пробег перед добавлением записи
-			const currentMileage = currentVehicle ? (currentVehicle.mileage || 0) : 0;
-			if (previousVehicleMileage === null) {
-				previousVehicleMileage = currentMileage;
-			}
+			let mileageOut;
+			let fuelLevelOut;
+			let fuelLevelReturn;
+			let actualFuelConsumption;
+			let notes = (formData.get("notes") || "").trim() || null;
+			let shiftMileage;
 
-			// Определяем mileage_out для сохранения в БД
-			let mileageOut = 0;
-			if (!hasEntries) {
-				// Для первой записи
-				entry.mileage_out = previousVehicleMileage;
-				mileageOut = previousVehicleMileage;
-			} else {
-				// Для последующих записей: mileage_out = предыдущий mileage (километраж при возвращении)
-				// Сортируем существующие записи по дате
-				const sortedExisting = [...existingEntries].sort((a, b) => new Date(a.log_date) - new Date(b.log_date));
-				const lastEntry = sortedExisting[sortedExisting.length - 1];
-				mileageOut = lastEntry.mileage || 0;
-				entry.mileage_out = mileageOut;
-			}
-
-			// Рассчитываем пробег за смену
-			const shiftMileage = mileageReturn - mileageOut;
-			
-			// Рассчитываем остаток при возвращении и фактический расход
-			if (fuelLevelOut !== null && shiftMileage > 0) {
-				const fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
-				if (fuelConsumption > 0) {
-					const expectedConsumption = (shiftMileage * fuelConsumption / 100);
-					entry.fuel_level_return = fuelLevelOut - expectedConsumption + (fuelRefill || 0);
-					entry.actual_fuel_consumption = fuelLevelOut - entry.fuel_level_return + (fuelRefill || 0);
+			if (newBaseline || !hasEntries) {
+				// Новая точка отсчёта: не тянем шлейф прошлых смен.
+				// Пробег за день = 0, топливо фиксируем «как есть».
+				if (fuelReturnEntered === null || isNaN(fuelReturnEntered)) {
+					const firstOut = parseFloat(formData.get("fuel_level_out"));
+					if (!hasEntries && firstOut > 0) {
+						fuelLevelReturn = firstOut;
+					} else {
+						alert("Укажите остаток топлива (л) — для новой точки отсчёта это обязательно");
+						return false;
+					}
 				} else {
-					entry.fuel_level_return = fuelLevelOut + (fuelRefill || 0);
-					entry.actual_fuel_consumption = fuelLevelOut - entry.fuel_level_return + (fuelRefill || 0);
+					fuelLevelReturn = fuelReturnEntered;
 				}
-			} else if (fuelLevelOut !== null) {
-				// Если пробег = 0, остаток при возвращении = остаток при выезде + заправка
-				entry.fuel_level_return = fuelLevelOut + (fuelRefill || 0);
-				entry.actual_fuel_consumption = fuelLevelOut - entry.fuel_level_return + (fuelRefill || 0);
+				mileageOut = mileageReturn;
+				fuelLevelOut = fuelLevelReturn;
+				shiftMileage = 0;
+				actualFuelConsumption = fuelRefill || 0;
+				if (newBaseline) {
+					var tag = "Новая точка отсчёта";
+					notes = notes ? (notes + " | " + tag) : tag;
+				}
+			} else {
+				// Обычная смена: выезд от предыдущего дня по дате (не от «последней любой»).
+				mileageOut = pred ? (pred.mileage || 0) : (currentVehicle ? (currentVehicle.mileage || 0) : 0);
+				fuelLevelOut = pred && pred.fuel_level_return != null
+					? parseFloat(pred.fuel_level_return)
+					: (parseFloat(formData.get("fuel_level_out")) || null);
+
+				if (mileageReturn < mileageOut) {
+					alert("Пробег (" + mileageReturn + ") меньше выезда (" + mileageOut + "). Если это фактические показания после пропуска — включите «Новая точка отсчёта».");
+					return false;
+				}
+				shiftMileage = mileageReturn - mileageOut;
+
+				if (fuelReturnEntered !== null && !isNaN(fuelReturnEntered)) {
+					fuelLevelReturn = fuelReturnEntered;
+					actualFuelConsumption = (fuelLevelOut != null)
+						? (fuelLevelOut - fuelLevelReturn + (fuelRefill || 0))
+						: (fuelRefill || 0);
+				} else if (fuelLevelOut !== null && shiftMileage > 0) {
+					var fuelConsumption = currentVehicle ? (currentVehicle.fuel_consumption || 0) : 0;
+					if (fuelConsumption > 0) {
+						var expectedConsumption = (shiftMileage * fuelConsumption / 100);
+						fuelLevelReturn = fuelLevelOut - expectedConsumption + (fuelRefill || 0);
+					} else {
+						fuelLevelReturn = fuelLevelOut + (fuelRefill || 0);
+					}
+					actualFuelConsumption = fuelLevelOut - fuelLevelReturn + (fuelRefill || 0);
+				} else if (fuelLevelOut !== null) {
+					fuelLevelReturn = fuelLevelOut + (fuelRefill || 0);
+					actualFuelConsumption = fuelLevelOut - fuelLevelReturn + (fuelRefill || 0);
+				} else {
+					fuelLevelReturn = null;
+					actualFuelConsumption = null;
+				}
 			}
-			
-			await window.VehiclesDB.addMileageLog(entry);
-			await loadVehicles(); // Обновляем список автомобилей для обновления пробега
-			// Обновляем currentVehicle после загрузки
+
+			if (!hasEntries && (fuelLevelOut === null || fuelLevelOut < 0)) {
+				alert("Для первой записи укажите остаток топлива");
+				return false;
+			}
+
+			const entry = {
+				vehicle_id: currentMileageVehicleId,
+				driver_id: driverId,
+				mileage: mileageReturn,
+				log_date: logDate,
+				mileage_out: mileageOut,
+				fuel_level_out: fuelLevelOut,
+				fuel_level_return: fuelLevelReturn,
+				fuel_refill: fuelRefill,
+				actual_fuel_consumption: actualFuelConsumption,
+				notes: notes
+			};
+
+			await window.VehiclesDB.upsertMileageLog(entry);
+			await loadVehicles();
 			vehicles = await window.VehiclesDB.getAllVehicles();
-			const updatedVehicle = vehicles.find(v => v.id === currentMileageVehicleId);
-			if (updatedVehicle) {
-				currentVehicle = updatedVehicle;
-			}
+			const updatedVehicle = vehicles.find(function (v) { return v.id === currentMileageVehicleId; });
+			if (updatedVehicle) currentVehicle = updatedVehicle;
 			await loadMileageLog(currentMileageVehicleId);
-			
-			// Очищаем форму
+
 			document.getElementById("mileageForm").reset();
 			const mileageDate = document.getElementById("mileageDate");
 			if (mileageDate) {
-				const today = new Date().toISOString().split('T')[0];
-				mileageDate.value = today;
+				mileageDate.value = new Date().toISOString().split("T")[0];
 			}
-			
-			// Проверяем, нужно ли показывать поле начального уровня топлива
 			await checkAndShowFuelLevelField();
-			
+			syncMileageBaselineUi();
+
+			alert(sameDay
+				? ("Запись за " + logDate + " обновлена. Прошлые дни не изменены.")
+				: (newBaseline
+					? ("Точка отсчёта на " + logDate + " сохранена. Пробег: " + mileageReturn + " км, топливо: " + fuelLevelReturn + " л. Старые смены на месте.")
+					: ("Сохранено. Пробег за смену: " + shiftMileage + " км")));
 			return true;
 		} catch (err) {
 			console.error("Ошибка сохранения записи пробега:", err);
 			alert("Ошибка сохранения: " + err.message);
 			return false;
+		}
+	}
+
+	function syncMileageBaselineUi() {
+		var cb = document.getElementById("mileageNewBaseline");
+		var fuelReturnInput = document.getElementById("mileageFuelReturn");
+		var fuelReturnHint = document.getElementById("fuelReturnHint");
+		var mileageHint = document.getElementById("mileageValueHint");
+		var fuelLevelGroup = document.getElementById("fuelLevelGroup");
+		if (!cb) return;
+		var on = !!cb.checked;
+		if (fuelReturnInput) fuelReturnInput.required = on;
+		if (fuelReturnHint) {
+			fuelReturnHint.textContent = on
+				? "Обязательно: фактический остаток в баке на эту дату (например 19)."
+				: "Если указать — сохранится как факт. Иначе остаток посчитается по норме.";
+		}
+		if (mileageHint) {
+			mileageHint.textContent = on
+				? "Фактические показания одометра. Шлейф прошлых смен не подтянется (пробег за день = 0)."
+				: "Показания одометра на выбранную дату";
+		}
+		// При новой точке отсчёта поле «выезд» не нужно — остаток один.
+		if (on && fuelLevelGroup) {
+			fuelLevelGroup.style.display = "none";
+			var fl = document.getElementById("mileageFuelLevel");
+			if (fl) { fl.required = false; fl.value = ""; }
+		} else {
+			checkAndShowFuelLevelField();
+		}
+	}
+
+	async function suggestMileageBaselineIfGap() {
+		var cb = document.getElementById("mileageNewBaseline");
+		if (!cb || !currentMileageVehicleId) return;
+		try {
+			var entries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
+			if (!entries.length) {
+				cb.checked = true;
+				syncMileageBaselineUi();
+				return;
+			}
+			var sorted = entries.slice().sort(function (a, b) { return new Date(b.log_date) - new Date(a.log_date); });
+			var last = sorted[0];
+			var lastDate = new Date(last.log_date + "T00:00:00");
+			var today = new Date();
+			today.setHours(0, 0, 0, 0);
+			var gapDays = Math.round((today - lastDate) / 86400000);
+			if (gapDays >= 3) {
+				cb.checked = true;
+				syncMileageBaselineUi();
+			}
+		} catch (e) { /* ignore */ }
+	}
+
+	async function checkAndShowFuelLevelField() {
+		const fuelLevelGroup = document.getElementById("fuelLevelGroup");
+		const fuelLevelInput = document.getElementById("mileageFuelLevel");
+		const baselineCb = document.getElementById("mileageNewBaseline");
+		
+		if (!fuelLevelGroup || !fuelLevelInput) {
+			return;
+		}
+
+		if (baselineCb && baselineCb.checked) {
+			fuelLevelGroup.style.display = "none";
+			fuelLevelInput.required = false;
+			return;
+		}
+		
+		try {
+			if (currentMileageVehicleId) {
+				const allEntries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
+				if (allEntries.length === 0) {
+					fuelLevelGroup.style.display = "block";
+					fuelLevelInput.required = true;
+				} else {
+					fuelLevelGroup.style.display = "none";
+					fuelLevelInput.required = false;
+					fuelLevelInput.value = "";
+				}
+			} else {
+				fuelLevelGroup.style.display = "none";
+				fuelLevelInput.required = false;
+			}
+		} catch (err) {
+			console.error("Ошибка проверки записей:", err);
+			fuelLevelGroup.style.display = "block";
+			fuelLevelInput.required = true;
 		}
 	}
 
@@ -4102,44 +4227,6 @@
 			setTimeout(() => {
 				printHeader.style.display = 'none';
 			}, 100);
-		}
-	}
-
-	async function checkAndShowFuelLevelField() {
-		const fuelLevelGroup = document.getElementById("fuelLevelGroup");
-		const fuelLevelInput = document.getElementById("mileageFuelLevel");
-		
-		if (!fuelLevelGroup || !fuelLevelInput) {
-			console.warn("Элементы fuelLevelGroup или mileageFuelLevel не найдены");
-			return;
-		}
-		
-		try {
-			// Проверяем, есть ли уже записи для этого автомобиля
-			if (currentMileageVehicleId) {
-				const allEntries = await window.VehiclesDB.getMileageLog(currentMileageVehicleId);
-				if (allEntries.length === 0) {
-					// Нет записей - показываем поле и делаем его обязательным
-					fuelLevelGroup.style.display = "block";
-					fuelLevelInput.required = true;
-					console.log("Поле начального уровня топлива показано (нет записей)");
-				} else {
-					// Есть записи - скрываем поле
-					fuelLevelGroup.style.display = "none";
-					fuelLevelInput.required = false;
-					fuelLevelInput.value = "";
-					console.log("Поле начального уровня топлива скрыто (есть записи)");
-				}
-			} else {
-				// Если автомобиль не выбран, скрываем поле
-				fuelLevelGroup.style.display = "none";
-				fuelLevelInput.required = false;
-			}
-		} catch (err) {
-			console.error("Ошибка проверки записей:", err);
-			// В случае ошибки показываем поле на всякий случай
-			fuelLevelGroup.style.display = "block";
-			fuelLevelInput.required = true;
 		}
 	}
 
