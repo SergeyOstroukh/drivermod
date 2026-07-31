@@ -528,6 +528,22 @@
     return driverIndex >= 0 ? driverIndex : -1;
   }
 
+  // Color is tied to driver ID (custom or stable hash), never to slot/list order.
+  // Prevents "all colors reshuffled" after tab sync / driver list reorder.
+  function getColorForDriverId(driverId) {
+    if (driverId == null || driverId === '') return '#94a3b8';
+    var sid = String(driverId);
+    if (driverCustomColors[sid]) return driverCustomColors[sid];
+    var h = 0;
+    for (var i = 0; i < sid.length; i++) h = ((h << 5) - h + sid.charCodeAt(i)) | 0;
+    return ORIGINAL_COLORS[Math.abs(h) % ORIGINAL_COLORS.length];
+  }
+
+  function getColorForDriverIndex(di) {
+    if (di == null || di < 0 || !dbDrivers[di]) return '#888';
+    return getColorForDriverId(dbDrivers[di].id);
+  }
+
   function getDriverName(slotIdx) {
     const driverId = driverSlots[slotIdx];
     if (!driverId) return 'В' + (slotIdx + 1);
@@ -723,6 +739,7 @@
       activeVariant = -1;
     }
     _lastSavedStateSig = buildStateSignature();
+    applyCustomColors();
     return true;
   }
 
@@ -989,14 +1006,12 @@
   }
 
   function applyCustomColors() {
+    // Keep COLORS[] in sync for any leftover index-based reads, but source of truth is driver ID.
     for (var i = 0; i < ORIGINAL_COLORS.length; i++) {
       COLORS[i] = ORIGINAL_COLORS[i];
     }
     dbDrivers.forEach(function (dr, idx) {
-      var customColor = driverCustomColors[String(dr.id)];
-      if (customColor && idx < COLORS.length) {
-        COLORS[idx] = customColor;
-      }
+      if (idx < COLORS.length) COLORS[idx] = getColorForDriverId(dr.id);
     });
   }
 
@@ -1007,7 +1022,7 @@
     var palette = document.createElement('div');
     palette.className = 'dc-color-palette';
 
-    var currentColor = COLORS[driverIdx % COLORS.length];
+    var currentColor = getColorForDriverId(driverId);
 
     COLOR_PALETTE.forEach(function (color) {
       var swatch = document.createElement('div');
@@ -1279,7 +1294,7 @@
       var isSettlementOnly = order.settlementOnly;
       var isUnassigned = slotIdx < 0;
       var defaultColor = isSettlementOnly ? '#f59e0b' : '#e0e0e0';
-      var color = !isUnassigned ? COLORS[slotIdx % COLORS.length] : defaultColor;
+      var color = !isUnassigned ? getColorForDriverId(orderDriverId) : defaultColor;
 
       var overlapCount = overlapGroups[overlapKey(order)] ? overlapGroups[overlapKey(order)].length : 1;
       var displayNum = order.isSupplier ? 'П' : (order.isPartner ? 'ПР' : (_addrNum[order.id] || (globalIdx + 1)));
@@ -1460,7 +1475,7 @@
     var currentDriverId = getOrderDriverId(globalIdx);
     let buttons = '';
     dbDrivers.forEach(function (dr, di) {
-      var c = COLORS[di % COLORS.length];
+      var c = getColorForDriverId(dr.id);
       var active = dr.id === currentDriverId;
       var displayName = dr.name.split(' ')[0];
       buttons += '<button onclick="window.__dc_assignDirect(' + globalIdx + ',\'' + dr.id + '\')" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:12px;border:2px solid ' + (active ? '#fff' : 'transparent') + ';background:' + c + ';cursor:pointer;margin:2px;box-shadow:' + (active ? '0 0 0 2px ' + c : 'none') + ';color:#fff;font-size:11px;font-weight:600;" title="' + dr.name + '"><span style="width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.4);"></span>' + displayName + '</button>';
@@ -1481,7 +1496,7 @@
       kbtHtml += '<div style="display:flex;flex-wrap:wrap;margin-top:4px;">';
       dbDrivers.forEach(function (hdr, hi) {
         if (hdr.id === currentDriverId) return; // can't be helper and main driver
-        var hc = COLORS[hi % COLORS.length];
+        var hc = getColorForDriverId(hdr.id);
         var hActive = order.helperDriverSlot === hi;
         var hName = hdr.name.split(' ')[0];
         kbtHtml += '<button onclick="window.__dc_setHelper(' + globalIdx + ',' + hi + ')" style="display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;border:2px solid ' + (hActive ? '#a855f7' : 'transparent') + ';background:' + (hActive ? 'rgba(168,85,247,0.15)' : '#f5f5f5') + ';cursor:pointer;margin:2px;color:' + (hActive ? '#a855f7' : '#666') + ';font-size:11px;font-weight:' + (hActive ? '700' : '500') + ';">' +
@@ -2404,7 +2419,7 @@
 
     var driverCheckboxes = '';
     dbDrivers.forEach(function (dr, di) {
-      var c = COLORS[di % COLORS.length];
+      var c = getColorForDriverId(dr.id);
       driverCheckboxes += '<label style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid #444;cursor:pointer;width:100%;">' +
         '<input type="checkbox" class="dc-dist-driver-cb" data-driver-id="' + dr.id + '" checked style="accent-color:' + c + ';width:16px;height:16px;">' +
         '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
@@ -2710,7 +2725,7 @@
     // Step 1: choose driver
     var driverBtns = '';
     dbDrivers.forEach(function (dr, di) {
-      var c = COLORS[di % COLORS.length];
+      var c = getColorForDriverId(dr.id);
       var counts = driverCounts[String(dr.id)];
       var total = counts ? counts.suppliers + counts.addresses : 0;
       if (total === 0) return;
@@ -3304,7 +3319,7 @@
     dbDrivers.forEach(function (dr, di) {
       var count = driverPointCounts[String(dr.id)] || 0;
       if (count === 0) return;
-      var c = COLORS[di % COLORS.length];
+      var c = getColorForDriverId(dr.id);
       var label = (dr.name || '').split(' ')[0];
       var d = driverPointDetails[String(dr.id)] || {};
       var parts = [];
@@ -3405,7 +3420,7 @@
         dbDrivers.forEach(function (dr, di) {
           var list = routesByDriver[String(dr.id)] || [];
           if (list.length === 0) return;
-          var c = COLORS[di % COLORS.length];
+          var c = getColorForDriverId(dr.id);
           driverBtns += '<button class="btn btn-outline dc-edit-trip-driver" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
             '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
             '<span style="flex:1;text-align:left;">' + escapeHtml(dr.name) + '</span>' +
@@ -3787,7 +3802,7 @@
     dbDrivers.forEach(function (dr, di) {
       var count = driverSupplierCounts[String(dr.id)] || 0;
       if (count === 0) return;
-      var c = COLORS[di % COLORS.length];
+      var c = getColorForDriverId(dr.id);
       var label = dr.name.split(' ')[0];
       driverBtns += '<button class="btn btn-outline dc-finish-sup-driver" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;width:100%;border-color:#444;">' +
         '<span style="width:12px;height:12px;border-radius:50%;background:' + c + ';flex-shrink:0;"></span>' +
@@ -4789,7 +4804,7 @@
 
     const driverId = getOrderDriverId(idx);
     const slotIdx = getOrderSlotIdx(idx);
-    const color = slotIdx >= 0 ? COLORS[slotIdx % COLORS.length] : '#ccc';
+    const color = driverId ? getColorForDriverId(driverId) : '#ccc';
     const isFailed = !order.geocoded && order.error;
     const isSettlementOnly = order.geocoded && order.settlementOnly;
     const isEditing = editingOrderId === order.id;
@@ -4896,7 +4911,7 @@
     if (order.isKbt) {
       var helperDr = order.helperDriverSlot != null ? dbDrivers[order.helperDriverSlot] : null;
       var helperName = helperDr ? helperDr.name.split(' ')[0] : '?';
-      var helperColor = order.helperDriverSlot != null ? COLORS[order.helperDriverSlot % COLORS.length] : '#a855f7';
+      var helperColor = helperDr ? getColorForDriverId(helperDr.id) : '#a855f7';
       html += '<div class="dc-order-kbt" style="display:flex;align-items:center;gap:4px;margin-top:2px;">';
       html += '<span style="background:#a855f7;color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;">КБТ +1</span>';
       html += '<span style="font-size:11px;color:' + helperColor + ';">помощник: ' + helperName + '</span>';
@@ -5003,7 +5018,7 @@
       if (editingRouteId && editingDriverId) {
         var editDrv = dbDrivers.find(function (d) { return String(d.id) === String(editingDriverId); });
         var editDi = dbDrivers.indexOf(editDrv);
-        var editColor = editDi >= 0 ? COLORS[editDi % COLORS.length] : '#888';
+        var editColor = editDi >= 0 ? getColorForDriverIndex(editDi) : '#888';
         var editName = editDrv ? (editDrv.name || '').split(' ')[0] : '?';
         editBannerHtml = '<div class="dc-edit-mode-banner" style="background:rgba(107,114,128,0.2);border:1px solid #6b7280;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
           '<span style="width:14px;height:14px;border-radius:50%;background:' + editColor + ';flex-shrink:0;"></span>' +
@@ -5014,7 +5029,7 @@
       } else if (editingDriverId) {
         var editDrv = dbDrivers.find(function (d) { return String(d.id) === String(editingDriverId); });
         var editDi = dbDrivers.indexOf(editDrv);
-        var editColor = editDi >= 0 ? COLORS[editDi % COLORS.length] : '#888';
+        var editColor = editDi >= 0 ? getColorForDriverIndex(editDi) : '#888';
         var editName = editDrv ? (editDrv.name || '').split(' ')[0] : '?';
         editBannerHtml = '<div class="dc-edit-mode-banner" style="background:rgba(59,130,246,0.15);border:1px solid #3b82f6;border-radius:10px;padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:8px;">' +
           '<span style="width:14px;height:14px;border-radius:50%;background:' + editColor + ';flex-shrink:0;"></span>' +
@@ -5029,7 +5044,7 @@
       // "Show all" button
       driverListHtml += '<button class="dc-driver-filter-btn' + (selectedDriver === null && !editingDriverId ? ' active' : '') + '" data-driver-filter="all" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;border:1px solid ' + (selectedDriver === null && !editingDriverId ? 'var(--accent)' : '#333') + ';background:' + (selectedDriver === null && !editingDriverId ? 'rgba(16,185,129,0.1)' : 'transparent') + ';cursor:pointer;color:#ccc;font-size:12px;font-weight:' + (selectedDriver === null && !editingDriverId ? '700' : '400') + ';width:100%;">Все точки</button>';
       dbDrivers.forEach(function (dr, di) {
-        var c = COLORS[di % COLORS.length];
+        var c = getColorForDriverId(dr.id);
         var count = driverPointCounts[String(dr.id)] || 0;
         var isActive = (selectedDriver != null && String(selectedDriver) === String(dr.id)) || (editingDriverId && String(editingDriverId) === String(dr.id));
         var isEditing = editingDriverId && String(editingDriverId) === String(dr.id);
@@ -5106,7 +5121,7 @@
     var bulkAssignHtml = '';
     if (orders.length > 0) {
       var bulkButtons = dbDrivers.map(function (dr, di) {
-        var c = COLORS[di % COLORS.length];
+        var c = getColorForDriverId(dr.id);
         var shortName = escapeHtml((dr.name || '').split(' ')[0] || ('Водитель ' + (di + 1)));
         return '<button class="dc-bulk-assign-btn" data-driver-id="' + dr.id + '" style="display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:10px;border:1px solid #2a2a2a;background:' + c + ';color:#fff;cursor:pointer;font-size:11px;font-weight:600;"><span style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.5);"></span>' + shortName + '</button>';
       }).join('');
@@ -5374,7 +5389,7 @@
             if (did) {
               var drv = dbDrivers.find(function (d) { return d.id == did; });
               var di = dbDrivers.indexOf(drv);
-              var c = di >= 0 ? COLORS[di % COLORS.length] : '#888';
+              var c = di >= 0 ? getColorForDriverIndex(di) : '#888';
               drvInfo = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + ';margin-right:4px;"></span>';
             }
             var icon = o.isSupplier ? '📦' : (o.isPartner ? '🤝' : '📍');
@@ -5814,7 +5829,7 @@
         picker.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;padding:6px 0;';
         var currentDriverId = getOrderDriverId(idx);
         dbDrivers.forEach(function (dr, di) {
-          var c = COLORS[di % COLORS.length];
+          var c = getColorForDriverId(dr.id);
           var active = dr.id === currentDriverId;
           var displayName = dr.name.split(' ')[0];
           var btn = document.createElement('button');
