@@ -4187,11 +4187,35 @@
     }
   }
 
+  // ─── Telegram API via Supabase (token stays in secrets) ─
+  async function telegramSendMessage(payload) {
+    var cfg = window.SUPABASE_CONFIG;
+    if (cfg && cfg.url && cfg.anonKey) {
+      var resp = await fetch(cfg.url + '/functions/v1/telegram-proxy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + cfg.anonKey,
+          'apikey': cfg.anonKey,
+        },
+        body: JSON.stringify(Object.assign({ method: 'sendMessage' }, payload)),
+      });
+      return resp.json();
+    }
+    var botToken = window.TELEGRAM_BOT_TOKEN;
+    if (!botToken) throw new Error('Telegram бот не настроен (нет Supabase и токена)');
+    var direct = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return direct.json();
+  }
+
   // ─── Send all unsent suppliers to Telegram ─────────────
   async function sendToTelegram() {
-    var botToken = window.TELEGRAM_BOT_TOKEN;
-    if (!botToken) {
-      showToast('Telegram бот не настроен. Создайте js/config.local.js с токеном', 'error');
+    if (!(window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url) && !window.TELEGRAM_BOT_TOKEN) {
+      showToast('Telegram бот не настроен', 'error');
       return;
     }
 
@@ -4262,17 +4286,12 @@
           ]]
         };
         try {
-          var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chat_id: driver.telegram_chat_id,
-              text: msg,
-              parse_mode: 'HTML',
-              reply_markup: inlineKeyboard,
-            }),
+          var data = await telegramSendMessage({
+            chat_id: driver.telegram_chat_id,
+            text: msg,
+            parse_mode: 'HTML',
+            reply_markup: inlineKeyboard,
           });
-          var data = await resp.json();
           if (data.ok) {
             messagesSent++;
             supplierOrder.telegramSent = true;
@@ -4305,8 +4324,10 @@
 
   // ─── Send single supplier to Telegram ──────────────────
   async function sendOneToTelegram(orderId) {
-    var botToken = window.TELEGRAM_BOT_TOKEN;
-    if (!botToken) { showToast('Telegram бот не настроен', 'error'); return; }
+    if (!(window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url) && !window.TELEGRAM_BOT_TOKEN) {
+      showToast('Telegram бот не настроен', 'error');
+      return;
+    }
 
     var orderIdx = orders.findIndex(function (o) { return o.id === orderId; });
     if (orderIdx < 0) return;
@@ -4344,17 +4365,12 @@
     };
 
     try {
-      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: driver.telegram_chat_id,
-          text: msg,
-          parse_mode: 'HTML',
-          reply_markup: inlineKeyboard,
-        }),
+      var data = await telegramSendMessage({
+        chat_id: driver.telegram_chat_id,
+        text: msg,
+        parse_mode: 'HTML',
+        reply_markup: inlineKeyboard,
       });
-      var data = await resp.json();
       if (data.ok) {
         order.telegramSent = true;
         order.telegramStatus = 'sent';
@@ -4378,8 +4394,10 @@
   // ─── Send items update to driver (when items arrived after initial send) ──
   async function sendItemsToDriver(orderId, opts) {
     opts = opts || {};
-    var botToken = window.TELEGRAM_BOT_TOKEN;
-    if (!botToken) { if (!opts.silent) showToast('Telegram бот не настроен', 'error'); return; }
+    if (!(window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url) && !window.TELEGRAM_BOT_TOKEN) {
+      if (!opts.silent) showToast('Telegram бот не настроен', 'error');
+      return;
+    }
 
     var order = orders.find(function (o) { return o.id === orderId; });
     if (!order || !order.telegramChatId) { if (!opts.silent) showToast('Поставщик не был отправлен в Telegram', 'error'); return; }
@@ -4396,17 +4414,12 @@
     var msg = '📋 <b>Товар для ' + escapeHtml(order.address) + ':</b>\n' + escapeHtml(items);
 
     try {
-      var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: order.telegramChatId,
-          text: msg,
-          parse_mode: 'HTML',
-          reply_to_message_id: order.telegramMessageId || undefined,
-        }),
+      var data = await telegramSendMessage({
+        chat_id: order.telegramChatId,
+        text: msg,
+        parse_mode: 'HTML',
+        reply_to_message_id: order.telegramMessageId || undefined,
       });
-      var data = await resp.json();
       if (data.ok) {
         order.items1c = items;
         order.itemsSent = true;
@@ -4626,8 +4639,6 @@
 
   // ─── Cancel supplier — send cancellation to driver, unassign, update route in DB ──
   async function cancelOneFromTelegram(orderId) {
-    var botToken = window.TELEGRAM_BOT_TOKEN;
-
     var orderIdx = orders.findIndex(function (o) { return o.id === orderId; });
     if (orderIdx < 0) return;
     var order = orders[orderIdx];
@@ -4643,19 +4654,19 @@
     }
 
     // Send cancellation message if driver has telegram
-    if (botToken && driver && driver.telegram_chat_id && driver.telegram_chat_id > 0 && order.telegramSent) {
+    var canSend = (window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.url) || window.TELEGRAM_BOT_TOKEN;
+    if (canSend && driver && driver.telegram_chat_id && driver.telegram_chat_id > 0 && order.telegramSent) {
       var cancelMsg = '❌ <b>ОТМЕНА</b>\n\n' +
         '🏢 <b>' + escapeHtml(order.address) + '</b>' +
         (order.timeSlot ? ' ⏰ ' + order.timeSlot : '') +
         '\n\nЭтот поставщик снят с вашего маршрута.';
 
       try {
-        var resp = await fetch('https://api.telegram.org/bot' + botToken + '/sendMessage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: driver.telegram_chat_id, text: cancelMsg, parse_mode: 'HTML' }),
+        var data = await telegramSendMessage({
+          chat_id: driver.telegram_chat_id,
+          text: cancelMsg,
+          parse_mode: 'HTML',
         });
-        var data = await resp.json();
         if (data.ok) {
           showToast('Отмена отправлена: ' + order.address + ' → ' + driver.name);
         } else {
