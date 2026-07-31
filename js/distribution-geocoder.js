@@ -219,7 +219,8 @@
 
   // ─── Minsk city geocoding (strict) ─────────────────────────
   async function geocodeInMinskCity(normalized, cleanAddress, rawAddress) {
-    let streetPart = normalized.replace(/^[,\s]*(?:г\.?\s*)?минск\s*[,\s]*/i, '').trim();
+    // Strip city/admin prefixes: «Минск», «Минский», «Минский р-н» → street part
+    let streetPart = stripMinskAdminPrefix(normalized);
     if (!streetPart || streetPart.length < 2) streetPart = normalized;
 
     const queries = [];
@@ -227,15 +228,17 @@
       queries.push('Минск, ' + streetPart);
       queries.push('Беларусь, Минск, ' + streetPart);
     }
+    queries.push('Минск, ' + streetPart);
+    queries.push('Беларусь, Минск, ' + streetPart);
     queries.push('Минск, ' + normalized);
     queries.push('Беларусь, Минск, ' + normalized);
 
-    const simplified = simplifyAddress(normalized);
-    if (simplified !== normalized && simplified.length > 2) {
+    const simplified = simplifyAddress(streetPart);
+    if (simplified !== streetPart && simplified.length > 2) {
       queries.push('Минск, ' + simplified);
     }
     if (cleanAddress !== normalized) {
-      queries.push('Минск, ' + cleanAddress);
+      queries.push('Минск, ' + stripMinskAdminPrefix(cleanAddress));
     }
 
     const seen = {};
@@ -275,8 +278,43 @@
   }
 
   // ─── Address helpers ────────────────────────────────────────
+  // Known villages/towns near Minsk — always regional search
+  var KNOWN_NEAR_MINSK = /прилуки|копище|богатырёво|богатырево|лесной(?![а-яёА-ЯЁ])|сеница|боровляны|колодищи|заславль|фаниполь|ратомка|тарасово|озерцо|щомыслица|новый\s*двор|атолино|хатежино|дзержинск(?![а-яёА-ЯЁ])|столбцы|смолевичи|жодино|логойск(?![а-яёА-ЯЁ])|руденск(?![а-яёА-ЯЁ])|михановичи|привольный(?![а-яёА-ЯЁ])|сосны|зелёный\s*бор|зеленый\s*бор|луговая\s*слобода|лесковка|большевик|мачулищи|гатово|чуриловичи|колядичи|паперня|самохваловичи|fanipol|borovlyany/i;
+
+  function stripMinskAdminPrefix(address) {
+    return String(address || '')
+      .replace(/^(?:беларусь|республика\s*беларусь)[,\s]*/gi, '')
+      .replace(/^(?:г\.?\s*)?минск(?:ий|ого|ому|ая)?(?:\s*(?:район|р[\-\.]?\s*н\.?|обл\.?|область))?[,\s]*/i, '')
+      .trim();
+  }
+
+  // После «Минский» сразу улица → город. После населённый пункт / ст. → район.
+  function isRegionalAfterMinskPrefix(address) {
+    if (KNOWN_NEAR_MINSK.test(address)) return true;
+
+    var rest = stripMinskAdminPrefix(address);
+    if (!rest) return false;
+
+    if (/^(?:ст\.?|станция|д\.|дер\.|деревня|аг\.|агрогородок|п\.|пос\.|посёлок|поселок|с\.|село)\b/i.test(rest)) {
+      return true;
+    }
+
+    if (/^(?:ул\.?|улица|пр[\.\-]т?\.?|п[\.\-]кт\.?|пр[\.\-]кт\.?|проспект|проезд|пр[\.\-]д\.?|бульвар|б[\.\-]р\.?|пер\.?к?\.?|переулок|тр[\.\-]т\.?|тракт|шоссе|ш\.|наб\.?|набережная|площадь|пл\.?|микрорайон|мкр(?:н)?\.?)\b/i.test(rest)) {
+      return false;
+    }
+
+    var settlement = extractSettlement(rest);
+    if (settlement) return true;
+
+    if (!/\d/.test(rest) && /^[А-ЯЁа-яё][А-ЯЁа-яё\-\s]{2,}$/i.test(rest)) {
+      return true;
+    }
+
+    return false;
+  }
+
   function simplifyAddress(address) {
-    let s = address.replace(/^(минск|беларусь)[,\s]*/i, '').trim();
+    let s = stripMinskAdminPrefix(address);
     const match = s.match(/((?:ул\.?|улица|пр-т|пр\.?|проспект|проезд|бульвар|б-р|пер\.?|переулок|тр-т|тракт|шоссе|площадь|набережная)\s*[А-Яа-яёЁ\s\.\-«»]+?\s+\d+[а-яА-Я]?)\b/i);
     if (match) return match[1].trim();
     const match2 = s.match(/^([А-Яа-яёЁ][А-Яа-яёЁа-я\s\.\-«»]+?\s+\d+[а-яА-Я]?)\b/);
@@ -285,7 +323,7 @@
   }
 
   function extractStreetName(address) {
-    let s = address.replace(/^(минск|беларусь)[,\s]*/i, '').trim();
+    let s = stripMinskAdminPrefix(address);
     s = s.replace(/\s+\d+[а-яА-Я]?.*$/, '').trim();
     s = s.replace(/,\s*$/, '').trim();
     return s.length > 2 ? s : null;
@@ -296,34 +334,48 @@
     const cleanAddress = window.DistributionParser.cleanAddressForGeocoding(rawAddress);
     const normalized = normalizeAddress(cleanAddress);
 
-    const isMinskRegion = /минск(ий|ого|ому)/i.test(normalized) ||
-      /прилуки|копище|богатырёво|богатырево|лесной(?![а-яёА-ЯЁ])|сеница|боровляны|колодищи|заславль|фаниполь|ратомка|тарасово|озерцо|щомыслица|новый\s*двор|атолино|хатежино|дзержинск(?![а-яёА-ЯЁ])|столбцы|смолевичи|жодино|логойск(?![а-яёА-ЯЁ])|руденск(?![а-яёА-ЯЁ])|михановичи|привольный(?![а-яёА-ЯЁ])|сосны|зелёный\s*бор|зеленый\s*бор|луговая\s*слобода|лесковка|большевик|мачулищи|гатово|чуриловичи|колядичи|паперня|самохваловичи|fanipol|borovlyany/i.test(normalized);
-    // "Минск" as city name (not "Минский", "Минская", "Минского")
-    const hasMinskCity = /минск(?![а-яё])/i.test(normalized) && !isMinskRegion;
+    const hasMinskCityWord = /(?:^|[,\s])(?:г\.?\s*)?минск(?![а-яёА-ЯЁ])/i.test(normalized) ||
+      /^минск(?![а-яёА-ЯЁ])/i.test(normalized);
+    const hasMinskAdmin = /минск(ий|ого|ому|ая)/i.test(normalized);
+    const hasKnownVillage = KNOWN_NEAR_MINSK.test(normalized);
     const settlement = extractSettlement(normalized);
 
-    // 1. Regional addresses (villages, suburbs of Minsk)
-    if (isMinskRegion) {
+    // Регион: явная деревня/ст. ИЛИ «Минский» + населённый пункт после него
+    const preferRegion = hasKnownVillage || (hasMinskAdmin && isRegionalAfterMinskPrefix(normalized));
+    // Город: «Минск» ИЛИ «Минский» + сразу улица ИЛИ нет признаков региона
+    const preferCity = !preferRegion && (
+      hasMinskCityWord ||
+      hasMinskAdmin ||
+      !settlement
+    );
+
+    // 1. Regional — only when clearly outside the city
+    if (preferRegion) {
       try {
         const regional = await geocodeRegional(normalized);
         if (regional) return regional;
       } catch (e) { /* fall through */ }
-      const queries = [
+      const regionQueries = [
         'Беларусь, Минский район, ' + normalized,
         normalized,
       ];
-      for (const q of queries) {
+      for (const q of regionQueries) {
         try { const r = await yandexGeocode(q); if (r) return r; } catch (e) { /* continue */ }
       }
       throw new Error('Адрес не найден: ' + rawAddress);
     }
 
-    // 2. Minsk city: "Минск" explicitly mentioned OR no settlement → default to Minsk
-    if (hasMinskCity || !settlement) {
+    // 2. Minsk city (including «Минский, ул. …»)
+    if (preferCity) {
       return await geocodeInMinskCity(normalized, cleanAddress, rawAddress);
     }
 
-    // 3. Other settlements (non-Minsk, non-region)
+    // 3. Other settlements
+    try {
+      const regional = await geocodeRegional(normalized);
+      if (regional) return regional;
+    } catch (e) { /* fall through */ }
+
     const queries = [normalized, 'Беларусь, ' + normalized];
     for (const q of queries) {
       try { const r = await yandexGeocode(q); if (r) return r; } catch (e) { /* continue */ }
