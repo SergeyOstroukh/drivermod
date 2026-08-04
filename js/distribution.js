@@ -47,6 +47,7 @@
   let _suppressCloudSaveUntil = 0; // блок автосохранения устаревших снимков
   let _mapClearedAt = 0; // явный «Сбросить данные» — не восстанавливать старое облако
   const CLEAR_RESTORE_GUARD_MS = 10 * 60 * 1000; // 10 мин после сброса
+  const MAP_CLEARED_STORAGE_PREFIX = 'dc_map_cleared_';
   let _lastAppliedCloudTs = 0;
   let _lastLocalMutationTs = 0;
   let _hasUnpublishedLocalChanges = false;
@@ -773,6 +774,45 @@
     }
   }
 
+  function getMapClearedStorageKey(dateKey) {
+    return MAP_CLEARED_STORAGE_PREFIX + (dateKey || getStateDateKey());
+  }
+
+  function readPersistedMapClear() {
+    try {
+      var raw = localStorage.getItem(getMapClearedStorageKey());
+      if (!raw) return 0;
+      var ts = parseInt(raw, 10);
+      return ts > 0 ? ts : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function persistMapClear(ts) {
+    var when = ts || Date.now();
+    _mapClearedAt = when;
+    try {
+      localStorage.setItem(getMapClearedStorageKey(), String(when));
+    } catch (e) { /* ignore */ }
+  }
+
+  function clearPersistedMapClear() {
+    _mapClearedAt = 0;
+    try {
+      localStorage.removeItem(getMapClearedStorageKey());
+    } catch (e) { /* ignore */ }
+  }
+
+  function isMapClearActive() {
+    var persisted = readPersistedMapClear();
+    if (persisted > 0) {
+      if (!_mapClearedAt || persisted > _mapClearedAt) _mapClearedAt = persisted;
+      return true;
+    }
+    return _mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS;
+  }
+
   async function saveCloudState(snapshot) {
     var client = getSupabaseClient();
     if (!client || _cloudTableMissing) return false;
@@ -783,8 +823,30 @@
     }
     // Не сохранять устаревший непустой снапшот сразу после сброса
     if (!isEmpty && _suppressCloudSaveUntil > Date.now()) return false;
+
+    // Block other tabs/sessions from resurrecting a cleared day with stale full map.
+    if (!isEmpty) {
+      var existing = await loadCloudState();
+      var existingCleared = existing && existing.state && existing.state.cleared === true &&
+        (!existing.state.orders || existing.state.orders.length === 0);
+      var iClearedThisDay = readPersistedMapClear() > 0 || _mapClearedAt > 0;
+      if (existingCleared && !iClearedThisDay) {
+        console.warn('Blocked stale distribution_state overwrite after clear');
+        return false;
+      }
+      // If cloud still has a full old map but THIS browser cleared today — force empty first path
+      if (iClearedThisDay && existing && existing.state && Array.isArray(existing.state.orders) &&
+          existing.state.orders.length > 0 && existing.updatedAt && existing.updatedAt < (_mapClearedAt || readPersistedMapClear())) {
+        // Stale cloud relative to our clear — ok to overwrite with NEW points from this session
+      }
+    }
+
     try {
       var routeDate = getStateDateKey();
+      // New non-empty save after clear = intentional rebuild
+      if (!isEmpty) {
+        snapshot = Object.assign({}, snapshot, { cleared: false });
+      }
       var resp = await client
         .from(DISTRIBUTION_STATE_TABLE)
         .upsert({
@@ -801,7 +863,10 @@
         return false;
       }
       _lastAppliedCloudTs = Date.now();
-      if (!isEmpty) _mapClearedAt = 0;
+      if (!isEmpty && isMapClearActive()) {
+        // User rebuilt map after clear — lift the guard
+        clearPersistedMapClear();
+      }
       return true;
     } catch (e) {
       console.warn('Cloud state save error:', e);
@@ -823,15 +888,16 @@
     clearTimeout(_cloudSaveTimer);
     _cloudSaveTimer = null;
     var snap = buildCloudStateSnapshot();
-    var allowEmpty = _allowEmptyCloudWriteUntil > Date.now();
-    if ((snap.orders && snap.orders.length > 0) || allowEmpty) {
+    var allowEmpty = _allowEmptyCloudWriteUntil > Date.now() || isMapClearActive();
+    if ((snap.orders && snap.orders.length > 0) || (allowEmpty && (!snap.orders || snap.orders.length === 0))) {
       var ok = await saveCloudState(snap);
       if (ok) clearLocalDraftLock();
     }
   }
 
   async function writeEmptyCloudState() {
-    _allowEmptyCloudWriteUntil = Date.now() + 15000;
+    _allowEmptyCloudWriteUntil = Date.now() + 60000;
+    var clearTs = _mapClearedAt || readPersistedMapClear() || Date.now();
     var emptySnap = {
       orders: [],
       assignments: null,
@@ -842,13 +908,12 @@
       updatedAt: Date.now(),
       schemaVersion: 1,
       cleared: true,
+      clearedAt: clearTs,
     };
     return saveCloudState(emptySnap);
   }
 
   async function clearCloudState() {
-    // Write explicit empty snapshot so other tabs see the clear and cannot
-    // resurrect a deleted row with a stale pending upsert of old points.
     var wrote = await writeEmptyCloudState();
     if (wrote) return;
     var client = getSupabaseClient();
@@ -900,21 +965,28 @@
   }
 
   async function loadBestAvailableState() {
-    if (_mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS && orders.length === 0) {
+    if (isMapClearActive() && orders.length === 0) {
       return false;
     }
     var cloud = await loadCloudState();
-    if (cloud && cloud.state && applyStateSnapshot(cloud.state)) {
-      var cloudOrders = cloud.state.orders;
-      if (_mapClearedAt > 0 && Array.isArray(cloudOrders) && cloudOrders.length > 0 &&
-          (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS) {
-        // Stale full map after clear — keep local empty
-        orders = [];
-        assignments = null;
-        variants = [];
-        activeVariant = -1;
-        return false;
-      }
+    if (!cloud || !cloud.state) return false;
+    var cloudOrders = cloud.state.orders;
+    var cloudLen = Array.isArray(cloudOrders) ? cloudOrders.length : 0;
+
+    // Respect explicit clear: never revive a full day map while clear flag is active
+    if (isMapClearActive() && cloudLen > 0) {
+      return false;
+    }
+    if (cloud.state.cleared === true && cloudLen === 0) {
+      orders = [];
+      assignments = null;
+      variants = [];
+      activeVariant = -1;
+      _lastAppliedCloudTs = cloud.updatedAt || 0;
+      return true;
+    }
+
+    if (applyStateSnapshot(cloud.state)) {
       _lastAppliedCloudTs = cloud.updatedAt || 0;
       clearLocalDraftLock();
       await mergeSupplierStatusesFromDb();
@@ -938,37 +1010,25 @@
     if (!cloud || !cloud.state || cloudTs <= _lastAppliedCloudTs) return;
     var cloudOrders = cloud.state.orders;
     var cloudLen = Array.isArray(cloudOrders) ? cloudOrders.length : 0;
-    var recentlyCleared = _mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS;
 
-    // After explicit clear: never resurrect old full map onto empty/new local map.
-    if (recentlyCleared) {
-      if (cloudLen === 0) {
-        // empty cloud is fine
-      } else if (orders.length === 0) {
-        return;
-      } else if (cloudTs < _mapClearedAt) {
-        return;
-      } else if (cloudLen > orders.length && cloudTs <= _mapClearedAt + 2000) {
-        // stale race: another tab saved old snapshot right after our clear
-        return;
-      }
+    // Hard stop: while clear flag is active, never pull a non-empty map back
+    if (isMapClearActive() && cloudLen > 0) {
+      return;
     }
 
     if (cloudLen === 0 && orders.length > 0) {
-      // Empty cloud overwrites local only if it is an explicit clear snapshot newer than local work.
       if (!(cloud.state && cloud.state.cleared && cloudTs > _lastLocalMutationTs)) {
         return;
       }
     }
-    // Never let a smaller cloud snapshot erase local points (stale/race/edit-trip),
-    // unless it is an explicit cleared snapshot after our local mutation time.
     if (cloudLen > 0 && cloudLen < orders.length) {
       return;
     }
     if (!applyStateSnapshot(cloud.state)) return;
     _lastAppliedCloudTs = cloudTs;
-    if (cloudLen === 0) _mapClearedAt = Date.now();
-    else _mapClearedAt = 0;
+    if (cloudLen === 0 && cloud.state.cleared) {
+      persistMapClear(cloud.state.clearedAt || Date.now());
+    }
     clearLocalDraftLock();
     await mergeSupplierStatusesFromDb();
 
@@ -2941,11 +3001,11 @@
       _editRouteOriginalAssignments = null;
       clearTimeout(_cloudSaveTimer);
       _cloudSaveTimer = null;
-      _mapClearedAt = Date.now();
+      persistMapClear(Date.now());
       _lastLocalMutationTs = Date.now();
       _hasUnpublishedLocalChanges = true;
       _suppressCloudSaveUntil = 0;
-      _allowEmptyCloudWriteUntil = Date.now() + 15000;
+      _allowEmptyCloudWriteUntil = Date.now() + 60000;
       _lastSavedStateSig = '';
       await clearCloudState();
       clearLocalDraftLock();
@@ -2973,8 +3033,8 @@
       if (orders.length === 0) {
         clearTimeout(_cloudSaveTimer);
         _cloudSaveTimer = null;
-        _mapClearedAt = Date.now();
-        _allowEmptyCloudWriteUntil = Date.now() + 15000;
+        persistMapClear(Date.now());
+        _allowEmptyCloudWriteUntil = Date.now() + 60000;
         _suppressCloudSaveUntil = 0;
         await clearCloudState();
         clearLocalDraftLock();
@@ -5968,20 +6028,17 @@
 
     // Do not clobber in-memory points with a stale/empty cloud snapshot.
     // After explicit clear keep map empty — do not reload old cloud points.
-    var recentlyCleared = _mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS;
+    var clearActive = isMapClearActive();
     if (editingRouteId) {
       await flushCloudStateSave();
-    } else if (recentlyCleared && orders.length === 0) {
+    } else if (clearActive && orders.length === 0) {
       await writeEmptyCloudState();
     } else if (_hasUnpublishedLocalChanges || _cloudSaveTimer || orders.length > 0) {
       await flushCloudStateSave();
-      // Keep local map; optionally take a newer cloud only if it does not shrink.
       await pullCloudStateIfNewer(true);
     } else {
       var loadedFromDb = await loadBestAvailableState();
       if (!loadedFromDb) {
-        // Failed/empty cloud — leave whatever is in memory (usually empty on fresh open).
-        // Never wipe non-empty local orders here.
         if (orders.length === 0) {
           assignments = null;
           variants = [];
