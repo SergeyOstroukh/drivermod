@@ -44,7 +44,9 @@
   let _cloudTableMissing = false;
   let _isApplyingCloudState = false;
   let _allowEmptyCloudWriteUntil = 0;
-  let _suppressCloudSaveUntil = 0; // после полного сброса — не восстанавливать старые данные
+  let _suppressCloudSaveUntil = 0; // блок автосохранения устаревших снимков
+  let _mapClearedAt = 0; // явный «Сбросить данные» — не восстанавливать старое облако
+  const CLEAR_RESTORE_GUARD_MS = 10 * 60 * 1000; // 10 мин после сброса
   let _lastAppliedCloudTs = 0;
   let _lastLocalMutationTs = 0;
   let _hasUnpublishedLocalChanges = false;
@@ -774,13 +776,13 @@
   async function saveCloudState(snapshot) {
     var client = getSupabaseClient();
     if (!client || _cloudTableMissing) return false;
-    if (!snapshot.orders || snapshot.orders.length === 0) {
-      // Never auto-clear cloud state from incidental empty snapshots.
-      // This prevents spontaneous loss of points on other opened sessions/tabs.
+    var isEmpty = !snapshot.orders || snapshot.orders.length === 0;
+    if (isEmpty && _allowEmptyCloudWriteUntil <= Date.now()) {
+      // Never auto-clear cloud from incidental empty snapshots — only after explicit reset.
       return false;
     }
-    // Не сохранять устаревший снапшот, если пользователь только что сделал полный сброс
-    if (_suppressCloudSaveUntil > Date.now()) return false;
+    // Не сохранять устаревший непустой снапшот сразу после сброса
+    if (!isEmpty && _suppressCloudSaveUntil > Date.now()) return false;
     try {
       var routeDate = getStateDateKey();
       var resp = await client
@@ -799,6 +801,7 @@
         return false;
       }
       _lastAppliedCloudTs = Date.now();
+      if (!isEmpty) _mapClearedAt = 0;
       return true;
     } catch (e) {
       console.warn('Cloud state save error:', e);
@@ -820,13 +823,34 @@
     clearTimeout(_cloudSaveTimer);
     _cloudSaveTimer = null;
     var snap = buildCloudStateSnapshot();
-    if (snap.orders && snap.orders.length > 0) {
+    var allowEmpty = _allowEmptyCloudWriteUntil > Date.now();
+    if ((snap.orders && snap.orders.length > 0) || allowEmpty) {
       var ok = await saveCloudState(snap);
       if (ok) clearLocalDraftLock();
     }
   }
 
+  async function writeEmptyCloudState() {
+    _allowEmptyCloudWriteUntil = Date.now() + 15000;
+    var emptySnap = {
+      orders: [],
+      assignments: null,
+      driverCount: driverCount,
+      activeVariant: -1,
+      driverSlots: driverSlots,
+      poiCoords: poiCoords,
+      updatedAt: Date.now(),
+      schemaVersion: 1,
+      cleared: true,
+    };
+    return saveCloudState(emptySnap);
+  }
+
   async function clearCloudState() {
+    // Write explicit empty snapshot so other tabs see the clear and cannot
+    // resurrect a deleted row with a stale pending upsert of old points.
+    var wrote = await writeEmptyCloudState();
+    if (wrote) return;
     var client = getSupabaseClient();
     if (!client || _cloudTableMissing) return;
     try {
@@ -838,6 +862,7 @@
       if (resp.error && resp.error.code === '42P01') {
         _cloudTableMissing = true;
       }
+      _lastAppliedCloudTs = Date.now();
     } catch (e) {
       console.warn('Cloud state clear error:', e);
     }
@@ -875,8 +900,21 @@
   }
 
   async function loadBestAvailableState() {
+    if (_mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS && orders.length === 0) {
+      return false;
+    }
     var cloud = await loadCloudState();
     if (cloud && cloud.state && applyStateSnapshot(cloud.state)) {
+      var cloudOrders = cloud.state.orders;
+      if (_mapClearedAt > 0 && Array.isArray(cloudOrders) && cloudOrders.length > 0 &&
+          (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS) {
+        // Stale full map after clear — keep local empty
+        orders = [];
+        assignments = null;
+        variants = [];
+        activeVariant = -1;
+        return false;
+      }
       _lastAppliedCloudTs = cloud.updatedAt || 0;
       clearLocalDraftLock();
       await mergeSupplierStatusesFromDb();
@@ -899,17 +937,38 @@
 
     if (!cloud || !cloud.state || cloudTs <= _lastAppliedCloudTs) return;
     var cloudOrders = cloud.state.orders;
-    if (Array.isArray(cloudOrders) && cloudOrders.length === 0 && orders.length > 0) {
-      // Do not allow empty cloud state to overwrite existing local points.
-      return;
+    var cloudLen = Array.isArray(cloudOrders) ? cloudOrders.length : 0;
+    var recentlyCleared = _mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS;
+
+    // After explicit clear: never resurrect old full map onto empty/new local map.
+    if (recentlyCleared) {
+      if (cloudLen === 0) {
+        // empty cloud is fine
+      } else if (orders.length === 0) {
+        return;
+      } else if (cloudTs < _mapClearedAt) {
+        return;
+      } else if (cloudLen > orders.length && cloudTs <= _mapClearedAt + 2000) {
+        // stale race: another tab saved old snapshot right after our clear
+        return;
+      }
     }
-    // Never let a smaller cloud snapshot erase local points (stale/race/edit-trip).
-    // Points leave the map only via explicit «Сбросить данные».
-    if (Array.isArray(cloudOrders) && cloudOrders.length < orders.length) {
+
+    if (cloudLen === 0 && orders.length > 0) {
+      // Empty cloud overwrites local only if it is an explicit clear snapshot newer than local work.
+      if (!(cloud.state && cloud.state.cleared && cloudTs > _lastLocalMutationTs)) {
+        return;
+      }
+    }
+    // Never let a smaller cloud snapshot erase local points (stale/race/edit-trip),
+    // unless it is an explicit cleared snapshot after our local mutation time.
+    if (cloudLen > 0 && cloudLen < orders.length) {
       return;
     }
     if (!applyStateSnapshot(cloud.state)) return;
     _lastAppliedCloudTs = cloudTs;
+    if (cloudLen === 0) _mapClearedAt = Date.now();
+    else _mapClearedAt = 0;
     clearLocalDraftLock();
     await mergeSupplierStatusesFromDb();
 
@@ -2881,8 +2940,13 @@
       _editRouteOriginalOrders = null;
       _editRouteOriginalAssignments = null;
       clearTimeout(_cloudSaveTimer);
-      _allowEmptyCloudWriteUntil = Date.now() + 5000;
-      _suppressCloudSaveUntil = Date.now() + 5000;
+      _cloudSaveTimer = null;
+      _mapClearedAt = Date.now();
+      _lastLocalMutationTs = Date.now();
+      _hasUnpublishedLocalChanges = true;
+      _suppressCloudSaveUntil = 0;
+      _allowEmptyCloudWriteUntil = Date.now() + 15000;
+      _lastSavedStateSig = '';
       await clearCloudState();
       clearLocalDraftLock();
       showToast('Точки на карте сброшены');
@@ -2900,6 +2964,7 @@
       orders = keep;
       assignments = keepA.length > 0 ? keepA : null;
       variants = []; activeVariant = -1;
+      markLocalMutation();
 
       var label = type === 'suppliers' ? 'поставщиков' : (type === 'addresses' ? 'адресов' : 'точек');
       var who = isAll ? '' : (' у ' + driverName);
@@ -2907,7 +2972,10 @@
 
       if (orders.length === 0) {
         clearTimeout(_cloudSaveTimer);
-        _suppressCloudSaveUntil = Date.now() + 5000;
+        _cloudSaveTimer = null;
+        _mapClearedAt = Date.now();
+        _allowEmptyCloudWriteUntil = Date.now() + 15000;
+        _suppressCloudSaveUntil = 0;
         await clearCloudState();
         clearLocalDraftLock();
       }
@@ -5899,9 +5967,12 @@
     applyCustomColors();
 
     // Do not clobber in-memory points with a stale/empty cloud snapshot.
-    // Flush local draft first; only load from DB when this tab has no local map yet.
+    // After explicit clear keep map empty — do not reload old cloud points.
+    var recentlyCleared = _mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS;
     if (editingRouteId) {
       await flushCloudStateSave();
+    } else if (recentlyCleared && orders.length === 0) {
+      await writeEmptyCloudState();
     } else if (_hasUnpublishedLocalChanges || _cloudSaveTimer || orders.length > 0) {
       await flushCloudStateSave();
       // Keep local map; optionally take a newer cloud only if it does not shrink.
