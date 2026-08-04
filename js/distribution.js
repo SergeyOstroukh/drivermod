@@ -595,11 +595,46 @@
     return d ? d.name : 'Водитель ' + (slotIdx + 1);
   }
 
-  // ─── Persistence (Supabase cloud state) ────
+  // ─── Persistence (Supabase DB, no realtime auto-pull) ────
+  // Карта дня хранится в distribution_state (БД).
+  // Автоподтягивание по таймеру/realtime отключено — оно возвращало старую карту после сброса.
+  // Загрузка из БД только при открытии раздела «Распределение».
+
   function getStateDateKey() {
-    // Local calendar date (Belarus UTC+3) — UTC date caused "empty map" overnight/morning.
     var now = new Date();
     return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+  }
+
+  function getMapClearedStorageKey(dateKey) {
+    return MAP_CLEARED_STORAGE_PREFIX + (dateKey || getStateDateKey());
+  }
+
+  function readPersistedMapClear() {
+    try {
+      var raw = localStorage.getItem(getMapClearedStorageKey());
+      var ts = raw ? parseInt(raw, 10) : 0;
+      return ts > 0 ? ts : 0;
+    } catch (e) { return 0; }
+  }
+
+  function persistMapClear(ts) {
+    var when = ts || Date.now();
+    _mapClearedAt = when;
+    try { localStorage.setItem(getMapClearedStorageKey(), String(when)); } catch (e) {}
+  }
+
+  function clearPersistedMapClear() {
+    _mapClearedAt = 0;
+    try { localStorage.removeItem(getMapClearedStorageKey()); } catch (e) {}
+  }
+
+  function isMapClearActive() {
+    var persisted = readPersistedMapClear();
+    if (persisted > 0) {
+      if (!_mapClearedAt || persisted > _mapClearedAt) _mapClearedAt = persisted;
+      return true;
+    }
+    return false;
   }
 
   function buildStateSnapshot() {
@@ -612,11 +647,10 @@
       poiCoords: poiCoords,
       updatedAt: Date.now(),
       schemaVersion: 1,
+      cleared: false,
     };
   }
 
-  // Full map for cloud writes. During "edit trip" orders[] is truncated to one route —
-  // never persist that truncated view or other devices/tabs will lose points.
   function buildCloudStateSnapshot() {
     if (editingRouteId && _editBackupOrders) {
       return {
@@ -628,6 +662,7 @@
         poiCoords: poiCoords,
         updatedAt: Date.now(),
         schemaVersion: 1,
+        cleared: false,
       };
     }
     return buildStateSnapshot();
@@ -644,6 +679,212 @@
       schemaVersion: 1,
     });
   }
+
+  function readLocalState() { return null; }
+
+  async function loadCloudState() {
+    var client = getSupabaseClient();
+    if (!client || _cloudTableMissing) return null;
+    try {
+      var routeDate = getStateDateKey();
+      var resp = await client
+        .from(DISTRIBUTION_STATE_TABLE)
+        .select('state_json, updated_at')
+        .eq('state_date', routeDate)
+        .limit(1)
+        .maybeSingle();
+      if (resp.error) {
+        if (resp.error.code === '42P01') _cloudTableMissing = true;
+        return null;
+      }
+      if (!resp.data || !resp.data.state_json) return null;
+      var ts = Date.parse(resp.data.updated_at || '') || 0;
+      return { state: resp.data.state_json, updatedAt: ts };
+    } catch (e) {
+      console.warn('Cloud state load error:', e);
+      return null;
+    }
+  }
+
+  async function saveCloudState(snapshot) {
+    var client = getSupabaseClient();
+    if (!client || _cloudTableMissing) return false;
+    var isEmpty = !snapshot.orders || snapshot.orders.length === 0;
+    if (isEmpty && _allowEmptyCloudWriteUntil <= Date.now()) return false;
+    if (!isEmpty && _suppressCloudSaveUntil > Date.now()) return false;
+
+    // Не даём старой вкладке затереть явный сброс дня в БД
+    if (!isEmpty) {
+      var existing = await loadCloudState();
+      var existingEmptyCleared = existing && existing.state && existing.state.cleared === true &&
+        (!existing.state.orders || existing.state.orders.length === 0);
+      if (existingEmptyCleared && !isMapClearActive()) {
+        console.warn('Blocked stale map overwrite after DB clear');
+        return false;
+      }
+      snapshot = Object.assign({}, snapshot, { cleared: false });
+    }
+
+    try {
+      var routeDate = getStateDateKey();
+      var resp = await client
+        .from(DISTRIBUTION_STATE_TABLE)
+        .upsert({
+          state_date: routeDate,
+          state_json: snapshot,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'state_date' });
+      if (resp.error && resp.error.code === '42P01') {
+        _cloudTableMissing = true;
+        return false;
+      }
+      if (resp.error) {
+        console.warn('Cloud state save error:', resp.error);
+        return false;
+      }
+      _lastAppliedCloudTs = Date.now();
+      if (!isEmpty && isMapClearActive()) clearPersistedMapClear();
+      return true;
+    } catch (e) {
+      console.warn('Cloud state save error:', e);
+      return false;
+    }
+  }
+
+  function scheduleCloudStateSave(snapshot) {
+    clearTimeout(_cloudSaveTimer);
+    _cloudSaveTimer = setTimeout(function () {
+      _cloudSaveTimer = null;
+      saveCloudState(snapshot).then(function (ok) {
+        if (ok) clearLocalDraftLock();
+      });
+    }, 800);
+  }
+
+  async function flushCloudStateSave() {
+    clearTimeout(_cloudSaveTimer);
+    _cloudSaveTimer = null;
+    var snap = buildCloudStateSnapshot();
+    var allowEmpty = _allowEmptyCloudWriteUntil > Date.now() || isMapClearActive();
+    if ((snap.orders && snap.orders.length > 0) || (allowEmpty && (!snap.orders || snap.orders.length === 0))) {
+      if (!snap.orders || snap.orders.length === 0) {
+        snap.cleared = true;
+        snap.clearedAt = _mapClearedAt || Date.now();
+      }
+      var ok = await saveCloudState(snap);
+      if (ok) clearLocalDraftLock();
+    }
+  }
+
+  async function writeEmptyCloudState() {
+    _allowEmptyCloudWriteUntil = Date.now() + 60000;
+    var clearTs = _mapClearedAt || readPersistedMapClear() || Date.now();
+    return saveCloudState({
+      orders: [],
+      assignments: null,
+      driverCount: driverCount,
+      activeVariant: -1,
+      driverSlots: driverSlots,
+      poiCoords: poiCoords,
+      updatedAt: Date.now(),
+      schemaVersion: 1,
+      cleared: true,
+      clearedAt: clearTs,
+    });
+  }
+
+  async function clearCloudState() {
+    await writeEmptyCloudState();
+  }
+
+  function saveState() {
+    try {
+      if (isLoadingSuppliers || isLoadingPartners) return;
+      var cloudSnap = buildCloudStateSnapshot();
+      var sig = JSON.stringify({
+        orders: cloudSnap.orders,
+        assignments: cloudSnap.assignments,
+        driverCount: cloudSnap.driverCount,
+        activeVariant: cloudSnap.activeVariant,
+        driverSlots: cloudSnap.driverSlots,
+        poiCoords: cloudSnap.poiCoords,
+        schemaVersion: 1,
+      });
+      if (sig === _lastSavedStateSig) return;
+      _lastSavedStateSig = sig;
+      if (!_isApplyingCloudState) scheduleCloudStateSave(cloudSnap);
+    } catch (e) {
+      console.warn('Distribution state save error:', e);
+    }
+  }
+
+  function loadState() { return false; }
+
+  async function loadBestAvailableState() {
+    if (isMapClearActive()) {
+      var cloudWhileCleared = await loadCloudState();
+      if (cloudWhileCleared && cloudWhileCleared.state && cloudWhileCleared.state.cleared &&
+          (!cloudWhileCleared.state.orders || cloudWhileCleared.state.orders.length === 0)) {
+        orders = [];
+        assignments = null;
+        variants = [];
+        activeVariant = -1;
+        _lastAppliedCloudTs = cloudWhileCleared.updatedAt || 0;
+        return true;
+      }
+      await writeEmptyCloudState();
+      orders = [];
+      assignments = null;
+      variants = [];
+      activeVariant = -1;
+      return true;
+    }
+
+    var cloud = await loadCloudState();
+    if (!cloud || !cloud.state) return false;
+    if (cloud.state.cleared && (!cloud.state.orders || cloud.state.orders.length === 0)) {
+      orders = [];
+      assignments = null;
+      variants = [];
+      activeVariant = -1;
+      _lastAppliedCloudTs = cloud.updatedAt || 0;
+      return true;
+    }
+    if (applyStateSnapshot(cloud.state)) {
+      _lastAppliedCloudTs = cloud.updatedAt || 0;
+      clearLocalDraftLock();
+      await mergeSupplierStatusesFromDb();
+      return true;
+    }
+    return false;
+  }
+
+  async function pullCloudStateIfNewer() { /* disabled: caused old map resurrection */ }
+  function startCloudStatePolling() { /* disabled */ }
+  function stopCloudStatePolling() {
+    if (_cloudPullTimer) { clearInterval(_cloudPullTimer); _cloudPullTimer = null; }
+  }
+  function startCloudRealtimeSync() { /* disabled */ }
+  function stopCloudRealtimeSync() {
+    var client = getSupabaseClient();
+    if (_cloudRealtimeChannel && client && client.removeChannel) {
+      try { client.removeChannel(_cloudRealtimeChannel); } catch (e) {}
+    }
+    _cloudRealtimeChannel = null;
+  }
+
+  function clearState() {
+    clearTimeout(_cloudSaveTimer);
+    _allowEmptyCloudWriteUntil = Date.now() + 5000;
+    clearCloudState();
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushCloudStateSave();
+  });
+  window.addEventListener('beforeunload', function () {
+    flushCloudStateSave();
+  });
 
   function buildSupplierPointKey(order, driverId) {
     var addr = (order.address || '').replace(/\s+/g, ' ').trim();
@@ -745,370 +986,6 @@
     applyCustomColors();
     return true;
   }
-
-  function readLocalState() {
-    return null;
-  }
-
-  async function loadCloudState() {
-    var client = getSupabaseClient();
-    if (!client || _cloudTableMissing) return null;
-    try {
-      var routeDate = getStateDateKey();
-      var resp = await client
-        .from(DISTRIBUTION_STATE_TABLE)
-        .select('state_json, updated_at')
-        .eq('state_date', routeDate)
-        .limit(1)
-        .maybeSingle();
-      if (resp.error) {
-        if (resp.error.code === '42P01') _cloudTableMissing = true;
-        return null;
-      }
-      if (!resp.data || !resp.data.state_json) return null;
-      var ts = Date.parse(resp.data.updated_at || '') || 0;
-      return { state: resp.data.state_json, updatedAt: ts };
-    } catch (e) {
-      console.warn('Cloud state load error:', e);
-      return null;
-    }
-  }
-
-  function getMapClearedStorageKey(dateKey) {
-    return MAP_CLEARED_STORAGE_PREFIX + (dateKey || getStateDateKey());
-  }
-
-  function readPersistedMapClear() {
-    try {
-      var raw = localStorage.getItem(getMapClearedStorageKey());
-      if (!raw) return 0;
-      var ts = parseInt(raw, 10);
-      return ts > 0 ? ts : 0;
-    } catch (e) {
-      return 0;
-    }
-  }
-
-  function persistMapClear(ts) {
-    var when = ts || Date.now();
-    _mapClearedAt = when;
-    try {
-      localStorage.setItem(getMapClearedStorageKey(), String(when));
-    } catch (e) { /* ignore */ }
-  }
-
-  function clearPersistedMapClear() {
-    _mapClearedAt = 0;
-    try {
-      localStorage.removeItem(getMapClearedStorageKey());
-    } catch (e) { /* ignore */ }
-  }
-
-  function isMapClearActive() {
-    var persisted = readPersistedMapClear();
-    if (persisted > 0) {
-      if (!_mapClearedAt || persisted > _mapClearedAt) _mapClearedAt = persisted;
-      return true;
-    }
-    return _mapClearedAt > 0 && (Date.now() - _mapClearedAt) < CLEAR_RESTORE_GUARD_MS;
-  }
-
-  async function saveCloudState(snapshot) {
-    var client = getSupabaseClient();
-    if (!client || _cloudTableMissing) return false;
-    var isEmpty = !snapshot.orders || snapshot.orders.length === 0;
-    if (isEmpty && _allowEmptyCloudWriteUntil <= Date.now()) {
-      // Never auto-clear cloud from incidental empty snapshots — only after explicit reset.
-      return false;
-    }
-    // Не сохранять устаревший непустой снапшот сразу после сброса
-    if (!isEmpty && _suppressCloudSaveUntil > Date.now()) return false;
-
-    // Block other tabs/sessions from resurrecting a cleared day with stale full map.
-    if (!isEmpty) {
-      var existing = await loadCloudState();
-      var existingCleared = existing && existing.state && existing.state.cleared === true &&
-        (!existing.state.orders || existing.state.orders.length === 0);
-      var iClearedThisDay = readPersistedMapClear() > 0 || _mapClearedAt > 0;
-      if (existingCleared && !iClearedThisDay) {
-        console.warn('Blocked stale distribution_state overwrite after clear');
-        return false;
-      }
-      // If cloud still has a full old map but THIS browser cleared today — force empty first path
-      if (iClearedThisDay && existing && existing.state && Array.isArray(existing.state.orders) &&
-          existing.state.orders.length > 0 && existing.updatedAt && existing.updatedAt < (_mapClearedAt || readPersistedMapClear())) {
-        // Stale cloud relative to our clear — ok to overwrite with NEW points from this session
-      }
-    }
-
-    try {
-      var routeDate = getStateDateKey();
-      // New non-empty save after clear = intentional rebuild
-      if (!isEmpty) {
-        snapshot = Object.assign({}, snapshot, { cleared: false });
-      }
-      var resp = await client
-        .from(DISTRIBUTION_STATE_TABLE)
-        .upsert({
-          state_date: routeDate,
-          state_json: snapshot,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'state_date' });
-      if (resp.error && resp.error.code === '42P01') {
-        _cloudTableMissing = true;
-        return false;
-      }
-      if (resp.error) {
-        console.warn('Cloud state save error:', resp.error);
-        return false;
-      }
-      _lastAppliedCloudTs = Date.now();
-      if (!isEmpty && isMapClearActive()) {
-        // User rebuilt map after clear — lift the guard
-        clearPersistedMapClear();
-      }
-      return true;
-    } catch (e) {
-      console.warn('Cloud state save error:', e);
-      return false;
-    }
-  }
-
-  function scheduleCloudStateSave(snapshot) {
-    clearTimeout(_cloudSaveTimer);
-    _cloudSaveTimer = setTimeout(function () {
-      _cloudSaveTimer = null;
-      saveCloudState(snapshot).then(function (ok) {
-        if (ok) clearLocalDraftLock();
-      });
-    }, 1200);
-  }
-
-  async function flushCloudStateSave() {
-    clearTimeout(_cloudSaveTimer);
-    _cloudSaveTimer = null;
-    var snap = buildCloudStateSnapshot();
-    var allowEmpty = _allowEmptyCloudWriteUntil > Date.now() || isMapClearActive();
-    if ((snap.orders && snap.orders.length > 0) || (allowEmpty && (!snap.orders || snap.orders.length === 0))) {
-      var ok = await saveCloudState(snap);
-      if (ok) clearLocalDraftLock();
-    }
-  }
-
-  async function writeEmptyCloudState() {
-    _allowEmptyCloudWriteUntil = Date.now() + 60000;
-    var clearTs = _mapClearedAt || readPersistedMapClear() || Date.now();
-    var emptySnap = {
-      orders: [],
-      assignments: null,
-      driverCount: driverCount,
-      activeVariant: -1,
-      driverSlots: driverSlots,
-      poiCoords: poiCoords,
-      updatedAt: Date.now(),
-      schemaVersion: 1,
-      cleared: true,
-      clearedAt: clearTs,
-    };
-    return saveCloudState(emptySnap);
-  }
-
-  async function clearCloudState() {
-    var wrote = await writeEmptyCloudState();
-    if (wrote) return;
-    var client = getSupabaseClient();
-    if (!client || _cloudTableMissing) return;
-    try {
-      var routeDate = getStateDateKey();
-      var resp = await client
-        .from(DISTRIBUTION_STATE_TABLE)
-        .delete()
-        .eq('state_date', routeDate);
-      if (resp.error && resp.error.code === '42P01') {
-        _cloudTableMissing = true;
-      }
-      _lastAppliedCloudTs = Date.now();
-    } catch (e) {
-      console.warn('Cloud state clear error:', e);
-    }
-  }
-
-  function saveState() {
-    try {
-      // Don't persist mid-import snapshots (suppliers temporarily removed before re-add).
-      if (isLoadingSuppliers || isLoadingPartners) return;
-      // Signature for cloud uses the full map (incl. edit-trip backup), so truncated
-      // edit view never cancels a richer pending cloud write.
-      var cloudSnap = buildCloudStateSnapshot();
-      var sig = JSON.stringify({
-        orders: cloudSnap.orders,
-        assignments: cloudSnap.assignments,
-        driverCount: cloudSnap.driverCount,
-        activeVariant: cloudSnap.activeVariant,
-        driverSlots: cloudSnap.driverSlots,
-        poiCoords: cloudSnap.poiCoords,
-        schemaVersion: 1,
-      });
-      if (sig === _lastSavedStateSig) return;
-      _lastSavedStateSig = sig;
-      if (!_isApplyingCloudState) {
-        scheduleCloudStateSave(cloudSnap);
-      }
-    } catch (e) {
-      console.warn('Distribution state save error:', e);
-    }
-  }
-
-  function loadState() {
-    var local = readLocalState();
-    return local ? applyStateSnapshot(local) : false;
-  }
-
-  async function loadBestAvailableState() {
-    if (isMapClearActive() && orders.length === 0) {
-      return false;
-    }
-    var cloud = await loadCloudState();
-    if (!cloud || !cloud.state) return false;
-    var cloudOrders = cloud.state.orders;
-    var cloudLen = Array.isArray(cloudOrders) ? cloudOrders.length : 0;
-
-    // Respect explicit clear: never revive a full day map while clear flag is active
-    if (isMapClearActive() && cloudLen > 0) {
-      return false;
-    }
-    if (cloud.state.cleared === true && cloudLen === 0) {
-      orders = [];
-      assignments = null;
-      variants = [];
-      activeVariant = -1;
-      _lastAppliedCloudTs = cloud.updatedAt || 0;
-      return true;
-    }
-
-    if (applyStateSnapshot(cloud.state)) {
-      _lastAppliedCloudTs = cloud.updatedAt || 0;
-      clearLocalDraftLock();
-      await mergeSupplierStatusesFromDb();
-      return true;
-    }
-    return false;
-  }
-
-  async function pullCloudStateIfNewer(silent) {
-    if (_cloudTableMissing || _isApplyingCloudState) return;
-    if (_hasUnpublishedLocalChanges) return;
-    if (Date.now() - _lastLocalMutationTs < LOCAL_MUTATION_PULL_BLOCK_MS) return;
-    if (editingOrderId || placingOrderId || isGeocoding) return;
-    if (editingRouteId || isLoadingSuppliers || isLoadingPartners) return;
-    var ae = document.activeElement;
-    if (ae && (ae.id === 'dcSupplierInput' || ae.id === 'dcAddressInput' || ae.id === 'dcPartnerInput')) return;
-
-    var cloud = await loadCloudState();
-    var cloudTs = cloud && cloud.updatedAt ? Number(cloud.updatedAt) : 0;
-
-    if (!cloud || !cloud.state || cloudTs <= _lastAppliedCloudTs) return;
-    var cloudOrders = cloud.state.orders;
-    var cloudLen = Array.isArray(cloudOrders) ? cloudOrders.length : 0;
-
-    // Hard stop: while clear flag is active, never pull a non-empty map back
-    if (isMapClearActive() && cloudLen > 0) {
-      return;
-    }
-
-    if (cloudLen === 0 && orders.length > 0) {
-      if (!(cloud.state && cloud.state.cleared && cloudTs > _lastLocalMutationTs)) {
-        return;
-      }
-    }
-    if (cloudLen > 0 && cloudLen < orders.length) {
-      return;
-    }
-    if (!applyStateSnapshot(cloud.state)) return;
-    _lastAppliedCloudTs = cloudTs;
-    if (cloudLen === 0 && cloud.state.cleared) {
-      persistMapClear(cloud.state.clearedAt || Date.now());
-    }
-    clearLocalDraftLock();
-    await mergeSupplierStatusesFromDb();
-
-    _isApplyingCloudState = true;
-    try {
-      renderAll();
-      if (!silent) showToast('Данные распределения обновлены из облака');
-    } finally {
-      _isApplyingCloudState = false;
-    }
-  }
-
-  function startCloudStatePolling() {
-    stopCloudStatePolling();
-    pullCloudStateIfNewer(true);
-    _cloudPullTimer = setInterval(function () {
-      if (document.hidden) return;
-      var section = document.getElementById('distributionSection');
-      if (!section || section.offsetParent === null) return;
-      pullCloudStateIfNewer(true);
-    }, 5000);
-  }
-
-  function stopCloudStatePolling() {
-    if (_cloudPullTimer) {
-      clearInterval(_cloudPullTimer);
-      _cloudPullTimer = null;
-    }
-  }
-
-  function startCloudRealtimeSync() {
-    stopCloudRealtimeSync();
-    var client = getSupabaseClient();
-    if (!client || _cloudTableMissing) return;
-    var routeDate = getStateDateKey();
-    try {
-      _cloudRealtimeChannel = client
-        .channel('dc_distribution_state_' + routeDate)
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: DISTRIBUTION_STATE_TABLE,
-          filter: 'state_date=eq.' + routeDate
-        }, function () {
-          if (document.hidden) return;
-          pullCloudStateIfNewer(true);
-        })
-        .subscribe();
-    } catch (e) {
-      console.warn('Cloud realtime subscribe error:', e);
-    }
-  }
-
-  function stopCloudRealtimeSync() {
-    var client = getSupabaseClient();
-    if (_cloudRealtimeChannel && client && client.removeChannel) {
-      try { client.removeChannel(_cloudRealtimeChannel); } catch (e) { /* ignore */ }
-    }
-    _cloudRealtimeChannel = null;
-  }
-
-  function clearState() {
-    clearTimeout(_cloudSaveTimer);
-    _allowEmptyCloudWriteUntil = Date.now() + 5000;
-    clearCloudState();
-  }
-
-  document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'hidden') {
-      flushCloudStateSave();
-      stopCloudStatePolling();
-      stopCloudRealtimeSync();
-    } else {
-      startCloudStatePolling();
-      startCloudRealtimeSync();
-    }
-  });
-  window.addEventListener('beforeunload', function () {
-    flushCloudStateSave();
-  });
 
   // ─── Driver custom colors ─────────────────────────────────
   function loadDriverColors() {
@@ -6020,35 +5897,26 @@
   async function onSectionActivated() {
     loadSupplierAliases();
     loadPartnerAliases();
-    // Load drivers and suppliers from DB
     await Promise.all([loadDbDrivers(), loadDbSuppliers(), loadDbPartners()]);
-    // Apply custom driver colors
     loadDriverColors();
     applyCustomColors();
 
-    // Do not clobber in-memory points with a stale/empty cloud snapshot.
-    // After explicit clear keep map empty — do not reload old cloud points.
-    var clearActive = isMapClearActive();
+    // Карта: либо оставляем то что уже в памяти, либо один раз грузим из БД.
+    // Без realtime/polling — иначе после сброса возвращается старый день.
     if (editingRouteId) {
       await flushCloudStateSave();
-    } else if (clearActive && orders.length === 0) {
-      await writeEmptyCloudState();
-    } else if (_hasUnpublishedLocalChanges || _cloudSaveTimer || orders.length > 0) {
+    } else if (orders.length > 0 || _hasUnpublishedLocalChanges || _cloudSaveTimer) {
       await flushCloudStateSave();
-      await pullCloudStateIfNewer(true);
     } else {
       var loadedFromDb = await loadBestAvailableState();
-      if (!loadedFromDb) {
-        if (orders.length === 0) {
-          assignments = null;
-          variants = [];
-          activeVariant = -1;
-          _lastSavedStateSig = buildStateSignature();
-        }
+      if (!loadedFromDb && orders.length === 0) {
+        assignments = null;
+        variants = [];
+        activeVariant = -1;
+        _lastSavedStateSig = buildStateSignature();
       }
     }
 
-    // Ensure 1C items are loaded even after page refresh/session restore.
     if (orders.some(function (o) { return o.isSupplier; })) {
       await refreshSupplierItems();
       startItemsPolling();
@@ -6058,11 +5926,8 @@
     _fitBoundsNext = true;
     initMap().then(function () { updatePlacemarks(); });
     renderSidebar();
-    // Start auto-polling if there are pending Telegram confirmations
     var hasPending = orders.some(function (o) { return o.isSupplier && o.telegramSent && o.telegramStatus === 'sent'; });
     if (hasPending) startTelegramPolling();
-    startCloudStatePolling();
-    startCloudRealtimeSync();
     startDayRolloverCheck();
   }
 
