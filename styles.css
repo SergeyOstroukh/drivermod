@@ -20,6 +20,51 @@ body {
 	-moz-osx-font-smoothing: grayscale;
 }
 
+/* Gate: hide app until password unlock */
+html:not(.app-unlocked) body > :not(#appAuthGate) {
+	visibility: hidden !important;
+	pointer-events: none !important;
+}
+.app-auth-gate {
+	display: none;
+	position: fixed;
+	inset: 0;
+	z-index: 10000;
+	align-items: center;
+	justify-content: center;
+	padding: 16px;
+	background: radial-gradient(1200px 600px at 50% 20%, #152033 0%, var(--bg) 55%);
+}
+html:not(.app-unlocked) .app-auth-gate {
+	display: flex;
+	visibility: visible !important;
+	pointer-events: auto !important;
+}
+.app-auth-card {
+	background: var(--card);
+	border: 1px solid var(--border);
+	border-radius: 16px;
+	padding: 24px;
+	max-width: 360px;
+	width: 100%;
+	box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.app-auth-hint {
+	margin: -8px 0 16px;
+	text-align: center;
+	color: var(--muted);
+	font-size: 14px;
+}
+@keyframes app-auth-shake {
+	0%, 100% { transform: translateX(0); }
+	25% { transform: translateX(-6px); }
+	75% { transform: translateX(6px); }
+}
+.form-input.shake {
+	animation: app-auth-shake 0.35s ease;
+	border-color: var(--danger);
+}
+
 .header {
 	position: sticky;
 	top: 0;

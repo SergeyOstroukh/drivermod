@@ -8,11 +8,34 @@
 	<meta http-equiv="Expires" content="0">
 	<title>Маршруты к поставщикам</title>
 	<script>var __v = Date.now();</script>
-	<link rel="stylesheet" href="styles.css?v=20260214b">
+	<script>
+	(function () {
+		try {
+			if (sessionStorage.getItem("dc_app_auth") === "1") {
+				document.documentElement.classList.add("app-unlocked");
+			}
+		} catch (e) {}
+	})();
+	</script>
+	<link rel="stylesheet" href="styles.css?v=20260326a">
 	<link rel="preconnect" href="https://yastatic.net">
 	<meta name="theme-color" content="#111827">
 </head>
 <body>
+	<div id="appAuthGate" class="app-auth-gate" aria-hidden="false">
+		<div class="app-auth-card">
+			<h2 class="modal-title">Вход</h2>
+			<p class="app-auth-hint">Введите пароль для доступа к приложению</p>
+			<form id="appAuthForm">
+				<div class="form-group">
+					<label class="form-label" for="appAuthPassword">Пароль</label>
+					<input type="password" id="appAuthPassword" class="form-input" placeholder="Пароль" autocomplete="current-password" required />
+					<div id="appAuthError" class="form-error" style="display:none; color:var(--danger); font-size:13px; margin-top:4px;">Неверный пароль</div>
+				</div>
+				<button type="submit" class="btn btn-primary" style="width:100%; margin-top:12px;">Войти</button>
+			</form>
+		</div>
+	</div>
 	<header class="header">
 		<nav class="nav-tabs">
 			<button class="nav-tab active" data-section="suppliers">Поставщики</button>
@@ -951,7 +974,7 @@
 	<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
 	<script>
 	(function(){var v=__v,s=[
-		'js/config.js','js/config.local.js','js/db.js','js/db-partners.js','js/db-vehicles.js','js/app.js',
+		'js/auth.js','js/config.js','js/config.local.js','js/db.js','js/db-partners.js','js/db-vehicles.js','js/app.js',
 		'js/vehicles.js','js/orders1c.js','js/distribution-parser.js','js/distribution-geocoder.js',
 		'js/distribution-algo.js','js/distribution.js'
 	];s.forEach(function(f){document.write('<script src="'+f+'?v='+v+'"><\/script>');});})();
