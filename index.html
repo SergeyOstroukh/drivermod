@@ -11,7 +11,8 @@
 	<script>
 	(function () {
 		try {
-			if (sessionStorage.getItem("dc_app_auth") === "1") {
+			// Optimistic unlock until auth.js checks deploy version
+			if (sessionStorage.getItem("dc_app_auth")) {
 				document.documentElement.classList.add("app-unlocked");
 			}
 		} catch (e) {}

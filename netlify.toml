@@ -6,3 +6,9 @@
 [build.environment]
   # Skip peer dependency conflicts (React packages not used in production)
   NPM_FLAGS = "--legacy-peer-deps"
+
+[[headers]]
+  for = "/auth-version.json"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+    Pragma = "no-cache"
