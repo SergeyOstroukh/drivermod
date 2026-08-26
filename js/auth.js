@@ -2,12 +2,14 @@
 	"use strict";
 
 	const AUTH_KEY = "dc_app_auth";
+	const KICK_KEY = "dc_app_kick";
 	const APP_PASSWORD = "s0103*";
 	const VERSION_URL = "auth-version.json";
-	const POLL_MS = 15000;
+	const POLL_MS = 4000;
 
 	let currentVersion = null;
 	let pollTimer = null;
+	let kickChannel = null;
 
 	function getStoredAuth() {
 		try {
@@ -35,6 +37,8 @@
 		document.documentElement.classList.add("app-unlocked");
 		const gate = document.getElementById("appAuthGate");
 		if (gate) gate.setAttribute("aria-hidden", "true");
+		const err = document.getElementById("appAuthError");
+		if (err) err.style.display = "none";
 	}
 
 	function lock(reason) {
@@ -54,6 +58,23 @@
 			}
 		}
 		if (input) setTimeout(() => input.focus(), 50);
+	}
+
+	function notifyOtherTabs(version) {
+		try {
+			localStorage.setItem(KICK_KEY, JSON.stringify({ v: version, t: Date.now() }));
+		} catch (e) { /* ignore */ }
+		try {
+			if (kickChannel) kickChannel.postMessage({ type: "DC_FORCE_LOGOUT", v: version });
+		} catch (e) { /* ignore */ }
+	}
+
+	function forceLogout(nextVersion, options) {
+		const propagate = !options || options.propagate !== false;
+		if (nextVersion) currentVersion = String(nextVersion);
+		const wasIn = Boolean(getStoredAuth()) || document.documentElement.classList.contains("app-unlocked");
+		lock(wasIn ? "deploy" : undefined);
+		if (propagate && nextVersion && wasIn) notifyOtherTabs(nextVersion);
 	}
 
 	function showError() {
@@ -84,21 +105,21 @@
 
 	function applyVersion(nextVersion) {
 		const prev = currentVersion;
+		const stored = getStoredAuth();
 		currentVersion = nextVersion;
+
+		if (stored && stored !== nextVersion) {
+			forceLogout(nextVersion);
+			return;
+		}
+
+		if (prev && prev !== nextVersion && document.documentElement.classList.contains("app-unlocked")) {
+			forceLogout(nextVersion);
+			return;
+		}
 
 		if (isUnlocked()) {
 			unlock();
-			return;
-		}
-
-		// Deploy changed version while user was already in — kick session
-		if (prev && prev !== nextVersion && getStoredAuth()) {
-			lock("deploy");
-			return;
-		}
-
-		if (getStoredAuth() && getStoredAuth() !== nextVersion) {
-			lock("deploy");
 			return;
 		}
 
@@ -110,7 +131,7 @@
 			const v = await fetchVersion();
 			applyVersion(v);
 		} catch (e) {
-			// Offline / transient: keep current UI state
+			/* Offline / transient: keep current UI state */
 		}
 	}
 
@@ -136,6 +157,11 @@
 		unlock();
 	}
 
+	function onForceMessage(data) {
+		if (!data || data.type !== "DC_FORCE_LOGOUT") return;
+		forceLogout(data.v, { propagate: false });
+	}
+
 	function startPolling() {
 		if (pollTimer) clearInterval(pollTimer);
 		pollTimer = setInterval(refreshVersion, POLL_MS);
@@ -145,12 +171,48 @@
 		window.addEventListener("focus", refreshVersion);
 	}
 
+	function listenCrossTab() {
+		window.addEventListener("storage", (e) => {
+			if (e.key !== KICK_KEY || !e.newValue) return;
+			try {
+				const payload = JSON.parse(e.newValue);
+				forceLogout(payload.v, { propagate: false });
+			} catch (err) { /* ignore */ }
+		});
+
+		try {
+			kickChannel = new BroadcastChannel("dc_auth");
+			kickChannel.onmessage = (e) => onForceMessage(e.data);
+		} catch (e) { /* ignore */ }
+
+		if ("serviceWorker" in navigator) {
+			navigator.serviceWorker.addEventListener("message", (e) => onForceMessage(e.data));
+		}
+	}
+
+	async function registerServiceWorker() {
+		if (!("serviceWorker" in navigator)) return;
+		try {
+			const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+			if (reg.active) {
+				reg.active.postMessage({ type: "DC_CHECK_NOW" });
+			}
+			navigator.serviceWorker.ready.then((ready) => {
+				if (ready.active) ready.active.postMessage({ type: "DC_CHECK_NOW" });
+			});
+		} catch (e) {
+			/* SW optional — page polling still works */
+		}
+	}
+
 	async function init() {
 		const form = document.getElementById("appAuthForm");
 		if (form) form.addEventListener("submit", onSubmit);
 
+		listenCrossTab();
 		await refreshVersion();
 		startPolling();
+		registerServiceWorker();
 	}
 
 	if (document.readyState === "loading") {
